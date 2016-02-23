@@ -49,6 +49,7 @@ import com.intellij.openapi.editor.colors.EditorColorsManager;
 import com.intellij.openapi.editor.highlighter.EditorHighlighter;
 import com.intellij.openapi.editor.highlighter.HighlighterIterator;
 import com.intellij.openapi.fileTypes.StdFileTypes;
+import com.intellij.openapi.paths.WebReference;
 import com.intellij.openapi.project.DumbServiceImpl;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vfs.LocalFileSystem;
@@ -207,6 +208,10 @@ public class XmlHighlightingTest extends DaemonAnalyzerTestCase {
         }
       }
     });
+  }
+
+  public void testSvg() throws Exception {
+    doTest(getFullRelativeTestName(".svg"), true, false);
   }
 
   public void testNavigateToDeclDefinedWithEntity() throws Exception {
@@ -620,6 +625,10 @@ public class XmlHighlightingTest extends DaemonAnalyzerTestCase {
   public void testWrongRegExpInSchema() throws Exception {
     doTest(getFullRelativeTestName(".xsd"), true, false);
     doTest(getFullRelativeTestName("2.xsd"), true, false);
+  }
+
+  public void testWrongRegExpCategory() throws Exception {
+    doTest(getFullRelativeTestName(".xsd"), true, false);
   }
 
   public void testXercesMessagesBinding2() throws Exception {
@@ -1256,15 +1265,13 @@ public class XmlHighlightingTest extends DaemonAnalyzerTestCase {
     });
 
     AnAction action = ActionManager.getInstance().getAction(IdeActions.ACTION_COMMENT_BLOCK);
-    action.actionPerformed(new AnActionEvent(null, DataManager.getInstance().getDataContext(), "", action.getTemplatePresentation(),
-                                             ActionManager.getInstance(), 0));
+    action.actionPerformed(AnActionEvent.createFromAnAction(action, null, "", DataManager.getInstance().getDataContext()));
     assertNotSame(text,myEditor.getDocument().getText());
     PsiDocumentManager.getInstance(myProject).commitDocument(myEditor.getDocument());
     Collection<HighlightInfo> infos = doHighlighting();
     assertEquals(0, infos.size());
 
-    action.actionPerformed(new AnActionEvent(null, DataManager.getInstance().getDataContext(), "", action.getTemplatePresentation(),
-                                             ActionManager.getInstance(), 0));
+    action.actionPerformed(AnActionEvent.createFromAnAction(action, null, "", DataManager.getInstance().getDataContext()));
     assertEquals(text,myEditor.getDocument().getText().trim());
     PsiDocumentManager.getInstance(myProject).commitDocument(myEditor.getDocument());
     infos = doHighlighting();
@@ -2114,6 +2121,11 @@ public class XmlHighlightingTest extends DaemonAnalyzerTestCase {
     doDoTest(true, false);
   }
 
+  public void testStackOverflowInSchema() throws Exception {
+    configureByFiles(null, BASE_PATH + "XMLSchema_1_1.xsd");
+    doHighlighting();
+  }
+
   @Override
   protected void setUp() throws Exception {
     super.setUp();
@@ -2190,5 +2202,35 @@ public class XmlHighlightingTest extends DaemonAnalyzerTestCase {
   protected void tearDown() throws Exception {
     XmlSettings.getInstance().SHOW_XML_ADD_IMPORT_HINTS = old;
     super.tearDown();
+  }
+
+  public void testLinksInAttrValuesAndComments() throws Exception {
+    configureByFile(BASE_PATH +getTestName(false) + ".xml");
+    doDoTest(true, false);
+
+    final List<WebReference> list = new ArrayList<WebReference>();
+
+    myFile.accept(new XmlRecursiveElementWalkingVisitor() {
+      @Override
+      public void visitElement(PsiElement element) {
+        for(PsiReference reference: element.getReferences()) {
+          if (reference instanceof WebReference) list.add((WebReference)reference);
+        }
+        super.visitElement(element);
+      }
+    });
+
+    assertEquals(list.size(), 2);
+    Collections.sort(list, new Comparator<WebReference>() {
+      @Override
+      public int compare(WebReference o1, WebReference o2) {
+        return o1.getCanonicalText().length() - o2.getCanonicalText().length();
+      }
+    });
+
+    assertEquals("https://www.jetbrains.com/ruby/download", list.get(0).getCanonicalText());
+    assertTrue(list.get(0).getElement() instanceof  XmlAttributeValue);
+    assertEquals("http://blog.jetbrains.com/ruby/2012/04/rubymine-4-0-3-update-is-available/", list.get(1).getCanonicalText());
+    assertTrue(list.get(1).getElement() instanceof  XmlComment);
   }
 }

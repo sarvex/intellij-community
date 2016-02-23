@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,10 +51,26 @@ public abstract class PsiType implements PsiAnnotationOwner {
     return ARRAY_FACTORY.create(count);
   }
 
-  private final PsiAnnotation[] myAnnotations;
+  private final TypeAnnotationProvider myAnnotationProvider;
 
-  protected PsiType(@NotNull PsiAnnotation[] annotations) {
-    myAnnotations = annotations;
+  /**
+   * Constructs a PsiType with given annotations
+   */
+  protected PsiType(@NotNull final PsiAnnotation[] annotations) {
+    this(annotations.length == 0 ? TypeAnnotationProvider.EMPTY : new TypeAnnotationProvider() {
+      @NotNull
+      @Override
+      public PsiAnnotation[] getAnnotations() {
+        return annotations;
+      }
+    });
+  }
+
+  /**
+   * Constructs a PsiType that will take its annotations from the given annotation provider.
+   */
+  protected PsiType(@NotNull TypeAnnotationProvider annotations) {
+    myAnnotationProvider = annotations;
   }
 
   /**
@@ -273,15 +289,27 @@ public abstract class PsiType implements PsiAnnotationOwner {
   @NotNull
   public abstract PsiType[] getSuperTypes();
 
+  /**
+   * @return provider for this type's annotations. Can be used to construct other PsiType instances
+   * without actually evaluating the annotation array, which can be computationally expensive sometimes.
+   */
+  @NotNull
+  public final TypeAnnotationProvider getAnnotationProvider() {
+    return myAnnotationProvider;
+  }
+
+  /**
+   * @return annotations for this type. Uses {@link #getAnnotationProvider()} to retrieve the annotations.
+   */
   @Override
   @NotNull
   public PsiAnnotation[] getAnnotations() {
-    return myAnnotations;
+    return myAnnotationProvider.getAnnotations();
   }
 
   @Override
   public PsiAnnotation findAnnotation(@NotNull @NonNls String qualifiedName) {
-    for (PsiAnnotation annotation : myAnnotations) {
+    for (PsiAnnotation annotation : getAnnotations()) {
       if (qualifiedName.equals(annotation.getQualifiedName())) {
         return annotation;
       }
@@ -301,18 +329,6 @@ public abstract class PsiType implements PsiAnnotationOwner {
     return getAnnotations();
   }
 
-  /** @deprecated use {@link PsiNameHelper#appendAnnotations(StringBuilder, PsiAnnotation[], boolean)} (to remove in IDEA 14) */
-  @SuppressWarnings("UnusedDeclaration")
-  protected String getAnnotationsTextPrefix(boolean qualified, boolean leadingSpace, boolean trailingSpace) {
-    PsiAnnotation[] annotations = getAnnotations();
-    if (annotations.length == 0) return "";
-
-    StringBuilder sb = new StringBuilder();
-    if (leadingSpace) sb.append(' ');
-    if (PsiNameHelper.appendAnnotations(sb, annotations, qualified) &&!trailingSpace) sb.setLength(sb.length() - 1);
-    return sb.toString();
-  }
-
   @Override
   public String toString() {
     //noinspection HardCodedStringLiteral
@@ -324,6 +340,10 @@ public abstract class PsiType implements PsiAnnotationOwner {
    */
   protected static abstract class Stub extends PsiType {
     protected Stub(@NotNull PsiAnnotation[] annotations) {
+      super(annotations);
+    }
+
+    public Stub(@NotNull TypeAnnotationProvider annotations) {
       super(annotations);
     }
 

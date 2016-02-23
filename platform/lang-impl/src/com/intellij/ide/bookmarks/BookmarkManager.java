@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 package com.intellij.ide.bookmarks;
 
 import com.intellij.ide.IdeBundle;
+import com.intellij.ide.ui.UISettings;
+import com.intellij.ide.ui.UISettingsListener;
 import com.intellij.openapi.components.*;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
@@ -35,6 +37,8 @@ import com.intellij.openapi.ui.InputValidator;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.util.Trinity;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
@@ -54,21 +58,28 @@ import java.util.List;
 @State(
   name = "BookmarkManager",
   storages = {
-    @Storage(file = StoragePathMacros.WORKSPACE_FILE)
+    @Storage(StoragePathMacros.WORKSPACE_FILE)
   }
 )
 public class BookmarkManager extends AbstractProjectComponent implements PersistentStateComponent<Element> {
   private static final int MAX_AUTO_DESCRIPTION_SIZE = 50;
 
   private final List<Bookmark> myBookmarks = new ArrayList<Bookmark>();
+  private final Map<Trinity<VirtualFile, Integer, String>, Bookmark> myDeletedDocumentBookmarks = new HashMap<Trinity<VirtualFile, Integer, String>, Bookmark>();
 
   private final MessageBus myBus;
+
+  private boolean mySortedState;
 
   public static BookmarkManager getInstance(Project project) {
     return project.getComponent(BookmarkManager.class);
   }
 
-  public BookmarkManager(Project project, MessageBus bus, PsiDocumentManager documentManager, EditorColorsManager colorsManager) {
+  public BookmarkManager(Project project,
+                         MessageBus bus,
+                         PsiDocumentManager documentManager,
+                         EditorColorsManager colorsManager,
+                         EditorFactory editorFactory) {
     super(project);
     colorsManager.addEditorColorsListener(new EditorColorsListener() {
       @Override
@@ -77,7 +88,7 @@ public class BookmarkManager extends AbstractProjectComponent implements Persist
       }
     }, project);
     myBus = bus;
-    EditorEventMulticaster multicaster = EditorFactory.getInstance().getEventMulticaster();
+    EditorEventMulticaster multicaster = editorFactory.getEventMulticaster();
     multicaster.addDocumentListener(new MyDocumentListener(), myProject);
     multicaster.addEditorMouseListener(new MyEditorMouseListener(), myProject);
 
@@ -103,6 +114,21 @@ public class BookmarkManager extends AbstractProjectComponent implements Persist
       public void fileCreated(@NotNull PsiFile file, @NotNull Document document) {
       }
     });
+    mySortedState  = UISettings.getInstance().SORT_BOOKMARKS;
+    UISettings.getInstance().addUISettingsListener(new UISettingsListener() {
+      @Override
+      public void uiSettingsChanged(UISettings source) {
+        if (mySortedState != UISettings.getInstance().SORT_BOOKMARKS) {
+          mySortedState = UISettings.getInstance().SORT_BOOKMARKS;
+          EventQueue.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+              myBus.syncPublisher(BookmarksListener.TOPIC).bookmarksOrderChanged();
+            }
+          });
+        }
+      }
+    }, project);
   }
 
   public void editDescription(@NotNull Bookmark bookmark) {
@@ -131,7 +157,7 @@ public class BookmarkManager extends AbstractProjectComponent implements Persist
     return "BookmarkManager";
   }
 
-  public void addEditorBookmark(Editor editor, int lineIndex) {
+  public void addEditorBookmark(@NotNull Editor editor, int lineIndex) {
     Document document = editor.getDocument();
     PsiFile psiFile = PsiDocumentManager.getInstance(myProject).getPsiFile(document);
     if (psiFile == null) return;
@@ -142,14 +168,16 @@ public class BookmarkManager extends AbstractProjectComponent implements Persist
     addTextBookmark(virtualFile, lineIndex, getAutoDescription(editor, lineIndex));
   }
 
-  public Bookmark addTextBookmark(VirtualFile file, int lineIndex, String description) {
+  @NotNull
+  public Bookmark addTextBookmark(@NotNull VirtualFile file, int lineIndex, @NotNull String description) {
     Bookmark b = new Bookmark(myProject, file, lineIndex, description);
     myBookmarks.add(0, b);
     myBus.syncPublisher(BookmarksListener.TOPIC).bookmarkAdded(b);
     return b;
   }
 
-  public static String getAutoDescription(final Editor editor, final int lineIndex) {
+  @NotNull
+  public static String getAutoDescription(@NotNull final Editor editor, final int lineIndex) {
     String autoDescription = editor.getSelectionModel().getSelectedText();
     if ( autoDescription == null ) {
       Document document = editor.getDocument();
@@ -163,7 +191,7 @@ public class BookmarkManager extends AbstractProjectComponent implements Persist
   }
 
   @Nullable
-  public Bookmark addFileBookmark(VirtualFile file, String description) {
+  public Bookmark addFileBookmark(@Nullable VirtualFile file, @NotNull String description) {
     if (file == null) return null;
     if (findFileBookmark(file) != null) return null;
 
@@ -179,6 +207,9 @@ public class BookmarkManager extends AbstractProjectComponent implements Persist
     List<Bookmark> answer = new ArrayList<Bookmark>();
     for (Bookmark bookmark : myBookmarks) {
       if (bookmark.isValid()) answer.add(bookmark);
+    }
+    if (UISettings.getInstance().SORT_BOOKMARKS) {
+      Collections.sort(answer);
     }
     return answer;
   }
@@ -453,7 +484,7 @@ public class BookmarkManager extends AbstractProjectComponent implements Persist
     @Override
     public void beforeDocumentChange(DocumentEvent e) {
       if (e.isWholeTextReplaced()) return;
-      List<Bookmark> bookmarksToRemove = null;
+      Map<Trinity<VirtualFile, Integer, String>, Bookmark> bookmarksToRemove = null;
       for (Bookmark bookmark : myBookmarks) {
         Document document = bookmark.getDocument();
         if (document == null || document != e.getDocument()) continue;
@@ -462,15 +493,18 @@ public class BookmarkManager extends AbstractProjectComponent implements Persist
         int start = document.getLineStartOffset(bookmark.getLine());
         int end = document.getLineEndOffset(bookmark.getLine());
         if (start >= e.getOffset() && end <= e.getOffset() + e.getOldLength() ) {
+          Trinity<VirtualFile, Integer, String> restoreBookmarkData
+            = new Trinity<VirtualFile, Integer, String>(bookmark.getFile(), bookmark.getLine(), document.getText(new TextRange(start, end)));
           if (bookmarksToRemove == null) {
-            bookmarksToRemove = new ArrayList<Bookmark>();
+            bookmarksToRemove = new HashMap<Trinity<VirtualFile, Integer, String>, Bookmark>();
           }
-          bookmarksToRemove.add(bookmark);
+          bookmarksToRemove.put(restoreBookmarkData, bookmark);
         }
       }
       if (bookmarksToRemove != null) {
-        for (Bookmark bookmark : bookmarksToRemove) {
-          removeBookmark(bookmark);
+        for (Map.Entry<Trinity<VirtualFile, Integer, String>, Bookmark> entry : bookmarksToRemove.entrySet()) {
+          removeBookmark(entry.getValue());
+          myDeletedDocumentBookmarks.put(entry.getKey(), entry.getValue());
         }
       }
     }
@@ -503,6 +537,36 @@ public class BookmarkManager extends AbstractProjectComponent implements Persist
       if (bookmarksToRemove != null) {
         for (Bookmark bookmark : bookmarksToRemove) {
           removeBookmark(bookmark);
+        }
+      }
+
+      for (Iterator<Map.Entry<Trinity<VirtualFile, Integer, String>, Bookmark>> iterator = myDeletedDocumentBookmarks.entrySet().iterator();
+           iterator.hasNext(); ) {
+        Map.Entry<Trinity<VirtualFile, Integer, String>, Bookmark> entry = iterator.next();
+
+        if (!entry.getKey().first.isValid()) {
+          iterator.remove();
+          continue;
+        }
+
+        Bookmark bookmark = entry.getValue();
+        Document document = bookmark.getDocument();
+        if (document == null || !bookmark.getFile().equals(entry.getKey().first)) {
+          continue;
+        }
+        Integer line = entry.getKey().second;
+        if (document.getLineCount() <= line) {
+          continue;
+        }
+        int start = document.getLineStartOffset(line);
+        int end = document.getLineEndOffset(line);
+        String lineContent = document.getText(new TextRange(start, end));
+        if (entry.getKey().third.equals(lineContent)) {
+          Bookmark restored = addTextBookmark(bookmark.getFile(), bookmark.getLine(), bookmark.getDescription());
+          if (bookmark.getMnemonic() != 0) {
+            setMnemonic(restored, bookmark.getMnemonic());
+          }
+          iterator.remove();
         }
       }
     }

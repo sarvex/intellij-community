@@ -19,12 +19,10 @@ import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.localVcs.UpToDateLineNumberProvider;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vcs.annotate.FileAnnotation;
-import com.intellij.openapi.vcs.annotate.LineNumberListener;
+import com.intellij.openapi.vcs.annotate.UpToDateLineNumberListener;
 import com.intellij.openapi.vcs.history.VcsRevisionNumber;
-import com.intellij.openapi.vcs.impl.UpToDateLineNumberProviderImpl;
 import com.intellij.openapi.vfs.VirtualFile;
 import git4idea.GitUtil;
 import git4idea.repo.GitRepository;
@@ -35,7 +33,7 @@ import org.jetbrains.plugins.github.util.GithubUtil;
 /**
  * @author Kirill Likhodedov
  */
-public class GithubShowCommitInBrowserFromAnnotateAction extends GithubShowCommitInBrowserAction implements LineNumberListener {
+public class GithubShowCommitInBrowserFromAnnotateAction extends GithubShowCommitInBrowserAction implements UpToDateLineNumberListener {
 
   private final FileAnnotation myAnnotation;
   private int myLineNumber = -1;
@@ -53,8 +51,7 @@ public class GithubShowCommitInBrowserFromAnnotateAction extends GithubShowCommi
       e.getPresentation().setVisible(false);
       return;
     }
-    int corrected = eventData.getCorrectedLineNumber();
-    e.getPresentation().setEnabled(corrected >= 0 && myAnnotation.getLineRevisionNumber(corrected) != null);
+    e.getPresentation().setEnabled(myLineNumber >= 0 && myAnnotation.getLineRevisionNumber(myLineNumber) != null);
     e.getPresentation().setVisible(GithubUtil.isRepositoryOnGitHub(eventData.getRepository()));
   }
 
@@ -65,7 +62,7 @@ public class GithubShowCommitInBrowserFromAnnotateAction extends GithubShowCommi
       return;
     }
 
-    final VcsRevisionNumber revisionNumber = myAnnotation.getLineRevisionNumber(eventData.getCorrectedLineNumber());
+    final VcsRevisionNumber revisionNumber = myAnnotation.getLineRevisionNumber(myLineNumber);
     if (revisionNumber != null) {
       openInBrowser(eventData.getProject(), eventData.getRepository(), revisionNumber.asString());
     }
@@ -82,15 +79,13 @@ public class GithubShowCommitInBrowserFromAnnotateAction extends GithubShowCommi
     if (document == null) {
       return null;
     }
-    final UpToDateLineNumberProvider myGetUpToDateLineNumber = new UpToDateLineNumberProviderImpl(document, project);
-    int corrected = myGetUpToDateLineNumber.getLineNumber(lineNumber);
 
     GitRepository repository = GitUtil.getRepositoryManager(project).getRepositoryForFile(virtualFile);
     if (repository == null) {
       return null;
     }
 
-    return new EventData(project, repository, corrected);
+    return new EventData(project, repository);
   }
 
   @Override
@@ -101,12 +96,10 @@ public class GithubShowCommitInBrowserFromAnnotateAction extends GithubShowCommi
   private static class EventData {
     @NotNull private final Project myProject;
     @NotNull private final GitRepository myRepository;
-    private final int myCorrectedLineNumber;
 
-    private EventData(@NotNull Project project, @NotNull GitRepository repository, int correctedLineNumber) {
+    private EventData(@NotNull Project project, @NotNull GitRepository repository) {
       myProject = project;
       myRepository = repository;
-      myCorrectedLineNumber = correctedLineNumber;
     }
 
     @NotNull
@@ -118,10 +111,5 @@ public class GithubShowCommitInBrowserFromAnnotateAction extends GithubShowCommi
     public GitRepository getRepository() {
       return myRepository;
     }
-
-    private int getCorrectedLineNumber() {
-      return myCorrectedLineNumber;
-    }
   }
-
 }

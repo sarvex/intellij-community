@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -290,15 +290,6 @@ public class MavenIndex {
     return myRepositoryPathOrUrl.equalsIgnoreCase(normalizePathOrUrl(pathOrUrl));
   }
 
-  @Deprecated
-  /**
-   * use {@link #isFor(Kind, String)} instead
-   * @deprecated to remove in IDEA 15
-   */
-  public boolean isFor(Kind kind, String repositoryId, String pathOrUrl) {
-    return isFor(kind, pathOrUrl);
-  }
-
   public synchronized long getUpdateTimestamp() {
     return myUpdateTimestamp == null ? -1 : myUpdateTimestamp;
   }
@@ -360,7 +351,7 @@ public class MavenIndex {
 
   private void handleUpdateException(Exception e) {
     myFailureMessage = e.getMessage();
-    MavenLog.LOG.warn("Failed to update Maven indices for: [" + myId + "] " + myRepositoryPathOrUrl, e);
+    MavenLog.LOG.warn("Failed to update Maven indices for: [" + myId.getValue() + "] " + myRepositoryPathOrUrl, e);
   }
 
   private int createContext(File contextDir, String suffix) throws MavenServerIndexerException {

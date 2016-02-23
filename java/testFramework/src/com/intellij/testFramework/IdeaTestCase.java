@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,10 @@ package com.intellij.testFramework;
 import com.intellij.openapi.module.ModuleType;
 import com.intellij.openapi.module.StdModuleTypes;
 import com.intellij.openapi.projectRoots.Sdk;
+import com.intellij.openapi.roots.LanguageLevelProjectExtension;
 import com.intellij.openapi.vfs.impl.VirtualFilePointerManagerImpl;
 import com.intellij.openapi.vfs.pointers.VirtualFilePointerManager;
+import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.impl.JavaPsiFacadeEx;
 
@@ -35,6 +37,7 @@ public abstract class IdeaTestCase extends PlatformTestCase {
   @Override
   protected void setUp() throws Exception {
     super.setUp();
+    LanguageLevelProjectExtension.getInstance(getProject()).setLanguageLevel(LanguageLevel.JDK_1_6);
     myJavaFacade = JavaPsiFacadeEx.getInstanceEx(myProject);
     VirtualFilePointerManagerImpl filePointerManager = (VirtualFilePointerManagerImpl)VirtualFilePointerManager.getInstance();
     filePointerManager.storePointers();
@@ -62,8 +65,10 @@ public abstract class IdeaTestCase extends PlatformTestCase {
     return StdModuleTypes.JAVA;
   }
 
+  /**
+   * @deprecated calling this method is no longer necessary
+   */
   public static void initPlatformPrefix() {
-    initPlatformPrefix("com.intellij.idea.IdeaUltimateApplication", "Idea");
   }
 
   protected static void sortClassesByName(final PsiClass[] classes) {

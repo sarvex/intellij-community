@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import com.intellij.openapi.module.EmptyModuleType;
 import com.intellij.openapi.module.ModifiableModuleModel;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
+import com.intellij.openapi.project.ex.ProjectManagerEx;
 import com.intellij.openapi.roots.ContentEntry;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.roots.ProjectFileIndex;
@@ -37,37 +38,44 @@ import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.WritingAccessProvider;
-import com.intellij.testFramework.PlatformTestCase;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.PsiTestUtil;
 import com.intellij.ui.EditorNotifications;
 import com.intellij.ui.EditorNotificationsImpl;
 import com.intellij.util.NullableFunction;
+import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
 public class NonProjectFileAccessTest extends HeavyFileEditorManagerTestCase {
+
+  private Set<VirtualFile> myOpenedFiles = new THashSet<>();
+
   @Override
   public void setUp() throws Exception {
-    PlatformTestCase.initPlatformLangPrefix();
     super.setUp();
     EditorNotifications notifications = new EditorNotificationsImpl(getProject());
     ((ComponentManagerImpl)getProject()).registerComponentInstance(EditorNotifications.class, notifications);
     NonProjectFileWritingAccessProvider.enableChecksInTests(getProject(), true);
+    ProjectManagerEx.getInstanceEx().blockReloadingProjectOnExternalChanges();
   }
 
   @Override
   protected void tearDown() throws Exception {
-    NonProjectFileWritingAccessProvider.setCustomUnlocker(null);
-    NonProjectFileWritingAccessProvider.enableChecksInTests(getProject(), false);
-    super.tearDown();
-  }
-
-  @Override
-  protected boolean runInDispatchThread() {
-    return true;
+    try {
+      NonProjectFileWritingAccessProvider.setCustomUnlocker(null);
+      NonProjectFileWritingAccessProvider.enableChecksInTests(getProject(), false);
+      FileEditorManager editorManager = FileEditorManager.getInstance(getProject());
+      for (VirtualFile file : myOpenedFiles) {
+        editorManager.closeFile(file);
+      }
+    }
+    finally {
+      super.tearDown();
+      ProjectManagerEx.getInstanceEx().unblockReloadingProjectOnExternalChanges(); // unblock only after project is disposed
+    }
   }
 
   public void testBasicAccessCheck() throws Exception {
@@ -354,6 +362,7 @@ public class NonProjectFileAccessTest extends HeavyFileEditorManagerTestCase {
   }
 
   private Editor getEditor(VirtualFile file) {
+    myOpenedFiles.add(file);
     return FileEditorManager.getInstance(getProject()).openTextEditor(new OpenFileDescriptor(getProject(), file, 0), false);
   }
 

@@ -35,6 +35,8 @@ import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DefaultActionGroup;
 import com.intellij.openapi.actionSystem.Presentation;
 import com.intellij.openapi.actionSystem.ToggleAction;
+import com.intellij.openapi.project.DumbAware;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.InvalidDataException;
 import com.intellij.openapi.util.JDOMExternalizerUtil;
@@ -155,8 +157,11 @@ public class ProjectViewPane extends AbstractProjectViewPSIPane {
         final PsiDirectory dir = (PsiDirectory)element;
         final ProjectTreeStructure treeStructure = (ProjectTreeStructure)myTreeStructure;
         PsiDirectory dirToUpdateFrom = dir;
-        if (!treeStructure.isFlattenPackages() && treeStructure.isHideEmptyMiddlePackages()) {
-          // optimization: this check makes sense only if flattenPackages == false && HideEmptyMiddle == true
+
+        // optimization
+        // isEmptyMiddleDirectory can be slow when project VFS is not fully loaded (initial dumb mode).
+        // It's easiest to disable the optimization in any dumb mode
+        if (!treeStructure.isFlattenPackages() && treeStructure.isHideEmptyMiddlePackages() && !DumbService.isDumb(myProject)) {
           while (dirToUpdateFrom != null && ProjectViewDirectoryHelper.getInstance(myProject).isEmptyMiddleDirectory(dirToUpdateFrom, true)) {
             dirToUpdateFrom = dirToUpdateFrom.getParentDirectory();
           }
@@ -191,7 +196,7 @@ public class ProjectViewPane extends AbstractProjectViewPSIPane {
     }
   }
 
-  private final class ShowExcludedFilesAction extends ToggleAction {
+  private final class ShowExcludedFilesAction extends ToggleAction implements DumbAware {
     private ShowExcludedFilesAction() {
       super(IdeBundle.message("action.show.excluded.files"), IdeBundle.message("action.show.hide.excluded.files"), null);
     }

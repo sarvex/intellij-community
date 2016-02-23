@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,15 @@
 package git4idea.config;
 
 import com.google.common.base.Objects;
+import com.intellij.execution.ExecutableValidator;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.execution.process.CapturingProcessHandler;
 import com.intellij.execution.process.ProcessOutput;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.progress.ProcessCanceledException;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.CharsetToolkit;
@@ -141,12 +145,20 @@ public final class GitVersion implements Comparable<GitVersion> {
     GeneralCommandLine commandLine = new GeneralCommandLine();
     commandLine.setExePath(gitExecutable);
     commandLine.addParameter("--version");
-    CapturingProcessHandler handler = new CapturingProcessHandler(commandLine.createProcess(), CharsetToolkit.getDefaultSystemCharset());
-    ProcessOutput result = handler.runProcess(30 * 1000);
+    commandLine.setCharset(CharsetToolkit.getDefaultSystemCharset());
+    CapturingProcessHandler handler = new CapturingProcessHandler(commandLine);
+    ProgressIndicator indicator = ProgressManager.getInstance().getProgressIndicator();
+    ProcessOutput result = indicator == null ?
+                           handler.runProcess(ExecutableValidator.TIMEOUT_MS) :
+                           handler.runProcessWithProgressIndicator(indicator);
     if (result.isTimeout()) {
       throw new TimeoutException("Couldn't identify the version of Git - stopped by timeout.");
     }
-    if (result.getExitCode() != 0 || !result.getStderr().isEmpty()) {
+    else if (result.isCancelled()) {
+      LOG.info("Cancelled by user. exitCode=" + result.getExitCode());
+      throw new ProcessCanceledException();
+    }
+    else if (result.getExitCode() != 0 || !result.getStderr().isEmpty()) {
       LOG.info("getVersion exitCode=" + result.getExitCode() + " errors: " + result.getStderr());
       // anyway trying to parse
       try {

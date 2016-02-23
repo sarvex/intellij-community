@@ -20,6 +20,7 @@
  */
 package com.intellij.debugger.engine.evaluation.expression;
 
+import com.intellij.Patches;
 import com.intellij.debugger.DebuggerBundle;
 import com.intellij.debugger.engine.DebugProcess;
 import com.intellij.debugger.engine.DebugProcessImpl;
@@ -92,7 +93,7 @@ public class MethodEvaluator implements Evaluator {
     if(object == null) {
       throw EvaluateExceptionUtil.createEvaluateException(new NullPointerException());
     }
-    if (!(object instanceof ObjectReference || object instanceof ClassType)) {
+    if (!(object instanceof ObjectReference || isInvokableType(object))) {
       throw EvaluateExceptionUtil.createEvaluateException(DebuggerBundle.message("evaluation.error.evaluating.method", myMethodName));
     }
     List args = new ArrayList(myArgumentEvaluators.length);
@@ -106,9 +107,8 @@ public class MethodEvaluator implements Evaluator {
         // it seems that if we have an object of the class, the class must be ready, so no need to use findClass here
         referenceType = ((ObjectReference)object).referenceType();
       }
-      else if(object instanceof ClassType) {
-        final ClassType qualifierType = (ClassType)object;
-        referenceType = debugProcess.findClass(context, qualifierType.name(), context.getClassLoader());
+      else if (isInvokableType(object)) {
+        referenceType = debugProcess.findClass(context, ((ReferenceType)object).name(), context.getClassLoader());
       }
       else {
         final String className = myClassName != null? myClassName.getName(debugProcess) : null;
@@ -124,18 +124,16 @@ public class MethodEvaluator implements Evaluator {
       }
       final String signature = myMethodSignature != null ? myMethodSignature.getName(debugProcess) : null;
       final String methodName = DebuggerUtilsEx.methodName(referenceType.name(), myMethodName, signature);
-      if (object instanceof ClassType) {
-        if(referenceType instanceof ClassType) {
-          Method jdiMethod;
-          if(myMethodSignature != null) {
-            jdiMethod = ((ClassType)referenceType).concreteMethodByName(myMethodName, myMethodSignature.getName(debugProcess));
-          }
-          else {
-            List list = referenceType.methodsByName(myMethodName);
-            jdiMethod = (Method)(list.size() > 0 ? list.get(0) : null);
-          }
+      if (isInvokableType(object)) {
+        if (isInvokableType(referenceType)) {
+          Method jdiMethod = DebuggerUtils.findMethod(referenceType, myMethodName, signature);
           if (jdiMethod != null && jdiMethod.isStatic()) {
-            return debugProcess.invokeMethod(context, (ClassType)referenceType, jdiMethod, args);
+            if (referenceType instanceof ClassType) {
+              return debugProcess.invokeMethod(context, (ClassType)referenceType, jdiMethod, args);
+            }
+            else {
+              return debugProcess.invokeMethod(context, (InterfaceType)referenceType, jdiMethod, args);
+            }
           }
         }
         throw EvaluateExceptionUtil.createEvaluateException(DebuggerBundle.message("evaluation.error.no.static.method", methodName));
@@ -180,7 +178,7 @@ public class MethodEvaluator implements Evaluator {
         return debugProcess.invokeInstanceMethod(context, objRef, jdiMethod, args, ObjectReference.INVOKE_NONVIRTUAL);
       }
       // fix for default methods in interfaces, see IDEA-124066
-      if (myCheckDefaultInterfaceMethod && jdiMethod.declaringType() instanceof InterfaceType) {
+      if (Patches.JDK_BUG_ID_8042123 && myCheckDefaultInterfaceMethod && jdiMethod.declaringType() instanceof InterfaceType) {
         try {
           return invokeDefaultMethod(debugProcess, context, objRef, myMethodName);
         } catch (EvaluateException e) {
@@ -195,6 +193,10 @@ public class MethodEvaluator implements Evaluator {
       }
       throw EvaluateExceptionUtil.createEvaluateException(e);
     }
+  }
+
+  private static boolean isInvokableType(Object type) {
+    return type instanceof ClassType || type instanceof InterfaceType;
   }
 
   // only methods without arguments for now

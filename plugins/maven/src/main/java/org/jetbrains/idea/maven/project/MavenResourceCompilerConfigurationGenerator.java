@@ -14,16 +14,20 @@ import com.intellij.openapi.util.JDOMUtil;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.StreamUtil;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.packaging.impl.elements.ManifestFileUtil;
+import com.intellij.util.Base64;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.xmlb.XmlSerializer;
 import org.jdom.Document;
 import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.idea.maven.dom.MavenDomUtil;
+import org.jetbrains.idea.maven.dom.MavenPropertyResolver;
+import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel;
 import org.jetbrains.idea.maven.dom.references.MavenFilteredPropertyPsiReferenceProvider;
 import org.jetbrains.idea.maven.model.MavenId;
 import org.jetbrains.idea.maven.model.MavenResource;
@@ -46,6 +50,7 @@ public class MavenResourceCompilerConfigurationGenerator {
   private static Logger LOG = Logger.getInstance(MavenResourceCompilerConfigurationGenerator.class);
 
   private static final Pattern SIMPLE_NEGATIVE_PATTERN = Pattern.compile("!\\?(\\*\\.\\w+)");
+  private static final String IDEA_MAVEN_DISABLE_MANIFEST = System.getProperty("idea.maven.disable.manifest");
 
   private final Project myProject;
 
@@ -76,7 +81,9 @@ public class MavenResourceCompilerConfigurationGenerator {
 
     ProjectFileIndex fileIndex = projectRootManager.getFileIndex();
 
-    final int crc = myProjectsTree.getFilterConfigCrc(fileIndex) + (int)projectRootManager.getModificationCount();
+    final int projectRootModificationCount = (int)projectRootManager.getModificationCount();
+    final int mavenConfigCrc = myProjectsTree.getFilterConfigCrc(fileIndex);
+    final int crc = mavenConfigCrc + projectRootModificationCount;
 
     final File crcFile = new File(mavenConfigFile.getParent(), "configuration.crc");
 
@@ -84,14 +91,19 @@ public class MavenResourceCompilerConfigurationGenerator {
       try {
         DataInputStream crcInput = new DataInputStream(new FileInputStream(crcFile));
         try {
-          if (crcInput.readInt() == crc) return; // Project had not change since last config generation.
+          final int lastCrc = crcInput.readInt();
+          if (lastCrc == crc) return; // Project had not change since last config generation.
+
+          LOG.debug(String.format(
+            "project configuration changed: lastCrc = %d, currentCrc = %d, projectRootModificationCount = %d, mavenConfigCrc = %d",
+            lastCrc, crc, projectRootModificationCount, mavenConfigCrc));
         }
         finally {
           crcInput.close();
         }
       }
       catch (IOException ignored) {
-        // // Config file is not generated.
+        LOG.debug("Unable to read or find config file: " + ignored.getMessage());
       }
     }
 
@@ -124,6 +136,8 @@ public class MavenResourceCompilerConfigurationGenerator {
         }
       }
 
+      addEarModelMapEntries(mavenProject, resourceConfig.modelMap);
+
       Element pluginConfiguration = mavenProject.getPluginConfiguration("org.apache.maven.plugins", "maven-resources-plugin");
 
       resourceConfig.outputDirectory = getResourcesPluginGoalOutputDirectory(mavenProject, pluginConfiguration, "resources");
@@ -155,7 +169,7 @@ public class MavenResourceCompilerConfigurationGenerator {
 
       projectConfig.moduleConfigurations.put(module.getName(), resourceConfig);
 
-      generateManifest(mavenProject, module);
+      generateManifest(mavenProject, module, resourceConfig);
     }
 
     addNonMavenResources(projectConfig);
@@ -179,10 +193,17 @@ public class MavenResourceCompilerConfigurationGenerator {
           }
         }
         catch (IOException e) {
+          LOG.debug("Unable to write config file", e);
           throw new RuntimeException(e);
         }
       }
     });
+  }
+
+  private static void addEarModelMapEntries(@NotNull MavenProject mavenProject, @NotNull Map<String, String> modelMap) {
+    Element pluginConfiguration = mavenProject.getPluginConfiguration("org.apache.maven.plugins", "maven-ear-plugin");
+    final String skinnyWars = MavenJDOMUtil.findChildValueByPath(pluginConfiguration, "skinnyWars", "false");
+    modelMap.put("build.plugin.maven-ear-plugin.skinnyWars", skinnyWars);
   }
 
   @Nullable
@@ -199,8 +220,14 @@ public class MavenResourceCompilerConfigurationGenerator {
            : mavenProject.getDirectory() + '/' + outputDirectory;
   }
 
-  private static void generateManifest(@NotNull MavenProject mavenProject, @NotNull Module module) {
-    if(mavenProject.isAggregator()) return;
+  private static void generateManifest(@NotNull MavenProject mavenProject,
+                                       @NotNull Module module,
+                                       @NotNull MavenModuleResourceConfiguration resourceConfig) {
+    if (mavenProject.isAggregator()) return;
+    if (Boolean.valueOf(IDEA_MAVEN_DISABLE_MANIFEST)) {
+      resourceConfig.manifest = null;
+      return;
+    }
 
     try {
       String jdkVersion = null;
@@ -211,22 +238,25 @@ public class MavenResourceCompilerConfigurationGenerator {
           jdkVersion = jdkVersion.substring(quoteIndex + 1, jdkVersion.length() - 1);
         }
       }
+
       Manifest manifest = new ManifestBuilder(mavenProject).withJdkVersion(jdkVersion).build();
-      File manifestFile = new File(mavenProject.getBuildDirectory(), ManifestFileUtil.MANIFEST_FILE_NAME);
-      FileUtil.createIfDoesntExist(manifestFile);
-      OutputStream outputStream = new FileOutputStream(manifestFile);
+      ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
       try {
         manifest.write(outputStream);
+        MavenDomProjectModel domModel = MavenDomUtil.getMavenDomProjectModel(module.getProject(), mavenProject.getFile());
+        final String resolvedText = MavenPropertyResolver.resolve(outputStream.toString(CharsetToolkit.UTF8), domModel);
+        resourceConfig.manifest = Base64.encode(resolvedText.getBytes(CharsetToolkit.UTF8));
       }
       finally {
         StreamUtil.closeStream(outputStream);
       }
+      resourceConfig.classpath = ManifestBuilder.getClasspath(mavenProject);
     }
     catch (ManifestBuilder.ManifestBuilderException e) {
-      LOG.error("Unable to generate artifact manifest", e);
+      LOG.warn("Unable to generate artifact manifest", e);
     }
-    catch (IOException e) {
-      LOG.error("Unable to save generated artifact manifest", e);
+    catch (Exception e) {
+      LOG.warn("Unable to save generated artifact manifest", e);
     }
   }
 

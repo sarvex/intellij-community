@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,7 +80,7 @@ public class PullUpProcessor extends BaseRefactoringProcessor implements PullUpD
 
   @Override
   @NotNull
-  protected UsageViewDescriptor createUsageViewDescriptor(UsageInfo[] usages) {
+  protected UsageViewDescriptor createUsageViewDescriptor(@NotNull UsageInfo[] usages) {
     return new PullUpUsageViewDescriptor();
   }
 
@@ -121,14 +121,14 @@ public class PullUpProcessor extends BaseRefactoringProcessor implements PullUpD
 
   @Nullable
   @Override
-  protected RefactoringEventData getAfterData(UsageInfo[] usages) {
+  protected RefactoringEventData getAfterData(@NotNull UsageInfo[] usages) {
     final RefactoringEventData data = new RefactoringEventData();
     data.addElement(myTargetSuperClass);
     return data;
   }
 
   @Override
-  protected void performRefactoring(UsageInfo[] usages) {
+  protected void performRefactoring(@NotNull UsageInfo[] usages) {
     moveMembersToBase();
     moveFieldInitializations();
     for (UsageInfo usage : usages) {
@@ -281,6 +281,12 @@ public class PullUpProcessor extends BaseRefactoringProcessor implements PullUpD
     return false;
   }
 
+  @NotNull
+  @Override
+  protected Collection<? extends PsiElement> getElementsToWrite(@NotNull UsageViewDescriptor descriptor) {
+    return Collections.singletonList(mySourceClass);
+  }
+
   @Override
   public PsiClass getSourceClass() {
     return mySourceClass;
@@ -314,13 +320,18 @@ public class PullUpProcessor extends BaseRefactoringProcessor implements PullUpD
   private class PullUpUsageViewDescriptor implements UsageViewDescriptor {
     @Override
     public String getProcessedElementsHeader() {
-      return "Pull up members from";
+      return "Pull up members from class " + DescriptiveNameUtil.getDescriptiveName(mySourceClass);
     }
 
     @Override
     @NotNull
     public PsiElement[] getElements() {
-      return new PsiElement[]{mySourceClass};
+      return ContainerUtil.map(myMembersToMove, new Function<MemberInfo, PsiElement>() {
+        @Override
+        public PsiElement fun(MemberInfo info) {
+          return info.getMember();
+        }
+      }, PsiElement.EMPTY_ARRAY);
     }
 
     @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,10 +25,14 @@ import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.Presentation;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.DumbAware;
+import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.util.Function;
+import com.intellij.util.containers.ContainerUtil;
 
-import java.util.ArrayList;
+import java.awt.datatransfer.StringSelection;
 import java.util.List;
 import java.util.Map;
 
@@ -57,20 +61,26 @@ public class DumpLookupElementWeights extends AnAction implements DumbAware {
     if (selected != null) {
       sb += "\nprefix: " + lookup.itemPattern(selected);
     }
-    sb += "\nweights:\n" + StringUtil.join(getLookupElementWeights(lookup), "\n");
+    sb += "\nweights:\n" + StringUtil.join(getLookupElementWeights(lookup, true), "\n");
     System.out.println(sb);
     LOG.info(sb);
+    try {
+      CopyPasteManager.getInstance().setContents(new StringSelection(sb));
+    } catch (Exception ignore){}
   }
 
-  public static List<String> getLookupElementWeights(LookupImpl lookup) {
-    final Map<LookupElement,StringBuilder> strings = lookup.getRelevanceStrings();
-    List<String> sb = new ArrayList<String>();
-    for (LookupElement item : lookup.getItems()) {
-      StringBuilder builder = strings.get(item);
-      String weight = builder == null ? "null" : builder.toString();
-      final String s = item.getLookupString() + "\t" + weight;
-      sb.add(s);
-    }
-    return sb;
+  public static List<String> getLookupElementWeights(LookupImpl lookup, boolean hideSingleValued) {
+    final Map<LookupElement, List<Pair<String, Object>>> weights = lookup.getRelevanceObjects(lookup.getItems(), hideSingleValued);
+    return ContainerUtil.map(weights.entrySet(), new Function<Map.Entry<LookupElement, List<Pair<String, Object>>>, String>() {
+      @Override
+      public String fun(Map.Entry<LookupElement, List<Pair<String, Object>>> entry) {
+        return entry.getKey().getLookupString() + "\t" + StringUtil.join(entry.getValue(), new Function<Pair<String, Object>, String>() {
+          @Override
+          public String fun(Pair<String, Object> pair) {
+            return pair.first + "=" + pair.second;
+          }
+        }, ", ");
+      }
+    });
   }
 }

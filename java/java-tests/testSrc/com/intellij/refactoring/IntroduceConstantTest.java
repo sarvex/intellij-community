@@ -115,6 +115,19 @@ public class IntroduceConstantTest extends LightCodeInsightTestCase {
     checkResultByFile(BASE_PATH + getTestName(false) + "_after.java");
   }
 
+  public void testComments() throws Exception {
+    doTestExpr();
+  }
+
+  private void doTestExpr() throws Exception {
+    configureByFile(BASE_PATH + getTestName(false) + ".java");
+    checkDefaultType(CommonClassNames.JAVA_LANG_STRING);
+    checkResultByFile(BASE_PATH + getTestName(false) + "_after.java");
+  }
+
+  public void testContainingClass() throws Exception {
+    doTestExpr();
+  }
 
   public void testEscalateVisibility() throws Exception {
     configureByFile(BASE_PATH + getTestName(false) + ".java");

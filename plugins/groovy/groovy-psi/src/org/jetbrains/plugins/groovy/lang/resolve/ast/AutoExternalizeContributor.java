@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,9 @@
  */
 package org.jetbrains.plugins.groovy.lang.resolve.ast;
 
-import com.intellij.psi.CommonClassNames;
 import com.intellij.psi.PsiMethod;
 import com.intellij.psi.impl.light.LightMethodBuilder;
-import com.intellij.psi.util.InheritanceUtil;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.plugins.groovy.gpp.GppTypeConverter;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.typedef.GrTypeDefinition;
 import org.jetbrains.plugins.groovy.lang.psi.impl.PsiImplUtil;
 import org.jetbrains.plugins.groovy.lang.psi.util.GroovyCommonClassNames;
@@ -54,13 +51,6 @@ public class AutoExternalizeContributor extends AstTransformContributor {
   }
 
   private static boolean hasGeneratedImplementations(GrTypeDefinition clazz) {
-    if (PsiImplUtil.getAnnotation(clazz, GroovyCommonClassNames.GROOVY_TRANSFORM_AUTO_EXTERNALIZE) != null) {
-      return true;
-    }
-    if (GppTypeConverter.hasTypedContext(clazz)) {
-      return InheritanceUtil.isInheritor(clazz, CommonClassNames.JAVA_IO_EXTERNALIZABLE) &&
-             clazz.findCodeMethodsByName("readExternal", false).length == 0;
-    }
-    return false;
+    return PsiImplUtil.getAnnotation(clazz, GroovyCommonClassNames.GROOVY_TRANSFORM_AUTO_EXTERNALIZE) != null;
   }
 }

@@ -24,9 +24,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
-import java.nio.charset.Charset;
-import java.nio.charset.IllegalCharsetNameException;
-import java.nio.charset.UnsupportedCharsetException;
+import java.nio.charset.*;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Map;
@@ -298,9 +296,24 @@ public class CharsetToolkit {
   public static String bytesToString(@NotNull byte[] bytes, @NotNull final Charset defaultCharset) {
     Charset charset = new CharsetToolkit(bytes, defaultCharset).guessEncoding(bytes.length);
     if (charset == null) charset = defaultCharset; // binary content. This is silly but method contract says to return something anyway
+    return decodeString(bytes, charset);
+  }
+
+  @NotNull
+  public static String decodeString(@NotNull byte[] bytes, @NotNull final Charset charset) {
     int bomLength = getBOMLength(bytes, charset);
     final CharBuffer charBuffer = charset.decode(ByteBuffer.wrap(bytes, bomLength, bytes.length - bomLength));
     return charBuffer.toString();
+  }
+
+  @NotNull
+  public static String tryDecodeString(@NotNull byte[] bytes, @NotNull final Charset charset) throws CharacterCodingException {
+    int bomLength = CharsetToolkit.getBOMLength(bytes, charset);
+    ByteBuffer buffer = ByteBuffer.wrap(bytes, bomLength, bytes.length - bomLength);
+    CharsetDecoder decoder = charset.newDecoder()
+      .onMalformedInput(CodingErrorAction.REPORT)
+      .onUnmappableCharacter(CodingErrorAction.REPORT);
+    return decoder.decode(buffer).toString();
   }
 
   public enum GuessedEncoding {

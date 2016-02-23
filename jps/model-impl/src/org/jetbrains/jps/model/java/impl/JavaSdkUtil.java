@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 package org.jetbrains.jps.model.java.impl;
 
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.io.FileFilters;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -51,23 +53,18 @@ public class JavaSdkUtil {
         jarDirs = new File[]{libEndorsedDir, libDir, classesDir, libExtDir};
       }
     }
-    else if (new File(home, "lib/modules").isDirectory()) {
+    else if (new File(home, "lib/modules").exists()) {
       File libDir = new File(home, "lib");
       jarDirs = new File[]{libDir};
     }
     else {
-      File libDir = isJre ? new File(home, "lib") : new File(home, "jre/lib");
+      File libDir = new File(home, isJre ? "lib" : "jre/lib");
       File libExtDir = new File(libDir, "ext");
       File libEndorsedDir = new File(libDir, "endorsed");
       jarDirs = new File[]{libEndorsedDir, libDir, libExtDir};
     }
 
-    FileFilter jarFileFilter = new FileFilter() {
-      @Override
-      public boolean accept(@NotNull File f) {
-        return !f.isDirectory() && f.getName().endsWith(".jar");
-      }
-    };
+    FileFilter jarFileFilter = FileFilters.filesWithExtension("jar");
     Set<String> pathFilter = ContainerUtil.newTroveSet(FileUtil.PATH_HASHING_STRATEGY);
     List<File> rootFiles = ContainerUtil.newArrayList();
     for (File jarDir : jarDirs) {
@@ -87,21 +84,29 @@ public class JavaSdkUtil {
       }
     }
 
-    String[] additionalJars = {
-      "jre/bin/default/jclSC170/vm.jar",
-      "jre/lib/i386/default/jclSC170/vm.jar",
-      "jre/lib/amd64/default/jclSC170/vm.jar",
-      "jre/bin/default/jclSC160/vm.jar",
-      "jre/lib/i386/default/jclSC160/vm.jar",
-      "jre/lib/amd64/default/jclSC160/vm.jar",
-      "lib/classes.zip"
+    String[] ibmJdkVmJarDirs = {
+      "jre/bin/default",
+      "jre/lib/i386/default",
+      "jre/lib/amd64/default"
     };
-    for (String relativePath : additionalJars) {
-      File jar = new File(home, relativePath);
-      if (jar.isFile()) {
-        rootFiles.add(jar);
+    for (String relativePath : ibmJdkVmJarDirs) {
+      File[] vmJarDirs = new File(home, relativePath).listFiles(FileUtilRt.ALL_DIRECTORIES);
+      if (vmJarDirs != null) {
+        for (File dir : vmJarDirs) {
+          if (dir.getName().startsWith("jclSC")) {
+            File vmJar = new File(dir, "vm.jar");
+            if (vmJar.isFile()) {
+              rootFiles.add(vmJar);
+            }
+          }
+        }
       }
     }
+    File classesZip = new File(home, "lib/classes.zip");
+    if (classesZip.isFile()) {
+      rootFiles.add(classesZip);
+    }
+
 
     if (rootFiles.isEmpty()) {
       File classesDir = new File(home, "classes");

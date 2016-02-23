@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -105,13 +105,7 @@ import java.awt.*;
 import java.util.*;
 import java.util.List;
 
-@State(
-  name="ProjectView",
-  storages= {
-    @Storage(
-      file = StoragePathMacros.WORKSPACE_FILE
-    )}
-)
+@State(name = "ProjectView", storages = @Storage(StoragePathMacros.WORKSPACE_FILE))
 public class ProjectViewImpl extends ProjectView implements PersistentStateComponent<Element>, Disposable, QuickActionProvider, BusyObject  {
   private static final Logger LOG = Logger.getInstance("#com.intellij.ide.projectView.impl.ProjectViewImpl");
   private static final Key<String> ID_KEY = Key.create("pane-id");
@@ -141,6 +135,9 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
   private final Map<String, Boolean> myAutoscrollToSource = new THashMap<String, Boolean>();
   private final Map<String, Boolean> myAutoscrollFromSource = new THashMap<String, Boolean>();
   private static final boolean ourAutoscrollFromSourceDefaults = false;
+  
+  private boolean myFoldersAlwaysOnTop = true;
+  
 
   private String myCurrentViewId;
   private String myCurrentViewSubId;
@@ -178,6 +175,8 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
   @NonNls private static final String ELEMENT_AUTOSCROLL_TO_SOURCE = "autoscrollToSource";
   @NonNls private static final String ELEMENT_AUTOSCROLL_FROM_SOURCE = "autoscrollFromSource";
   @NonNls private static final String ELEMENT_SORT_BY_TYPE = "sortByType";
+  @NonNls private static final String ELEMENT_FOLDERS_ALWAYS_ON_TOP = "foldersAlwaysOnTop";
+  @NonNls private static final String ELEMENT_MANUAL_ORDER = "manualOrder";
 
   private static final String ATTRIBUTE_ID = "id";
   private JPanel myViewContentPanel;
@@ -194,7 +193,6 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
   private final Map<String, Element> myUninitializedPaneState = new HashMap<String, Element>();
   private final Map<String, SelectInTarget> mySelectInTargets = new LinkedHashMap<String, SelectInTarget>();
   private ContentManager myContentManager;
-  private boolean myFoldersAlwaysOnTop = true;
 
   public ProjectViewImpl(@NotNull Project project, final FileEditorManager fileEditorManager, final ToolWindowManagerEx toolWindowManager) {
     myProject = project;
@@ -440,10 +438,8 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
       AbstractProjectViewPane pane = myId2Pane.get(id);
 
       int comp = PANE_WEIGHT_COMPARATOR.compare(pane, newPane);
-      if (comp == 0) {
-        System.out.println("here");
-      }
-      LOG.assertTrue(comp != 0);
+      LOG.assertTrue(comp != 0, "Project view pane " + newPane + " has the same weight as " + pane +
+                                ". Please make sure that you overload getWeight() and return a distinct weight value.");
       if (comp > 0) {
         break;
       }
@@ -476,7 +472,6 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
       manager.addContent(content, index++);
       first = false;
     }
-    Disposer.register(this, newPane);
   }
 
   private void showPane(@NotNull AbstractProjectViewPane newPane) {
@@ -552,7 +547,7 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
 
     myContentManager = toolWindow.getContentManager();
     if (!ApplicationManager.getApplication().isUnitTestMode()) {
-      toolWindow.setContentUiType(ToolWindowContentUiType.COMBO, null);
+      toolWindow.setDefaultContentUiType(ToolWindowContentUiType.COMBO);
       ((ToolWindowEx)toolWindow).setAdditionalGearActions(myActionGroup);
       toolWindow.getComponent().putClientProperty(ToolWindowContentUi.HIDE_ID_LABEL, "true");
     }
@@ -600,7 +595,6 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
       if (pane.isInitiallyVisible() && !myId2Pane.containsKey(pane.getId())) {
         addProjectPane(pane);
       }
-      Disposer.register(this, pane);
     }
   }
 
@@ -783,7 +777,7 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
       return ((AbstractProjectViewPSIPane)viewPane).selectCB(element, file, requestFocus);
     }
     select(element, file, requestFocus);
-    return new ActionCallback.Done();
+    return ActionCallback.DONE;
   }
 
   @Override
@@ -1303,9 +1297,7 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
 
   private static void readOption(Element node, @NotNull Map<String, Boolean> options) {
     if (node == null) return;
-    List attributes = node.getAttributes();
-    for (final Object attribute1 : attributes) {
-      Attribute attribute = (Attribute)attribute1;
+    for (Attribute attribute : node.getAttributes()) {
       options.put(attribute.getName(), Boolean.TRUE.toString().equals(attribute.getValue()) ? Boolean.TRUE : Boolean.FALSE);
     }
   }
@@ -1341,7 +1333,11 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
       readOption(navigatorElement.getChild(ELEMENT_AUTOSCROLL_TO_SOURCE), myAutoscrollToSource);
       readOption(navigatorElement.getChild(ELEMENT_AUTOSCROLL_FROM_SOURCE), myAutoscrollFromSource);
       readOption(navigatorElement.getChild(ELEMENT_SORT_BY_TYPE), mySortByType);
+      readOption(navigatorElement.getChild(ELEMENT_MANUAL_ORDER), myManualOrder);
 
+      Element foldersElement = navigatorElement.getChild(ELEMENT_FOLDERS_ALWAYS_ON_TOP);
+      if (foldersElement != null) myFoldersAlwaysOnTop = Boolean.valueOf(foldersElement.getAttributeValue("value"));
+      
       try {
         splitterProportions.readExternal(navigatorElement);
       }
@@ -1397,6 +1393,11 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
     writeOption(navigatorElement, myAutoscrollToSource, ELEMENT_AUTOSCROLL_TO_SOURCE);
     writeOption(navigatorElement, myAutoscrollFromSource, ELEMENT_AUTOSCROLL_FROM_SOURCE);
     writeOption(navigatorElement, mySortByType, ELEMENT_SORT_BY_TYPE);
+    writeOption(navigatorElement, myManualOrder, ELEMENT_MANUAL_ORDER);
+    
+    Element foldersElement = new Element(ELEMENT_FOLDERS_ALWAYS_ON_TOP);
+    foldersElement.setAttribute("value", Boolean.toString(myFoldersAlwaysOnTop));
+    navigatorElement.addContent(foldersElement);
 
     splitterProportions.saveSplitterProportions(myPanel);
     try {
@@ -1436,7 +1437,7 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
   }
 
   public void setAutoscrollToSource(boolean autoscrollMode, String paneId) {
-    myAutoscrollToSource.put(paneId, autoscrollMode ? Boolean.TRUE : Boolean.FALSE);
+    myAutoscrollToSource.put(paneId, autoscrollMode);
   }
 
   @Override
@@ -1528,14 +1529,14 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
 
   @NotNull
   private ActionCallback setPaneOption(@NotNull Map<String, Boolean> optionsMap, boolean value, String paneId, final boolean updatePane) {
-    optionsMap.put(paneId, value ? Boolean.TRUE : Boolean.FALSE);
+    optionsMap.put(paneId, value);
     if (updatePane) {
       final AbstractProjectViewPane pane = getProjectViewPaneById(paneId);
       if (pane != null) {
         return pane.updateFromRoot(false);
       }
     }
-    return new ActionCallback.Done();
+    return ActionCallback.DONE;
   }
 
   private static boolean getPaneOptionValue(@NotNull Map<String, Boolean> optionsMap, String paneId, boolean defaultValue) {
@@ -1906,6 +1907,6 @@ public class ProjectViewImpl extends ProjectView implements PersistentStateCompo
     if (pane == null) {
       pane = myId2Pane.get(myCurrentViewId);
     }
-    return pane != null ? pane.getReady(requestor) : new ActionCallback.Done();
+    return pane != null ? pane.getReady(requestor) : ActionCallback.DONE;
   }
 }

@@ -38,6 +38,7 @@ import com.intellij.psi.util.PsiTreeUtil;
 import com.jetbrains.python.PythonModuleTypeBase;
 import com.jetbrains.python.facet.PythonFacetSettings;
 import com.jetbrains.python.psi.*;
+import com.jetbrains.python.psi.types.TypeEvalContext;
 import com.jetbrains.python.run.PythonRunConfigurationProducer;
 import com.jetbrains.python.testing.unittest.PythonUnitTestRunConfiguration;
 import org.jetbrains.annotations.NonNls;
@@ -58,12 +59,13 @@ abstract public class PythonTestConfigurationProducer extends RunConfigurationPr
     super(configurationFactory);
   }
 
-  @Override
+    @Override
   public boolean isConfigurationFromContext(AbstractPythonTestRunConfiguration configuration, ConfigurationContext context) {
     final Location location = context.getLocation();
     if (location == null || !isAvailable(location)) return false;
     final PsiElement element = location.getPsiElement();
     final PsiFileSystemItem file = element.getContainingFile();
+    if (file == null) return false;
     final VirtualFile virtualFile = element instanceof PsiDirectory ? ((PsiDirectory)element).getVirtualFile()
                                                                     : file.getVirtualFile();
     if (virtualFile == null) return false;
@@ -131,7 +133,7 @@ abstract public class PythonTestConfigurationProducer extends RunConfigurationPr
       return setupConfigurationFromFunction(pyFunction, configuration);
     }
     final PyClass pyClass = PsiTreeUtil.getParentOfType(element, PyClass.class, false);
-    if (pyClass != null && isTestClass(pyClass, configuration)) {
+    if (pyClass != null && isTestClass(pyClass, configuration, TypeEvalContext.userInitiated(pyClass.getProject(), element.getContainingFile()))) {
       return setupConfigurationFromClass(pyClass, configuration);
     }
     if (element == null) return false;
@@ -224,8 +226,8 @@ abstract public class PythonTestConfigurationProducer extends RunConfigurationPr
   }
 
   protected boolean isTestClass(@NotNull final PyClass pyClass,
-                                @Nullable final AbstractPythonTestRunConfiguration configuration) {
-    return PythonUnitTestUtil.isTestCaseClass(pyClass);
+                                @Nullable final AbstractPythonTestRunConfiguration configuration, @Nullable final TypeEvalContext context) {
+    return PythonUnitTestUtil.isTestCaseClass(pyClass, context);
   }
 
   protected boolean isTestFunction(@NotNull final PyFunction pyFunction,
@@ -256,7 +258,7 @@ abstract public class PythonTestConfigurationProducer extends RunConfigurationPr
   }
 
   protected List<PyStatement> getTestCaseClassesFromFile(@NotNull final PyFile pyFile) {
-    return PythonUnitTestUtil.getTestCaseClassesFromFile(pyFile);
+    return PythonUnitTestUtil.getTestCaseClassesFromFile(pyFile, TypeEvalContext.userInitiated(pyFile.getProject(), pyFile));
   }
 
   @Override

@@ -31,22 +31,19 @@ public class ManagingContentRootsTest extends IdeaTestCase {
   @Override
   protected void setUp() throws Exception {
     super.setUp();
-    ApplicationManager.getApplication().runWriteAction(new Runnable() {
-      @Override
-      public void run() {
-        try {
-          LocalFileSystem fs = LocalFileSystem.getInstance();
-          dir = fs.refreshAndFindFileByIoFile(createTempDirectory());
-        }
-        catch (IOException e) {
-          throw new RuntimeException(e);
-        }
+    ApplicationManager.getApplication().runWriteAction(() -> {
+      try {
+        LocalFileSystem fs = LocalFileSystem.getInstance();
+        dir = fs.refreshAndFindFileByIoFile(createTempDirectory());
+      }
+      catch (IOException e) {
+        throw new RuntimeException(e);
       }
     });
   }
 
   public void testCreationOfContentRootWithFile() throws IOException {
-    VirtualFile root = dir.createChildDirectory(null, "root");
+    VirtualFile root = createChildDirectory(dir, "root");
     String url = root.getUrl();
 
     PsiTestUtil.addContentRoot(myModule, root);
@@ -54,45 +51,42 @@ public class ManagingContentRootsTest extends IdeaTestCase {
 
     assertEquals(root, findContentEntry(url).getFile());
 
-    root.delete(null);
+    delete(root);
     assertNotNull(findContentEntry(url));
 
-    root = dir.createChildDirectory(null, "root");
+    root = createChildDirectory(dir, "root");
     assertEquals(root, findContentEntry(url).getFile());
   }
 
   public void testCreationOfContentRootWithUrl() throws IOException {
-    VirtualFile root = dir.createChildDirectory(null, "root");
+    VirtualFile root = createChildDirectory(dir, "root");
     String url = root.getUrl();
     String path = root.getPath();
-    root.delete(null);
+    delete(root);
 
     addContentRoot(path);
 
     assertNotNull(findContentEntry(url));
 
-    root = dir.createChildDirectory(null, "root");
+    root = createChildDirectory(dir, "root");
     assertEquals(root, findContentEntry(url).getFile());
   }
 
   public void testCreationOfContentRootWithUrlWhenFileExists() throws IOException {
-    VirtualFile root = dir.createChildDirectory(null, "root");
+    VirtualFile root = createChildDirectory(dir, "root");
     addContentRoot(root.getPath());
     assertEquals(root, findContentEntry(root.getUrl()).getFile());
   }
 
   public void testGettingModifiableModelCorrectlySetsRootModelForContentEntries() {
-    ApplicationManager.getApplication().runWriteAction(new Runnable() {
-      @Override
-      public void run() {
-        PsiTestUtil.addContentRoot(myModule, dir);
+    ApplicationManager.getApplication().runWriteAction(() -> {
+      PsiTestUtil.addContentRoot(myModule, dir);
 
-        ModifiableRootModel m = getRootManager().getModifiableModel();
-        ContentEntry e = findContentEntry(dir.getUrl(), m);
+      ModifiableRootModel m = getRootManager().getModifiableModel();
+      ContentEntry e = findContentEntry(dir.getUrl(), m);
 
-        assertSame(m, ((ContentEntryImpl)e).getRootModel());
-        m.dispose();
-      }
+      assertSame(m, ((ContentEntryImpl)e).getRootModel());
+      m.dispose();
     });
   }
 
@@ -108,11 +102,8 @@ public class ManagingContentRootsTest extends IdeaTestCase {
   }
 
   private void addContentRoot(final String path) {
-    ApplicationManager.getApplication().runWriteAction(new Runnable() {
-      @Override
-      public void run() {
-        ModuleRootModificationUtil.addContentRoot(getModule(), path);
-      }
+    ApplicationManager.getApplication().runWriteAction(() -> {
+      ModuleRootModificationUtil.addContentRoot(getModule(), path);
     });
   }
 

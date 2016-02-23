@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,17 +40,6 @@ public class TextBuffer {
 
   public TextBuffer(String text) {
     myStringBuilder = new StringBuilder(text);
-  }
-
-  public void setCurrentLine(int line) {
-    setLineMapping(line, myStringBuilder.length()+1);
-  }
-
-  public void setLineMapping(int line, int offset) {
-    if (line >= 0) {
-      checkMapCreated();
-      myLineToOffsetMapping.put(line, offset);
-    }
   }
 
   public TextBuffer append(String str) {
@@ -150,9 +139,12 @@ public class TextBuffer {
     while ((lineEnd = myStringBuilder.indexOf(myLineSeparator, lineStart)) > 0) {
       ++count;
       sb.append(myStringBuilder.substring(lineStart, lineEnd));
-      Integer integer = myLineMapping.get(count);
-      if (integer != null) {
-        sb.append("// ").append(integer);
+      Set<Integer> integers = myLineMapping.get(count);
+      if (integers != null) {
+        sb.append("//");
+        for (Integer integer : integers) {
+          sb.append(' ').append(integer);
+        }
       }
       sb.append(myLineSeparator);
       lineStart = lineEnd + length;
@@ -298,21 +290,19 @@ public class TextBuffer {
     return res;
   }
 
-  public StringBuilder getOriginalText() {
-    return myStringBuilder;
-  }
+  private Map<Integer, Set<Integer>> myLineMapping = null; // new to original
 
-  private Map<Integer, Integer> myLineMapping = null; // new to original
   public void dumpOriginalLineNumbers(int[] lineMapping) {
     if (lineMapping.length > 0) {
-      myLineMapping = new HashMap<Integer, Integer>();
-      for (int i = 0; i < lineMapping.length; i+=2) {
+      myLineMapping = new HashMap<Integer, Set<Integer>>();
+      for (int i = 0; i < lineMapping.length; i += 2) {
         int key = lineMapping[i + 1];
-        int value = lineMapping[i];
-        Integer existing = myLineMapping.get(key);
-        if (existing == null || value < existing) {
-          myLineMapping.put(key, value);
+        Set<Integer> existing = myLineMapping.get(key);
+        if (existing == null) {
+          existing = new TreeSet<Integer>();
+          myLineMapping.put(key, existing);
         }
+        existing.add(lineMapping[i]);
       }
     }
   }

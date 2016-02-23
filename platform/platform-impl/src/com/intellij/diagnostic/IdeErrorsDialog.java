@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,10 +28,10 @@ import com.intellij.ide.plugins.PluginManagerMain;
 import com.intellij.ide.plugins.cl.PluginClassLoader;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.actionSystem.*;
-import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ApplicationNamesInfo;
 import com.intellij.openapi.application.ex.ApplicationEx;
+import com.intellij.openapi.application.ex.ApplicationInfoEx;
 import com.intellij.openapi.application.ex.ApplicationManagerEx;
 import com.intellij.openapi.diagnostic.*;
 import com.intellij.openapi.extensions.ExtensionException;
@@ -46,7 +46,6 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Condition;
-import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.wm.IdeFocusManager;
@@ -55,7 +54,6 @@ import com.intellij.ui.HeaderlessTabbedPane;
 import com.intellij.ui.HyperlinkLabel;
 import com.intellij.ui.IdeBorderFactory;
 import com.intellij.util.Consumer;
-import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.text.DateFormatUtil;
 import com.intellij.util.ui.UIUtil;
@@ -140,7 +138,7 @@ public class IdeErrorsDialog extends DialogWrapper implements MessagePoolListene
   }
 
   private void loadDevelopersAsynchronously() {
-    Task.Backgroundable task = new Task.Backgroundable(null, "Loading developers list", true) {
+    Task.Backgroundable task = new Task.Backgroundable(null, "Loading Developers List", true) {
       private final Collection[] myDevelopers = new Collection[]{Collections.emptyList()};
 
       @Override
@@ -400,43 +398,8 @@ public class IdeErrorsDialog extends DialogWrapper implements MessagePoolListene
 
   private void disablePlugin() {
     final PluginId pluginId = findPluginId(getSelectedMessage().getThrowable());
-    if (pluginId == null) {
-      return;
-    }
-
-    IdeaPluginDescriptor plugin = PluginManager.getPlugin(pluginId);
-    final Ref<Boolean> hasDependants = new Ref<Boolean>(false);
-    PluginManager.checkDependants(plugin, new Function<PluginId, IdeaPluginDescriptor>() {
-                                    @Override
-                                    public IdeaPluginDescriptor fun(PluginId pluginId) {
-                                      return PluginManager.getPlugin(pluginId);
-                                    }
-                                  }, new Condition<PluginId>() {
-      @Override
-      public boolean value(PluginId pluginId) {
-        if (PluginManagerCore.CORE_PLUGIN_ID.equals(pluginId.getIdString())) {
-          return true;
-        }
-        hasDependants.set(true);
-        return false;
-      }
-    }
-    );
-
-    Application app = ApplicationManager.getApplication();
-    DisablePluginWarningDialog d =
-      new DisablePluginWarningDialog(getRootPane(), plugin.getName(), hasDependants.get(), app.isRestartCapable());
-    d.show();
-    switch (d.getExitCode()) {
-      case CANCEL_EXIT_CODE:
-        return;
-      case DisablePluginWarningDialog.DISABLE_EXIT_CODE:
-        PluginManager.disablePlugin(pluginId.getIdString());
-        break;
-      case DisablePluginWarningDialog.DISABLE_AND_RESTART_EXIT_CODE:
-        PluginManager.disablePlugin(pluginId.getIdString());
-        app.restart();
-        break;
+    if (pluginId != null) {
+      DisablePluginWarningDialog.disablePlugin(pluginId, getRootPane());
     }
   }
 
@@ -497,7 +460,7 @@ public class IdeErrorsDialog extends DialogWrapper implements MessagePoolListene
     }
 
     PluginId pluginId = findPluginId(message.getThrowable());
-    return pluginId != null;
+    return pluginId != null && !ApplicationInfoEx.getInstanceEx().isEssentialPlugin(pluginId.getIdString());
   }
 
   private void updateCountLabel() {
@@ -601,7 +564,7 @@ public class IdeErrorsDialog extends DialogWrapper implements MessagePoolListene
       if (submitter == null) {
         PluginId pluginId = findPluginId(throwable);
         IdeaPluginDescriptor plugin = PluginManager.getPlugin(pluginId);
-        if (plugin == null || PluginManagerMain.isJetBrainsPlugin(plugin)) {
+        if (plugin == null || PluginManagerMain.isDevelopedByJetBrains(plugin)) {
           myForeignPluginWarningPanel.setVisible(false);
           return;
         }
@@ -633,7 +596,7 @@ public class IdeErrorsDialog extends DialogWrapper implements MessagePoolListene
               .setHyperlinkText(
                 DiagnosticBundle.message("error.dialog.foreign.plugin.warning.text.vendor") + " " + vendor + " (",
                 contactInfo, ").");
-            myForeignPluginWarningLabel.setHyperlinkTarget(contactInfo);
+            myForeignPluginWarningLabel.setHyperlinkTarget("mailto:" + contactInfo);
           }
         }
         myForeignPluginWarningPanel.setVisible(true);
@@ -1009,7 +972,7 @@ public class IdeErrorsDialog extends DialogWrapper implements MessagePoolListene
       return null;
     }
     IdeaPluginDescriptor plugin = PluginManager.getPlugin(pluginId);
-    if (plugin == null || PluginManagerMain.isJetBrainsPlugin(plugin)) {
+    if (plugin == null) {
       return getCorePluginSubmitter(reporters);
     }
     for (ErrorReportSubmitter reporter : reporters) {
@@ -1017,6 +980,9 @@ public class IdeErrorsDialog extends DialogWrapper implements MessagePoolListene
       if (descriptor != null && Comparing.equal(pluginId, descriptor.getPluginId())) {
         return reporter;
       }
+    }
+    if (PluginManagerMain.isDevelopedByJetBrains(plugin)) {
+      return getCorePluginSubmitter(reporters);
     }
     return null;
   }
@@ -1086,17 +1052,9 @@ public class IdeErrorsDialog extends DialogWrapper implements MessagePoolListene
     }
 
     public void actionPerformed(ActionEvent e) {
-      final DataContext dataContext = ((DataManagerImpl)DataManager.getInstance()).getDataContextTest((Component)e.getSource());
-
-      AnActionEvent event = new AnActionEvent(
-        null, dataContext,
-        ActionPlaces.UNKNOWN,
-        myAnalyze.getTemplatePresentation(),
-        ActionManager.getInstance(),
-        e.getModifiers()
-      );
-
-      final Project project = CommonDataKeys.PROJECT.getData(dataContext);
+      DataContext dataContext = ((DataManagerImpl)DataManager.getInstance()).getDataContextTest((Component)e.getSource());
+      AnActionEvent event = AnActionEvent.createFromAnAction(myAnalyze, null, ActionPlaces.UNKNOWN, dataContext);
+      Project project = CommonDataKeys.PROJECT.getData(dataContext);
       if (project != null) {
         myAnalyze.actionPerformed(event);
         doOKAction();

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,14 @@ import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.module.ModuleUtilCore;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.JavaProjectRootsUtil;
 import com.intellij.openapi.roots.ModuleRootManager;
+import com.intellij.openapi.roots.SourceFolder;
+import com.intellij.openapi.roots.TestModuleProperties;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
@@ -35,23 +40,28 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.jps.model.java.JavaSourceRootType;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class CreateTestAction extends PsiElementBaseIntentionAction {
 
   private static final String CREATE_TEST_IN_THE_SAME_ROOT = "create.test.in.the.same.root";
 
+  @Override
   @NotNull
   public String getText() {
     return CodeInsightBundle.message("intention.create.test");
   }
 
+  @Override
   @NotNull
   public String getFamilyName() {
     return getText();
   }
 
+  @Override
   public boolean isAvailable(@NotNull Project project, Editor editor, @NotNull PsiElement element) {
     if (!isAvailableForElement(element)) return false;
 
@@ -90,6 +100,8 @@ public class CreateTestAction extends PsiElementBaseIntentionAction {
   @Override
   public void invoke(final @NotNull Project project, Editor editor, @NotNull PsiElement element) throws IncorrectOperationException {
     final Module srcModule = ModuleUtilCore.findModuleForPsiElement(element);
+    if (srcModule == null) return;
+
     final PsiClass srcClass = getContainingClass(element);
 
     if (srcClass == null) return;
@@ -98,18 +110,20 @@ public class CreateTestAction extends PsiElementBaseIntentionAction {
     PsiPackage srcPackage = JavaDirectoryService.getInstance().getPackage(srcDir);
 
     final PropertiesComponent propertiesComponent = PropertiesComponent.getInstance();
-    final HashSet<VirtualFile> testFolders = new HashSet<VirtualFile>();
-    checkForTestRoots(srcModule, testFolders);
-    if (testFolders.isEmpty() && !propertiesComponent.getBoolean(CREATE_TEST_IN_THE_SAME_ROOT, false)) {
-      if (Messages.showOkCancelDialog(project, "Create test in the same source root?", "No Test Roots Found", Messages.getQuestionIcon()) !=
-          Messages.OK) {
-        return;
+    Module testModule = suggestModuleForTests(project, srcModule);
+    final List<VirtualFile> testRootUrls = computeTestRoots(testModule);
+    if (testRootUrls.isEmpty() && computeSuitableTestRootUrls(testModule).isEmpty()) {
+      testModule = srcModule;
+      if (!propertiesComponent.getBoolean(CREATE_TEST_IN_THE_SAME_ROOT)) {
+        if (Messages.showOkCancelDialog(project, "Create test in the same source root?", "No Test Roots Found", Messages.getQuestionIcon()) !=
+            Messages.OK) {
+          return;
+        }
+        propertiesComponent.setValue(CREATE_TEST_IN_THE_SAME_ROOT, true);
       }
-
-      propertiesComponent.setValue(CREATE_TEST_IN_THE_SAME_ROOT, String.valueOf(true));
     }
 
-    final CreateTestDialog d = createTestDialog(project, srcModule, srcClass, srcPackage);
+    final CreateTestDialog d = createTestDialog(project, testModule, srcClass, srcPackage);
     if (!d.showAndGet()) {
       return;
     }
@@ -118,36 +132,71 @@ public class CreateTestAction extends PsiElementBaseIntentionAction {
       @Override
       public void run() {
         TestFramework framework = d.getSelectedTestFrameworkDescriptor();
-        TestGenerator generator = TestGenerators.INSTANCE.forLanguage(framework.getLanguage());
-        generator.generateTest(project, d);
+        final TestGenerator generator = TestGenerators.INSTANCE.forLanguage(framework.getLanguage());
+        DumbService.getInstance(project).withAlternativeResolveEnabled(new Runnable() {
+          @Override
+          public void run() {
+            generator.generateTest(project, d);
+          }
+        });
       }
     }, CodeInsightBundle.message("intention.create.test"), this);
+  }
+
+  @NotNull
+  private static Module suggestModuleForTests(@NotNull Project project, @NotNull Module productionModule) {
+    for (Module module : ModuleManager.getInstance(project).getModules()) {
+      if (productionModule.equals(TestModuleProperties.getInstance(module).getProductionModule())) {
+        return module;
+      }
+    }
+    return productionModule;
   }
 
   protected CreateTestDialog createTestDialog(Project project, Module srcModule, PsiClass srcClass, PsiPackage srcPackage) {
     return new CreateTestDialog(project, getText(), srcClass, srcPackage, srcModule);
   }
 
-  protected static void checkForTestRoots(Module srcModule, Set<VirtualFile> testFolders) {
-    checkForTestRoots(srcModule, testFolders, new HashSet<Module>());
+  static List<String> computeSuitableTestRootUrls(@NotNull Module module) {
+    return suitableTestSourceFolders(module).map(SourceFolder::getUrl).collect(Collectors.toList());
   }
 
-  private static void checkForTestRoots(final Module srcModule, final Set<VirtualFile> testFolders, final Set<Module> processed) {
-    final boolean isFirst = processed.isEmpty();
-    if (!processed.add(srcModule)) return;
-
-    testFolders.addAll(ModuleRootManager.getInstance(srcModule).getSourceRoots(JavaSourceRootType.TEST_SOURCE));
-    if (isFirst && !testFolders.isEmpty()) return;
-
-    final HashSet<Module> modules = new HashSet<Module>();
-    ModuleUtilCore.collectModulesDependsOn(srcModule, modules);
-    for (Module module : modules) {
-      checkForTestRoots(module, testFolders, processed);
+  static List<VirtualFile> computeTestRoots(@NotNull Module mainModule) {
+    if (!computeSuitableTestRootUrls(mainModule).isEmpty()) {
+      //create test in the same module, if the test source folder doesn't exist yet it will be created
+      return suitableTestSourceFolders(mainModule)
+        .map(SourceFolder::getFile)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toList());
     }
+
+    //suggest to choose from all dependencies modules
+    final HashSet<Module> modules = new HashSet<Module>();
+    ModuleUtilCore.collectModulesDependsOn(mainModule, modules);
+    return modules.stream()
+      .flatMap(CreateTestAction::suitableTestSourceFolders)
+      .map(SourceFolder::getFile)
+      .filter(Objects::nonNull)
+      .collect(Collectors.toList());
   }
 
-  @Nullable
-  private static PsiClass getContainingClass(PsiElement element) {
+  private static Stream<SourceFolder> suitableTestSourceFolders(@NotNull Module module) {
+    Predicate<SourceFolder> forGeneratedSources = JavaProjectRootsUtil::isForGeneratedSources;
+    return Arrays.stream(ModuleRootManager.getInstance(module).getContentEntries())
+      .flatMap(entry -> entry.getSourceFolders(JavaSourceRootType.TEST_SOURCE).stream())
+      .filter(forGeneratedSources.negate());
+  }
+
+  /**
+   * @deprecated use {@link #computeTestRoots(Module)} instead
+   */
+  @Deprecated
+  protected static void checkForTestRoots(Module srcModule, Set<VirtualFile> testFolders) {
+    testFolders.addAll(computeTestRoots(srcModule));
+  }
+
+    @Nullable
+  protected static PsiClass getContainingClass(PsiElement element) {
     final PsiClass psiClass = PsiTreeUtil.getParentOfType(element, PsiClass.class, false);
     if (psiClass == null) {
       final PsiFile containingFile = element.getContainingFile();
@@ -161,6 +210,7 @@ public class CreateTestAction extends PsiElementBaseIntentionAction {
     return psiClass;
   }
 
+  @Override
   public boolean startInWriteAction() {
     return false;
   }

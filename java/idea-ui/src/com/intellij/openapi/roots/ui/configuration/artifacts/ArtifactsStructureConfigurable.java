@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.intellij.openapi.roots.ui.configuration.artifacts;
 
+import com.intellij.CommonBundle;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DefaultActionGroup;
@@ -22,9 +23,7 @@ import com.intellij.openapi.application.Result;
 import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.options.ConfigurationException;
-import com.intellij.openapi.project.DumbAwareAction;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.project.ProjectBundle;
+import com.intellij.openapi.project.*;
 import com.intellij.openapi.roots.ModifiableRootModel;
 import com.intellij.openapi.roots.impl.libraries.LibraryTableImplUtil;
 import com.intellij.openapi.roots.libraries.Library;
@@ -35,6 +34,7 @@ import com.intellij.openapi.roots.ui.configuration.projectRoot.*;
 import com.intellij.openapi.roots.ui.configuration.projectRoot.daemon.ProjectStructureElement;
 import com.intellij.openapi.ui.MasterDetailsState;
 import com.intellij.openapi.ui.NamedConfigurable;
+import com.intellij.openapi.util.Comparing;
 import com.intellij.packaging.artifacts.*;
 import com.intellij.packaging.impl.artifacts.ArtifactUtil;
 import com.intellij.packaging.impl.artifacts.InvalidArtifact;
@@ -49,6 +49,7 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -293,6 +294,7 @@ public class ArtifactsStructureConfigurable extends BaseStructureConfigurable {
   @Override
   public void apply() throws ConfigurationException {
     myPackagingEditorContext.saveEditorSettings();
+    checkForEmptyAndDuplicatedNames("Artifact", CommonBundle.getErrorTitle(), ArtifactConfigurableBase.class);
     super.apply();
 
     myPackagingEditorContext.getManifestFilesInfo().saveManifestFiles();
@@ -300,12 +302,13 @@ public class ArtifactsStructureConfigurable extends BaseStructureConfigurable {
     if (modifiableModel != null) {
       new WriteAction() {
         @Override
-        protected void run(final Result result) {
+        protected void run(@NotNull final Result result) {
           modifiableModel.commit();
         }
       }.execute();
       myPackagingEditorContext.resetModifiableModel();
     }
+
 
     reset(); // TODO: fix to not reset on apply!
   }
@@ -318,15 +321,32 @@ public class ArtifactsStructureConfigurable extends BaseStructureConfigurable {
   }
 
   @Override
+  protected void updateSelection(@Nullable NamedConfigurable configurable) {
+    boolean selectionChanged = !Comparing.equal(myCurrentConfigurable, configurable);
+    if (selectionChanged && myCurrentConfigurable instanceof ArtifactConfigurable) {
+      ArtifactEditorImpl editor = myPackagingEditorContext.getArtifactEditor(((ArtifactConfigurable)myCurrentConfigurable).getArtifact());
+      if (editor != null) {
+        editor.getLayoutTreeComponent().saveElementProperties();
+      }
+    }
+    super.updateSelection(configurable);
+    if (selectionChanged && configurable instanceof ArtifactConfigurable) {
+      ArtifactEditorImpl editor = myPackagingEditorContext.getArtifactEditor(((ArtifactConfigurable)configurable).getArtifact());
+      if (editor != null) {
+        editor.getLayoutTreeComponent().resetElementProperties();
+      }
+    }
+  }
+
+  @Override
   public String getHelpTopic() {
     final String topic = super.getHelpTopic();
     return topic != null ? topic : "reference.settingsdialog.project.structure.artifacts";
   }
 
   @Override
-  protected void removeArtifact(Artifact artifact) {
-    myPackagingEditorContext.getOrCreateModifiableArtifactModel().removeArtifact(artifact);
-    myContext.getDaemonAnalyzer().removeElement(myPackagingEditorContext.getOrCreateArtifactElement(artifact));
+  protected List<? extends RemoveConfigurableHandler<?>> getRemoveHandlers() {
+    return Collections.singletonList(new ArtifactRemoveHandler());
   }
 
   @Override
@@ -351,6 +371,21 @@ public class ArtifactsStructureConfigurable extends BaseStructureConfigurable {
 
   @Override
   public void dispose() {
+  }
+
+  private class ArtifactRemoveHandler extends RemoveConfigurableHandler<Artifact> {
+    public ArtifactRemoveHandler() {
+      super(ArtifactConfigurableBase.class);
+    }
+
+    @Override
+    public boolean remove(@NotNull Collection<Artifact> artifacts) {
+      for (Artifact artifact : artifacts) {
+        myPackagingEditorContext.getOrCreateModifiableArtifactModel().removeArtifact(artifact);
+        myContext.getDaemonAnalyzer().removeElement(myPackagingEditorContext.getOrCreateArtifactElement(artifact));
+      }
+      return true;
+    }
   }
 
   private class AddArtifactAction extends DumbAwareAction {

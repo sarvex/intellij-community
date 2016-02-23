@@ -16,7 +16,9 @@
 package com.jetbrains.python.testing.doctest;
 
 import com.intellij.execution.runners.ExecutionEnvironment;
+import com.jetbrains.python.PythonHelper;
 import com.jetbrains.python.testing.PythonTestCommandLineStateBase;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -26,7 +28,7 @@ import java.util.List;
  */
 public class PythonDocTestCommandLineState extends PythonTestCommandLineStateBase {
   private final PythonDocTestRunConfiguration myConfig;
-  private static final String UTRUNNER_PY = "pycharm/docrunner.py";
+
 
   public PythonDocTestCommandLineState(PythonDocTestRunConfiguration runConfiguration, ExecutionEnvironment env) {
     super(runConfiguration, env);
@@ -34,10 +36,11 @@ public class PythonDocTestCommandLineState extends PythonTestCommandLineStateBas
   }
 
   @Override
-  protected String getRunner() {
-    return UTRUNNER_PY;
+  protected PythonHelper getRunner() {
+    return PythonHelper.DOCSTRING;
   }
 
+  @NotNull
   protected List<String> getTestSpecs() {
     List<String> specs = new ArrayList<String>();
 

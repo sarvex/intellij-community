@@ -14,6 +14,7 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.Arrays;
 
 public abstract class IpnbEditablePanel<T extends JComponent, K extends IpnbEditableCell> extends IpnbPanel<T, K> {
   private static final Logger LOG = Logger.getInstance(IpnbEditablePanel.class);
@@ -21,6 +22,7 @@ public abstract class IpnbEditablePanel<T extends JComponent, K extends IpnbEdit
   protected JTextArea myEditablePanel;
   public final static String EDITABLE_PANEL = "Editable panel";
   public final static String VIEW_PANEL = "View panel";
+  protected boolean isRunning = false;
 
   public IpnbEditablePanel(@NotNull K cell) {
     super(cell);
@@ -80,7 +82,12 @@ public abstract class IpnbEditablePanel<T extends JComponent, K extends IpnbEdit
 
     c.weightx = 0;
     c.anchor = GridBagConstraints.NORTHWEST;
-    final JComponent promptComponent = IpnbEditorUtil.createPromptComponent(promptNumber, promptType);
+    Integer number = promptNumber;
+    if (isRunning) {
+      number = -1;
+    }
+
+    final JComponent promptComponent = IpnbEditorUtil.createPromptComponent(number, promptType);
     c.insets = new Insets(2,2,2,5);
     parent.add(promptComponent, c);
 
@@ -184,7 +191,7 @@ public abstract class IpnbEditablePanel<T extends JComponent, K extends IpnbEdit
 
   public void updateCellSource() {
     final String text = myEditablePanel.getText();
-    myCell.setSource(StringUtil.splitByLinesKeepSeparators(text != null ? text : ""));
+    myCell.setSource(Arrays.asList(StringUtil.splitByLinesKeepSeparators(text != null ? text : "")));
   }
 
   @SuppressWarnings("CloneDoesntDeclareCloneNotSupportedException")

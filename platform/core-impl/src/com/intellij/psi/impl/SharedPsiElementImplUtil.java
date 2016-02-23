@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,8 +47,12 @@ public class SharedPsiElementImplUtil {
     List<PsiReference> referencesList = new ArrayList<PsiReference>();
     while (element != null) {
       addReferences(offset, element, referencesList);
-      offset = element.getStartOffsetInParent() + offset;
       if (element instanceof PsiFile) break;
+      if (element instanceof HintedReferenceHost &&
+          !((HintedReferenceHost)element).shouldAskParentForReferences(new PsiReferenceService.Hints(null, offset))) {
+        break;
+      }
+      offset = element.getStartOffsetInParent() + offset;
       element = element.getParent();
     }
 
@@ -64,9 +68,16 @@ public class SharedPsiElementImplUtil {
   }
 
   private static void addReferences(int offset, PsiElement element, final Collection<PsiReference> outReferences) {
-    for (final PsiReference reference : element.getReferences()) {
+    PsiReference[] references;
+    if (element instanceof HintedReferenceHost) {
+      references = ((HintedReferenceHost)element).getReferences(new PsiReferenceService.Hints(null, offset));
+    } else {
+      references = element.getReferences();
+    }
+    for (final PsiReference reference : references) {
       if (reference == null) {
-        LOG.error(element);
+        LOG.error("Null reference returned from " + element + " of " + element.getClass());
+        continue;
       }
       for (TextRange range : ReferenceRange.getRanges(reference)) {
         LOG.assertTrue(range != null, reference);

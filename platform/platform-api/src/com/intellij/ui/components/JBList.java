@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2010 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,20 +17,27 @@ package com.intellij.ui.components;
 
 import com.intellij.ide.DataManager;
 import com.intellij.openapi.actionSystem.DataProvider;
+import com.intellij.openapi.ide.CopyPasteManager;
+import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.*;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.NotNullFunction;
-import com.intellij.util.ui.AsyncProcessIcon;
-import com.intellij.util.ui.ComponentWithEmptyText;
-import com.intellij.util.ui.StatusText;
-import com.intellij.util.ui.UIUtil;
+import com.intellij.util.ui.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.accessibility.Accessible;
+import javax.accessibility.AccessibleContext;
+import javax.accessibility.AccessibleRole;
 import javax.swing.*;
+import javax.swing.plaf.UIResource;
+import javax.swing.text.JTextComponent;
 import java.awt.*;
+import java.awt.datatransfer.StringSelection;
+import java.awt.event.ActionEvent;
+import java.util.ArrayList;
 import java.util.Collection;
 
 /**
@@ -151,11 +158,7 @@ public class JBList extends JList implements ComponentWithEmptyText, ComponentWi
   public Dimension getPreferredSize() {
     if (getModel().getSize() == 0 && !StringUtil.isEmpty(getEmptyText().getText())) {
       Dimension s = getEmptyText().getPreferredSize();
-      Insets insets = getInsets();
-      if (insets != null) {
-        s.width += (insets.left + insets.right);
-        s.height += (insets.top + insets.bottom);
-      }
+      JBInsets.addTo(s, getInsets());
       return s;
     } else {
       return super.getPreferredSize();
@@ -165,6 +168,7 @@ public class JBList extends JList implements ComponentWithEmptyText, ComponentWi
   private void init() {
     setSelectionBackground(UIUtil.getListSelectionBackground());
     setSelectionForeground(UIUtil.getListSelectionForeground());
+    installDefaultCopyAction();
 
     myEmptyText = new StatusText(this) {
       @Override
@@ -175,6 +179,51 @@ public class JBList extends JList implements ComponentWithEmptyText, ComponentWi
 
     myExpandableItemsHandler = createExpandableItemsHandler();
     setCellRenderer(new DefaultListCellRenderer());
+  }
+
+  private void installDefaultCopyAction() {
+    final Action copy = getActionMap().get("copy");
+    if (copy == null || copy instanceof UIResource) {
+      Action newCopy = new AbstractAction() {
+        @Override
+        public boolean isEnabled() {
+          return getSelectedIndex() != -1;
+        }
+
+        @Override
+        public void actionPerformed(ActionEvent e) {
+          ArrayList<String> selected = new ArrayList<String>();
+          JBList list = JBList.this;
+          ListCellRenderer renderer = list.getCellRenderer();
+          if (renderer != null) {
+            for (int index : getSelectedIndices()) {
+              Object value = list.getModel().getElementAt(index);
+              //noinspection unchecked
+              Component c = renderer.getListCellRendererComponent(list, value, index, true, true);
+              SimpleColoredComponent coloredComponent = null;
+              if (c instanceof JComponent) {
+                coloredComponent = UIUtil.findComponentOfType((JComponent)c, SimpleColoredComponent.class);
+              }
+              if (coloredComponent != null) {
+                selected.add(coloredComponent.toString());
+              }
+              else if (c instanceof JTextComponent) {
+                selected.add(((JTextComponent)c).getText());
+              }
+              else if (value != null) {
+                selected.add(value.toString());
+              }
+            }
+          }
+
+          if (selected.size() > 0) {
+            String text = StringUtil.join(selected, " ");
+            CopyPasteManager.getInstance().setContents(new StringSelection(text));
+          }
+        }
+      };
+      getActionMap().put("copy", newCopy);
+    }
   }
 
   public boolean isEmpty() {
@@ -267,6 +316,60 @@ public class JBList extends JList implements ComponentWithEmptyText, ComponentWi
         setBackground(UIUtil.getDecoratedRowColor());
       }
       return this;
+    }
+  }
+
+  @Override
+  public AccessibleContext getAccessibleContext() {
+    if (accessibleContext == null) {
+      accessibleContext = new AccessibleJBList();
+    }
+    return accessibleContext;
+  }
+
+  protected class AccessibleJBList extends AccessibleJList {
+    @Override
+    public Accessible getAccessibleAt(Point p) {
+      return getAccessibleChild(locationToIndex(p));
+    }
+
+    @Override
+    public Accessible getAccessibleChild(int i) {
+      if (i < 0 || i >= getModel().getSize()) {
+        return null;
+      } else {
+        return new AccessibleJBListChild(JBList.this, i);
+      }
+    }
+
+    @Override
+    public AccessibleRole getAccessibleRole() {
+      // In some cases, this method is called from the Access Bridge thread
+      // instead of the AWT thread. See https://code.google.com/p/android/issues/detail?id=193072
+      return UIUtil.invokeAndWaitIfNeeded(new Computable<AccessibleRole>() {
+        @Override
+        public AccessibleRole compute() {
+          return AccessibleJBList.super.getAccessibleRole();
+        }
+      });
+    }
+
+    protected class AccessibleJBListChild extends AccessibleJListChild {
+      public AccessibleJBListChild(JBList parent, int indexInParent) {
+        super(parent, indexInParent);
+      }
+
+      @Override
+      public AccessibleRole getAccessibleRole() {
+        // In some cases, this method is called from the Access Bridge thread
+        // instead of the AWT thread. See https://code.google.com/p/android/issues/detail?id=193072
+        return UIUtil.invokeAndWaitIfNeeded(new Computable<AccessibleRole>() {
+          @Override
+          public AccessibleRole compute() {
+            return AccessibleJBListChild.super.getAccessibleRole();
+          }
+        });
+      }
     }
   }
 }

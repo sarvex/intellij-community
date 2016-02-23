@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2008 Dave Griffith, Bas Leijdekkers
+ * Copyright 2003-2015 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,15 +20,13 @@ import com.intellij.psi.tree.IElementType;
 import com.siyeh.ig.psiutils.ControlFlowUtils;
 import org.jetbrains.annotations.NotNull;
 
-class StringVariableIsAppendedToVisitor extends JavaRecursiveElementVisitor {
-
-  private boolean appendedTo = false;
+class StringVariableIsAppendedToVisitor extends JavaRecursiveElementWalkingVisitor {
+  private boolean appendedTo;
   private final PsiVariable variable;
   private final boolean onlyWarnOnLoop;
 
   StringVariableIsAppendedToVisitor(PsiVariable variable,
                                     boolean onlyWarnOnLoop) {
-    super();
     this.variable = variable;
     this.onlyWarnOnLoop = onlyWarnOnLoop;
   }
@@ -81,21 +79,20 @@ class StringVariableIsAppendedToVisitor extends JavaRecursiveElementVisitor {
       return variable.equals(referent);
     }
     if (expression instanceof PsiParenthesizedExpression) {
-      final PsiExpression body =
-        ((PsiParenthesizedExpression)expression).getExpression();
+      final PsiParenthesizedExpression parenthesizedExpression = (PsiParenthesizedExpression)expression;
+      final PsiExpression body = parenthesizedExpression.getExpression();
       return isConcatenation(body);
     }
-    if (expression instanceof PsiBinaryExpression) {
-      final PsiBinaryExpression binaryExpression =
-        (PsiBinaryExpression)expression;
-      final PsiExpression lhs = binaryExpression.getLOperand();
-      final PsiExpression rhs = binaryExpression.getROperand();
-      return isConcatenation(lhs) || isConcatenation(rhs);
+    if (expression instanceof PsiPolyadicExpression) {
+      final PsiPolyadicExpression polyadicExpression = (PsiPolyadicExpression)expression;
+      for (PsiExpression operand : polyadicExpression.getOperands()) {
+        if (isConcatenation(operand)) return true;
+      }
     }
     return false;
   }
 
-  public boolean isAppendedTo() {
+  boolean isAppendedTo() {
     return appendedTo;
   }
 }

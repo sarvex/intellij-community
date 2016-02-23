@@ -5,6 +5,7 @@
   </component>
   <component name="CompilerConfiguration">
     <option name="DEFAULT_COMPILER" value="Javac" />
+    <option name="BUILD_PROCESS_HEAP_SIZE" value="1100" />
     <excludeFromCompile>
       <file url="file://$PROJECT_DIR$/jps/jps-builders/src/org/jetbrains/jps/incremental/java/OptimizedFileManager.java" />
       <file url="file://$PROJECT_DIR$/jps/jps-builders/src/org/jetbrains/jps/javac/OptimizedFileManager.java" />
@@ -29,27 +30,9 @@
         <processorPath useClasspath="true" />
       </profile>
     </annotationProcessing>
-    <bytecodeTargetLevel target="1.6">
-      <module name="annotations" target="1.5" />
-      <module name="gradle-jps-plugin" target="1.6" />
-      <module name="groovy-rt-constants" target="1.5" />
-      <module name="groovy_rt" target="1.5" />
-      <module name="intellilang-jps-plugin" target="1.6" />
-      <module name="java-runtime" target="1.3" />
-      <module name="javac2" target="1.5" />
-      <module name="javaFX-jps-plugin" target="1.6" />
-      <module name="jps-builders" target="1.6" />
-      <module name="jps-launcher" target="1.6" />
-      <module name="jps-model-api" target="1.6" />
-      <module name="jps-model-impl" target="1.6" />
-      <module name="jps-model-serialization" target="1.6" />
-      <module name="jps-standalone-builder" target="1.6" />
-      <module name="junit_rt" target="1.3" />
-      <module name="maven-jps-plugin" target="1.6" />
-      <module name="remote-servers-agent-rt" target="1.5" />
-      <module name="testng_rt" target="1.5" />
-      <module name="ui-designer-jps-plugin" target="1.6" />
-      <module name="util-rt" target="1.6" />
+    <bytecodeTargetLevel>
+      <module name="java-runtime" target="1.1" />
+      <module name="junit_rt" target="1.1" />
     </bytecodeTargetLevel>
   </component>
   <component name="EclipseCompilerSettings">
@@ -64,4 +47,3 @@
     <option name="MAXIMUM_HEAP_SIZE" value="400" />
   </component>
 </project>
-

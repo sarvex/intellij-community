@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,7 +44,6 @@ import com.intellij.xml.util.XmlStringUtil;
 import com.intellij.xml.util.XmlTagUtilBase;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import javax.swing.*;
 import java.awt.*;
@@ -62,7 +61,7 @@ public class RenameDialog extends RefactoringDialog {
   private JCheckBox myCbSearchTextOccurences;
   private final JLabel myNewNamePrefix = new JLabel("");
   private final String myHelpID;
-  private final PsiElement myPsiElement;
+  @NotNull private final PsiElement myPsiElement;
   private final PsiElement myNameSuggestionContext;
   private final Editor myEditor;
   private static final String REFACTORING_NAME = RefactoringBundle.message("rename.title");
@@ -114,6 +113,7 @@ public class RenameDialog extends RefactoringDialog {
     return RefactoringBundle.message("rename.0.and.its.usages.to", getFullName());
   }
 
+  @NotNull
   public PsiElement getPsiElement() {
     return myPsiElement;
   }
@@ -304,7 +304,6 @@ public class RenameDialog extends RefactoringDialog {
     performRename(newName);
   }
 
-  @TestOnly
   public void performRename(final String newName) {
     final RenamePsiElementProcessor elementProcessor = RenamePsiElementProcessor.forElement(myPsiElement);
     elementProcessor.setToSearchInComments(myPsiElement, isSearchInComments());

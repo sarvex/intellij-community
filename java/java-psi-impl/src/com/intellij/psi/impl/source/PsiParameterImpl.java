@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import com.intellij.psi.search.LocalSearchScope;
 import com.intellij.psi.search.SearchScope;
 import com.intellij.psi.stubs.IStubElementType;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.psi.util.PsiUtil;
 import com.intellij.reference.SoftReference;
 import com.intellij.ui.RowIcon;
 import com.intellij.util.IncorrectOperationException;
@@ -69,20 +68,17 @@ public class PsiParameterImpl extends JavaStubPsiElement<PsiParameterStub> imple
         final PsiLambdaExpression lambdaExpression = PsiTreeUtil.getParentOfType(param, PsiLambdaExpression.class);
         if (lambdaExpression != null) {
 
-          PsiType type = LambdaUtil.getFunctionalInterfaceType(lambdaExpression, true);
-          if (type == null) {
-            type = LambdaUtil.getFunctionalInterfaceType(lambdaExpression, false);
-          }
-
-          type = FunctionalInterfaceParameterizationUtil.getGroundTargetType(type, lambdaExpression);
+          PsiType type = FunctionalInterfaceParameterizationUtil.getGroundTargetType(LambdaUtil.getFunctionalInterfaceType(lambdaExpression, true), lambdaExpression);
           if (type instanceof PsiIntersectionType) {
             final PsiType[] conjuncts = ((PsiIntersectionType)type).getConjuncts();
             for (PsiType conjunct : conjuncts) {
-              final PsiType lambdaParameterFromType = getLambdaParameterFromType(parameterIndex, lambdaExpression, conjunct);
-              if (lambdaParameterFromType != null) return lambdaParameterFromType;
+              final PsiType lambdaParameterFromType = LambdaUtil.getLambdaParameterFromType(conjunct, parameterIndex);
+              if (lambdaParameterFromType != null) {
+                return lambdaParameterFromType;
+              }
             }
           } else {
-            final PsiType lambdaParameterFromType = getLambdaParameterFromType(parameterIndex, lambdaExpression, type);
+            final PsiType lambdaParameterFromType = LambdaUtil.getLambdaParameterFromType(type, parameterIndex);
             if (lambdaParameterFromType != null) {
               return lambdaParameterFromType;
             }
@@ -91,23 +87,6 @@ public class PsiParameterImpl extends JavaStubPsiElement<PsiParameterStub> imple
       }
     }
     return new PsiLambdaParameterType(param);
-  }
-
-  private static PsiType getLambdaParameterFromType(int parameterIndex, PsiLambdaExpression lambdaExpression, PsiType conjunct) {
-    final PsiClassType.ClassResolveResult resolveResult = PsiUtil.resolveGenericsClassInType(conjunct);
-    if (resolveResult != null) {
-      final PsiMethod method = LambdaUtil.getFunctionalInterfaceMethod(conjunct);
-      if (method != null) {
-        final PsiParameter[] parameters = method.getParameterList().getParameters();
-        if (parameterIndex < parameters.length) {
-          final PsiType psiType = LambdaUtil.getSubstitutor(method, resolveResult).substitute(parameters[parameterIndex].getType());
-          if (!LambdaUtil.dependsOnTypeParams(psiType, conjunct, lambdaExpression)) {
-            return psiType;
-          }
-        }
-      }
-    }
-    return null;
   }
 
   @Override
@@ -132,29 +111,19 @@ public class PsiParameterImpl extends JavaStubPsiElement<PsiParameterStub> imple
       return stub.getName();
     }
 
-    return getParameterIdentifier().getText();
+    return getNameIdentifier().getText();
   }
 
   @Override
   public final PsiElement setName(@NotNull String name) throws IncorrectOperationException {
-    if (this instanceof PsiReceiverParameter) {
-      throw new IncorrectOperationException("Cannot rename receiver parameter");
-    }
-
-    PsiImplUtil.setName(getParameterIdentifier(), name);
+    PsiImplUtil.setName(getNameIdentifier(), name);
     return this;
   }
 
   @Override
-  public final PsiIdentifier getNameIdentifier() {
-    return PsiTreeUtil.getChildOfType(this, PsiIdentifier.class);
-  }
-
   @NotNull
-  private PsiElement getParameterIdentifier() {
-    PsiJavaToken identifier = PsiTreeUtil.getChildOfAnyType(this, PsiIdentifier.class, PsiKeyword.class);
-    assert identifier != null : getClass() + ":" + getText();
-    return identifier;
+  public final PsiIdentifier getNameIdentifier() {
+    return PsiTreeUtil.getRequiredChildOfType(this, PsiIdentifier.class);
   }
 
   @Override
@@ -192,7 +161,7 @@ public class PsiParameterImpl extends JavaStubPsiElement<PsiParameterStub> imple
       return getLambdaParameterType(this);
     }
     else {
-      return JavaSharedImplUtil.getType(typeElement, getParameterIdentifier());
+      return JavaSharedImplUtil.getType(typeElement, getNameIdentifier());
     }
   }
 

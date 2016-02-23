@@ -17,7 +17,11 @@ package com.jetbrains.python.templateLanguages;
 
 import com.intellij.execution.ExecutionException;
 import com.intellij.facet.ui.ValidationResult;
+import com.intellij.lang.Language;
 import com.intellij.openapi.projectRoots.Sdk;
+import com.intellij.psi.FileViewProvider;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.templateLanguages.TemplateLanguageFileViewProvider;
 import com.jetbrains.python.packaging.PyPackage;
 import com.jetbrains.python.packaging.PyPackageManager;
 import org.jetbrains.annotations.NonNls;
@@ -25,24 +29,29 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class PyTemplatesUtil {
-  private PyTemplatesUtil(){}
-  
+  private PyTemplatesUtil() {
+  }
+
   public static ValidationResult checkInstalled(@Nullable final Sdk sdk, @NotNull final TemplateLanguagePanel templatesPanel,
-                                         @NotNull final String prefix) {
+                                                @NotNull final String prefix) {
     if (sdk == null) return ValidationResult.OK;
     String templateBinding = null;
     @NonNls String language = templatesPanel.getTemplateLanguage();
     if (language != null) {
-      if (language.equals(TemplatesService.JINJA2)) language = "jinja";
-      templateBinding = prefix + language.toLowerCase();
+      String postfix = language.toLowerCase();
+      if (language.equals(TemplatesService.JINJA2)) {
+        postfix = "jinja";
+      }
+      templateBinding = prefix + postfix;
     }
     final PyPackageManager packageManager = PyPackageManager.getInstance(sdk);
     if (templateBinding != null) {
       if (TemplatesService.ALL_TEMPLATE_BINDINGS.contains(templateBinding)) {
         try {
           final PyPackage installedPackage = packageManager.findPackage(templateBinding, false);
-          if (installedPackage == null)
+          if (installedPackage == null) {
             return new ValidationResult(templateBinding + " will be installed on selected interpreter");
+          }
         }
         catch (ExecutionException ignored) {
         }
@@ -61,5 +70,28 @@ public class PyTemplatesUtil {
     return null;
   }
 
+  /**
+   * Fetches template data language if file has {@link TemplateLanguageFileViewProvider}
+   *
+   * @param psiElement       element to get lang for
+   * @param expectedProvider only fetch language if provider has certain type. Pass null for any type.
+   * @return template data language
+   */
+  @Nullable
+  public static Language getTemplateDataLanguage(@Nullable final PsiElement psiElement,
+                                                 @Nullable final Class<? extends TemplateLanguageFileViewProvider> expectedProvider) {
+    if (psiElement == null) {
+      return null;
+    }
+
+    final FileViewProvider provider = psiElement.getContainingFile().getViewProvider();
+    if (provider instanceof TemplateLanguageFileViewProvider) {
+      if (expectedProvider == null || expectedProvider.isInstance(provider)) {
+        return (((TemplateLanguageFileViewProvider)provider).getTemplateDataLanguage());
+      }
+    }
+
+    return psiElement.getLanguage();
+  }
 }
 

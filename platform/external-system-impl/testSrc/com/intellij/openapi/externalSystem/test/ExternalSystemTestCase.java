@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.intellij.openapi.externalSystem.test;
 import com.intellij.compiler.CompilerTestUtil;
 import com.intellij.compiler.artifacts.ArtifactsTestUtil;
 import com.intellij.compiler.impl.ModuleCompileScope;
-import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.Result;
@@ -34,7 +33,6 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.projectRoots.impl.JavaAwareProjectJdkTableImpl;
 import com.intellij.openapi.roots.ModuleRootModificationUtil;
-import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.ByteSequence;
@@ -48,6 +46,9 @@ import com.intellij.testFramework.*;
 import com.intellij.testFramework.fixtures.IdeaProjectTestFixture;
 import com.intellij.testFramework.fixtures.IdeaTestFixtureFactory;
 import com.intellij.util.ArrayUtil;
+import com.intellij.util.Processor;
+import com.intellij.util.ThrowableRunnable;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.io.TestFileSystemItem;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NonNls;
@@ -86,10 +87,6 @@ public abstract class ExternalSystemTestCase extends UsefulTestCase {
 
   private List<String> myAllowedRoots = new ArrayList<String>();
 
-  static {
-    IdeaTestCase.initPlatformPrefix();
-  }
-
   @Before
   @Override
   public void setUp() throws Exception {
@@ -125,9 +122,11 @@ public abstract class ExternalSystemTestCase extends UsefulTestCase {
       }
     });
 
-    ArrayList<String> allowedRoots = new ArrayList<String>();
+    List<String> allowedRoots = new ArrayList<String>();
     collectAllowedRoots(allowedRoots);
-    registerAllowedRoots(allowedRoots, myTestRootDisposable);
+    if (!allowedRoots.isEmpty()) {
+      VfsRootAccess.allowRootAccess(getTestRootDisposable(), ArrayUtil.toStringArray(allowedRoots));
+    }
 
     CompilerTestUtil.enableExternalCompiler();
   }
@@ -135,21 +134,25 @@ public abstract class ExternalSystemTestCase extends UsefulTestCase {
   protected void collectAllowedRoots(List<String> roots) throws IOException {
   }
 
-  public void registerAllowedRoots(List<String> roots, @NotNull Disposable disposable) {
-    final List<String> newRoots = new ArrayList<String>(roots);
-    newRoots.removeAll(myAllowedRoots);
-
-    final String[] newRootsArray = ArrayUtil.toStringArray(newRoots);
-    VfsRootAccess.allowRootAccess(newRootsArray);
-    myAllowedRoots.addAll(newRoots);
-
-    Disposer.register(disposable, new Disposable() {
+  public static Collection<String> collectRootsInside(String root) {
+    final List<String> roots = ContainerUtil.newSmartList();
+    roots.add(root);
+    FileUtil.processFilesRecursively(new File(root), new Processor<File>() {
       @Override
-      public void dispose() {
-        VfsRootAccess.disallowRootAccess(newRootsArray);
-        myAllowedRoots.removeAll(newRoots);
+      public boolean process(File file) {
+        try {
+          String path = file.getCanonicalPath();
+          if (!FileUtil.isAncestor(path, path, false)) {
+            roots.add(path);
+          }
+        }
+        catch (IOException ignore) {
+        }
+        return true;
       }
     });
+
+    return roots;
   }
 
   private void ensureTempDirCreated() throws IOException {
@@ -177,16 +180,11 @@ public abstract class ExternalSystemTestCase extends UsefulTestCase {
   @Override
   public void tearDown() throws Exception {
     try {
-      edt(new Runnable() {
+      EdtTestUtil.runInEdtAndWait(new ThrowableRunnable<Throwable>() {
         @Override
-        public void run() {
-          try {
-            CompilerTestUtil.disableExternalCompiler(myProject);
-            tearDownFixtures();
-          }
-          catch (Exception e) {
-            throw new RuntimeException(e);
-          }
+        public void run() throws Throwable {
+          CompilerTestUtil.disableExternalCompiler(myProject);
+          tearDownFixtures();
         }
       });
       myProject = null;
@@ -314,7 +312,7 @@ public abstract class ExternalSystemTestCase extends UsefulTestCase {
   protected Module createModule(final String name, final ModuleType type) throws IOException {
     return new WriteCommandAction<Module>(myProject) {
       @Override
-      protected void run(Result<Module> moduleResult) throws Throwable {
+      protected void run(@NotNull Result<Module> moduleResult) throws Throwable {
         VirtualFile f = createProjectSubFile(name + "/" + name + ".iml");
         Module module = ModuleManager.getInstance(myProject).newModule(f.getPath(), type.getId());
         PsiTestUtil.addContentRoot(module, f.getParent());
@@ -333,7 +331,7 @@ public abstract class ExternalSystemTestCase extends UsefulTestCase {
     if (f == null) {
       f = new WriteAction<VirtualFile>() {
         @Override
-        protected void run(Result<VirtualFile> result) throws Throwable {
+        protected void run(@NotNull Result<VirtualFile> result) throws Throwable {
           VirtualFile res = dir.createChildData(null, configFileName);
           result.setResult(res);
         }

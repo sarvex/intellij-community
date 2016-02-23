@@ -3,6 +3,7 @@ package org.editorconfig.plugincomponents;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.fileEditor.FileEditor;
 import com.intellij.openapi.fileEditor.TextEditor;
+import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -23,7 +24,7 @@ import java.util.List;
 /**
  * @author Dennis.Ushakov
  */
-public class EditorConfigNotifierProvider extends EditorNotifications.Provider<EditorNotificationPanel> {
+public class EditorConfigNotifierProvider extends EditorNotifications.Provider<EditorNotificationPanel> implements DumbAware {
   private static final Key<EditorNotificationPanel> KEY = Key.create("editor.config.notification.panel");
   private static final String EDITOR_CONFIG_ACCEPTED = "editor.config.accepted";
 
@@ -38,7 +39,7 @@ public class EditorConfigNotifierProvider extends EditorNotifications.Provider<E
     if (!(fileEditor instanceof TextEditor)) return null;
     final Project project = ((TextEditor)fileEditor).getEditor().getProject();
     final CodeStyleSettings settings = CodeStyleSettingsManager.getInstance(project).getCurrentSettings();
-    if (!Utils.isEnabled(settings) || PropertiesComponent.getInstance(project).getBoolean(EDITOR_CONFIG_ACCEPTED, false)) return null;
+    if (!Utils.isEnabled(settings) || PropertiesComponent.getInstance(project).getBoolean(EDITOR_CONFIG_ACCEPTED)) return null;
 
     final List<EditorConfig.OutPair> pairs = SettingsProviderComponent.getInstance().getOutPairs(project, Utils.getFilePath(project, file));
     if (!pairs.isEmpty()) {
@@ -49,17 +50,17 @@ public class EditorConfigNotifierProvider extends EditorNotifications.Provider<E
         }
       }.text("EditorConfig is overriding Code Style settings for this file").
         icon(EditorconfigIcons.Editorconfig);
+      panel.createActionLabel("OK", new Runnable() {
+        @Override
+        public void run() {
+          PropertiesComponent.getInstance(project).setValue(EDITOR_CONFIG_ACCEPTED, true);
+          EditorNotifications.getInstance(project).updateAllNotifications();
+        }
+      });
       panel.createActionLabel("Disable EditorConfig support", new Runnable() {
         @Override
         public void run() {
           settings.getCustomSettings(EditorConfigSettings.class).ENABLED = false;
-          EditorNotifications.getInstance(project).updateAllNotifications();
-        }
-      });
-      panel.createActionLabel("Dismiss", new Runnable() {
-        @Override
-        public void run() {
-          PropertiesComponent.getInstance(project).setValue(EDITOR_CONFIG_ACCEPTED, "true");
           EditorNotifications.getInstance(project).updateAllNotifications();
         }
       });

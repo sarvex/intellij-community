@@ -1,6 +1,6 @@
 
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,17 +20,19 @@ import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.InvalidDataException;
 import com.intellij.openapi.util.JDOMUtil;
+import com.intellij.openapi.util.io.FileFilters;
 import com.intellij.openapi.util.io.FileUtil;
-import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
 import com.intellij.util.text.UniqueNameGenerator;
 import org.jdom.Document;
 import org.jdom.Element;
 import org.jdom.JDOMException;
 import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.NotNull;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -131,17 +133,11 @@ public class MigrationMapSet {
 
   private static File[] getMapFiles() {
     File dir = getMapDirectory();
-    if (dir == null){
+    if (dir == null) {
       return new File[0];
     }
-    File[] ret = dir.listFiles(new FileFilter() {
-      @Override
-      @SuppressWarnings({"HardCodedStringLiteral"})
-      public boolean accept(@NotNull File file){
-        return !file.isDirectory() && StringUtil.endsWithIgnoreCase(file.getName(), ".xml");
-      }
-    });
-    if (ret == null){
+    File[] ret = dir.listFiles(FileFilters.filesWithExtension("xml"));
+    if (ret == null) {
       LOG.error("cannot read directory: " + dir.getAbsolutePath());
       return new File[0];
     }
@@ -243,7 +239,7 @@ public class MigrationMapSet {
     for(int i = 0; i < myMaps.size(); i++){
       MigrationMap map = myMaps.get(i);
 
-      filePaths[i] = dir + File.separator + namesProvider.generateUniqueName(FileUtil.sanitizeName(map.getName())) + ".xml";
+      filePaths[i] = dir + File.separator + namesProvider.generateUniqueName(FileUtil.sanitizeFileName(map.getName(), false)) + ".xml";
       documents[i] = saveMap(map);
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -185,8 +185,10 @@ public class AttachSourcesNotificationProvider extends EditorNotifications.Provi
           if (stream.readInt() == 0xCAFEBABE) {
             int minor = stream.readUnsignedShort();
             int major = stream.readUnsignedShort();
+            StringBuilder info = new StringBuilder().append("bytecode version: ").append(major).append('.').append(minor);
             LanguageLevel level = ClsParsingUtil.getLanguageLevelByVersion(major);
-            return "bytecode version: " + major + "." + minor + " (" + level.getName() + ")";
+            if (level != null) info.append(" (").append(level.getName()).append(')');
+            return info.toString();
           }
         }
         finally {
@@ -252,7 +254,7 @@ public class AttachSourcesNotificationProvider extends EditorNotifications.Provi
         model.addRoot(root, OrderRootType.SOURCES);
         modelsToCommit.add(model);
       }
-      if (modelsToCommit.isEmpty()) return new ActionCallback.Rejected();
+      if (modelsToCommit.isEmpty()) return ActionCallback.REJECTED;
       new WriteAction() {
         @Override
         protected void run(@NotNull final Result result) {
@@ -262,7 +264,7 @@ public class AttachSourcesNotificationProvider extends EditorNotifications.Provi
         }
       }.execute();
 
-      return new ActionCallback.Done();
+      return ActionCallback.DONE;
     }
 
     @Nullable
@@ -305,7 +307,7 @@ public class AttachSourcesNotificationProvider extends EditorNotifications.Provi
       VirtualFile[] candidates = FileChooser.chooseFiles(descriptor, myProject, roots.length == 0 ? null : PathUtil.getLocalFile(roots[0]));
       final VirtualFile[] files = PathUIUtils.scanAndSelectDetectedJavaSourceRoots(myParentComponent, candidates);
       if (files.length == 0) {
-        return new ActionCallback.Rejected();
+        return ActionCallback.REJECTED;
       }
 
       final Map<Library, LibraryOrderEntry> librariesToAppendSourcesTo = new HashMap<Library, LibraryOrderEntry>();
@@ -348,7 +350,7 @@ public class AttachSourcesNotificationProvider extends EditorNotifications.Provi
         }).showCenteredInCurrentWindow(myProject);
       }
 
-      return new ActionCallback.Done();
+      return ActionCallback.DONE;
     }
 
     private static void appendSources(final Library library, final VirtualFile[] files) {

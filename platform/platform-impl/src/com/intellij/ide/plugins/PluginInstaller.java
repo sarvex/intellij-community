@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,7 +56,7 @@ public class PluginInstaller {
   private PluginInstaller() { }
 
   public static boolean prepareToInstall(List<PluginNode> pluginsToInstall,
-                                         List<IdeaPluginDescriptor> allPlugins,
+                                         List<PluginId> allPlugins,
                                          @NotNull ProgressIndicator indicator) {
     updateUrls(pluginsToInstall, indicator);
     Set<PluginNode> dependant = new THashSet<PluginNode>();
@@ -85,7 +85,7 @@ public class PluginInstaller {
     Map<PluginId, IdeaPluginDescriptor> allPlugins = ContainerUtil.newHashMap();
     for (String host : hosts) {
       try {
-        List<IdeaPluginDescriptor> descriptors = RepositoryHelper.loadPlugins(host, null, indicator);
+        List<IdeaPluginDescriptor> descriptors = RepositoryHelper.loadPlugins(host, indicator);
         for (IdeaPluginDescriptor descriptor : descriptors) {
           allPlugins.put(descriptor.getPluginId(), descriptor);
         }
@@ -108,7 +108,7 @@ public class PluginInstaller {
   }
 
   private static boolean prepareToInstall(List<PluginNode> pluginsToInstall,
-                                          List<IdeaPluginDescriptor> allPlugins,
+                                          List<PluginId> allPlugins,
                                           Set<PluginNode> installedDependant,
                                           @NotNull ProgressIndicator indicator) {
     List<PluginId> pluginIds = new SmartList<PluginId>();
@@ -134,7 +134,7 @@ public class PluginInstaller {
 
   private static boolean prepareToInstall(PluginNode pluginNode,
                                           List<PluginId> pluginIds,
-                                          List<IdeaPluginDescriptor> allPlugins,
+                                          List<PluginId> allPlugins,
                                           Set<PluginNode> installedDependant,
                                           @NotNull ProgressIndicator indicator) throws IOException {
     installedDependant.add(pluginNode);
@@ -236,13 +236,8 @@ public class PluginInstaller {
     return true;
   }
 
-  private static boolean isPluginInRepo(PluginId depPluginId, List<IdeaPluginDescriptor> allPlugins) {
-    for (IdeaPluginDescriptor plugin : allPlugins) {
-      if (plugin.getPluginId().equals(depPluginId)) {
-        return true;
-      }
-    }
-    return false;
+  private static boolean isPluginInRepo(PluginId depPluginId, List<PluginId> allPlugins) {
+    return allPlugins.contains(depPluginId);
   }
 
   public static void prepareToUninstall(PluginId pluginId) throws IOException {

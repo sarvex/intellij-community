@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,9 @@ package com.intellij.openapi.editor.colors;
 
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.editor.markup.TextAttributes;
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.JDOMExternalizerUtil;
+import com.intellij.openapi.util.NullableLazyValue;
+import com.intellij.openapi.util.VolatileNullableLazyValue;
 import com.intellij.util.ConcurrencyUtil;
 import com.intellij.util.containers.ContainerUtil;
 import org.jdom.Element;
@@ -51,7 +53,7 @@ public final class TextAttributesKey implements Comparable<TextAttributesKey> {
   }
 
   //read external only
-  public TextAttributesKey(@NotNull Element element) throws InvalidDataException {
+  public TextAttributesKey(@NotNull Element element) {
     this(JDOMExternalizerUtil.readField(element, "myExternalName"));
     Element myDefaultAttributesElement = JDOMExternalizerUtil.getOption(element, "myDefaultAttributes");
     if (myDefaultAttributesElement != null) {
@@ -88,7 +90,7 @@ public final class TextAttributesKey implements Comparable<TextAttributesKey> {
     return find(externalName);
   }
 
-  public void writeExternal(Element element) throws WriteExternalException {
+  public void writeExternal(Element element) {
     JDOMExternalizerUtil.writeField(element, "myExternalName", myExternalName);
 
     if (myDefaultAttributes != NULL_ATTRIBUTES) {
@@ -96,7 +98,6 @@ public final class TextAttributesKey implements Comparable<TextAttributesKey> {
       myDefaultAttributes.writeExternal(option);
     }
   }
-
 
   public boolean equals(final Object o) {
     if (this == o) return true;

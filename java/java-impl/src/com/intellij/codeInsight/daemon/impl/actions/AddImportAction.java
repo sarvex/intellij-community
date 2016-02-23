@@ -22,16 +22,16 @@ import com.intellij.codeInsight.CodeInsightSettings;
 import com.intellij.codeInsight.CodeInsightUtil;
 import com.intellij.codeInsight.FileModificationService;
 import com.intellij.codeInsight.actions.OptimizeImportsProcessor;
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import com.intellij.codeInsight.daemon.QuickFixBundle;
 import com.intellij.codeInsight.hint.QuestionAction;
+import com.intellij.ide.util.DefaultPsiElementCellRenderer;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.*;
 import com.intellij.openapi.options.ShowSettingsUtil;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.ui.popup.JBPopupFactory;
 import com.intellij.openapi.ui.popup.PopupStep;
 import com.intellij.openapi.ui.popup.util.BaseListPopupStep;
 import com.intellij.psi.PsiClass;
@@ -40,12 +40,16 @@ import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiReference;
 import com.intellij.psi.statistics.JavaStatisticsManager;
 import com.intellij.psi.statistics.StatisticsManager;
+import com.intellij.ui.popup.list.ListPopupImpl;
+import com.intellij.ui.popup.list.PopupListElementRenderer;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
+import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -91,7 +95,7 @@ public class AddImportAction implements QuestionAction {
   }
 
   private void chooseClassAndImport() {
-    CodeInsightUtil.sortIdenticalShortNameClasses(myTargetClasses, myReference);
+    CodeInsightUtil.sortIdenticalShortNamedMembers(myTargetClasses, myReference);
 
     final BaseListPopupStep<PsiClass> step =
       new BaseListPopupStep<PsiClass>(QuickFixBundle.message("class.to.import.chooser.title"), myTargetClasses) {
@@ -117,27 +121,7 @@ public class AddImportAction implements QuestionAction {
             return FINAL_CHOICE;
           }
 
-          String qname = selectedValue.getQualifiedName();
-          if (qname == null) return FINAL_CHOICE;
-
-          List<String> toExclude = getAllExcludableStrings(qname);
-
-          return new BaseListPopupStep<String>(null, toExclude) {
-            @NotNull
-            @Override
-            public String getTextFor(String value) {
-              return "Exclude '" + value + "' from auto-import";
-            }
-
-            @Override
-            public PopupStep onChosen(String selectedValue, boolean finalChoice) {
-              if (finalChoice) {
-                excludeFromImport(myProject, selectedValue);
-              }
-
-              return super.onChosen(selectedValue, finalChoice);
-            }
-          };
+          return getExcludesStep(selectedValue.getQualifiedName(), myProject);
         }
 
         @Override
@@ -156,16 +140,57 @@ public class AddImportAction implements QuestionAction {
           return aValue.getIcon(0);
         }
       };
-    JBPopupFactory.getInstance().createListPopup(step).showInBestPositionFor(myEditor);
+    ListPopupImpl popup = new ListPopupImpl(step) {
+      @Override
+      protected ListCellRenderer getListElementRenderer() {
+        final PopupListElementRenderer baseRenderer = (PopupListElementRenderer)super.getListElementRenderer();
+        final DefaultPsiElementCellRenderer psiRenderer = new DefaultPsiElementCellRenderer();
+        return new ListCellRenderer() {
+          @Override
+          public Component getListCellRendererComponent(JList list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+            JPanel panel = new JPanel(new BorderLayout());
+            baseRenderer.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            panel.add(baseRenderer.getNextStepLabel(), BorderLayout.EAST);
+            panel.add(psiRenderer.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus));
+            return panel;
+          }
+        };
+      }
+    };
+    popup.showInBestPositionFor(myEditor);
   }
 
+  @Nullable
+  public static PopupStep getExcludesStep(String qname, final Project project) {
+    if (qname == null) return PopupStep.FINAL_CHOICE;
+
+    List<String> toExclude = getAllExcludableStrings(qname);
+
+    return new BaseListPopupStep<String>(null, toExclude) {
+      @NotNull
+      @Override
+      public String getTextFor(String value) {
+        return "Exclude '" + value + "' from auto-import";
+      }
+
+      @Override
+      public PopupStep onChosen(String selectedValue, boolean finalChoice) {
+        if (finalChoice) {
+          excludeFromImport(project, selectedValue);
+        }
+
+        return super.onChosen(selectedValue, finalChoice);
+      }
+    };
+  }
+  
   public static void excludeFromImport(final Project project, final String prefix) {
     ApplicationManager.getApplication().invokeLater(new Runnable() {
       @Override
       public void run() {
         if (project.isDisposed()) return;
 
-        final AutoImportOptionsConfigurable configurable = new AutoImportOptionsConfigurable();
+        final AutoImportOptionsConfigurable configurable = new AutoImportOptionsConfigurable(project);
         ShowSettingsUtil.getInstance().editConfigurable(project, configurable, new Runnable() {
           @Override
           public void run() {
@@ -196,7 +221,12 @@ public class AddImportAction implements QuestionAction {
         ApplicationManager.getApplication().runWriteAction(new Runnable() {
           @Override
           public void run() {
-            _addImport(ref, targetClass);
+            DumbService.getInstance(myProject).withAlternativeResolveEnabled(new Runnable() {
+              @Override
+              public void run() {
+                _addImport(ref, targetClass);
+              }
+            });
           }
         });
       }
@@ -241,17 +271,6 @@ public class AddImportAction implements QuestionAction {
       myEditor.getCaretModel().moveToLogicalPosition(new LogicalPosition(pos2.line, newCol));
       myEditor.getScrollingModel().scrollToCaret(ScrollType.RELATIVE);
     }
-    ApplicationManager.getApplication().invokeLater(new Runnable() {
-      @Override
-      public void run() {
-        if (!myProject.isDisposed() && myProject.isOpen()) {
-          DaemonCodeAnalyzer daemonCodeAnalyzer = DaemonCodeAnalyzer.getInstance(myProject);
-          if (daemonCodeAnalyzer != null) {
-            daemonCodeAnalyzer.updateVisibleHighlighters(myEditor);
-          }
-        }
-      }
-    });
   }
 
   protected void bindReference(PsiReference ref, PsiClass targetClass) {

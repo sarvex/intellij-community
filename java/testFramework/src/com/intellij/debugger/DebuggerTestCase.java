@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.intellij.debugger;
 
+import com.intellij.JavaTestUtil;
 import com.intellij.debugger.engine.DebugProcessImpl;
 import com.intellij.debugger.engine.JavaDebugProcess;
 import com.intellij.debugger.engine.RemoteStateState;
@@ -60,6 +61,7 @@ import com.intellij.xdebugger.XDebugProcess;
 import com.intellij.xdebugger.XDebugProcessStarter;
 import com.intellij.xdebugger.XDebugSession;
 import com.intellij.xdebugger.XDebuggerManager;
+import com.sun.jdi.Location;
 import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 
@@ -69,17 +71,11 @@ import java.util.StringTokenizer;
 
 public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCase {
   protected DebuggerSession myDebuggerSession;
-  private StringBuffer myConsoleBuffer;
-
-  @Override
-  protected void setUp() throws Exception {
-    super.setUp();
-  }
 
   @Override
   protected void initApplication() throws Exception {
     super.initApplication();
-    setTestJDK();
+    JavaTestUtil.setupTestJDK();
     DebuggerSettings.getInstance().DEBUGGER_TRANSPORT = DebuggerSettings.SOCKET_TRANSPORT;
     DebuggerSettings.getInstance().SKIP_CONSTRUCTORS = false;
     DebuggerSettings.getInstance().SKIP_GETTERS      = false;
@@ -97,11 +93,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
       assertNull(DebuggerManagerEx.getInstanceEx(myProject).getDebugProcess(getDebugProcess().getProcessHandler()));
       myDebuggerSession = null;
     }
-    if(myConsoleBuffer != null) {
-      //println("", b);
-      //println("Console output:", b);
-      //println(myConsoleBuffer.toString(), b);
-    }
+    throwExceptionsIfAny();
     checkTestOutput();
   }
 
@@ -120,9 +112,16 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
 
   @Override
   protected void tearDown() throws Exception {
-    FileEditorManagerEx.getInstanceEx(getProject()).closeAllFiles();
-    myConsoleBuffer = null;
-    super.tearDown();
+    try {
+      FileEditorManagerEx.getInstanceEx(getProject()).closeAllFiles();
+      if (myDebugProcess != null) {
+        myDebugProcess.stop(true);
+        myDebugProcess.waitFor();
+      }
+    }
+    finally {
+      super.tearDown();
+    }
   }
 
   protected void createLocalProcess(String className) throws ExecutionException, InterruptedException, InvocationTargetException {
@@ -180,12 +179,9 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
     }, ModalityState.defaultModalityState());
     myDebugProcess = myDebuggerSession.getProcess();
 
-    //myConsoleBuffer = new StringBuffer();
-
     myDebugProcess.addProcessListener(new ProcessAdapter() {
       @Override
       public void onTextAvailable(ProcessEvent event, Key outputType) {
-        //myConsoleBuffer.append(event.getText());
         print(event.getText(), outputType);
       }
     });
@@ -330,6 +326,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
       @Override
       public PsiFile compute() {
         PsiClass psiClass = JavaPsiFacade.getInstance(myProject).findClass(className, GlobalSearchScope.allScope(myProject));
+        assertNotNull(psiClass);
         return psiClass.getContainingFile();
       }
     });
@@ -339,10 +336,9 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
 
   protected EvaluationContextImpl createEvaluationContext(final SuspendContextImpl suspendContext) {
     try {
-      return new EvaluationContextImpl(
-        suspendContext,
-        suspendContext.getFrameProxy(),
-        suspendContext.getFrameProxy().thisObject());
+      StackFrameProxyImpl proxy = suspendContext.getFrameProxy();
+      assertNotNull(proxy);
+      return new EvaluationContextImpl(suspendContext, proxy, proxy.thisObject());
     }
     catch (EvaluateException e) {
       error(e);
@@ -434,12 +430,24 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
     return createDebuggerContext(suspendContext, suspendContext.getFrameProxy());
   }
 
+  protected void printLocation(SuspendContextImpl suspendContext) {
+    try {
+      Location location = suspendContext.getFrameProxy().location();
+      String message = "paused at " + location.sourceName() + ":" + location.lineNumber();
+      println(message, ProcessOutputTypes.SYSTEM);
+    }
+    catch (Throwable e) {
+      addException(e);
+    }
+  }
+
   protected void createBreakpointInHelloWorld() {
     DebuggerInvocationUtil.invokeAndWait(myProject, new Runnable() {
       @Override
       public void run() {
         BreakpointManager breakpointManager = DebuggerManagerEx.getInstanceEx(myProject).getBreakpointManager();
         PsiClass psiClass = JavaPsiFacade.getInstance(myProject).findClass("HelloWorld", GlobalSearchScope.allScope(myProject));
+        assertNotNull(psiClass);
         Document document = PsiDocumentManager.getInstance(myProject).getDocument(psiClass.getContainingFile());
         breakpointManager.addLineBreakpoint(document, 3);
       }
@@ -477,37 +485,40 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
     return debuggerSession;
   }
 
-  public static class MockConfiguration implements ModuleRunConfiguration {
+  public class MockConfiguration implements ModuleRunConfiguration {
     @Override
     @NotNull
     public Module[] getModules() {
-      return Module.EMPTY_ARRAY;  //To change body of implemented methods use File | Settings | File Templates.
+      if (myModule != null) {
+        return new Module[]{myModule};
+      }
+      else {
+        return Module.EMPTY_ARRAY;
+      }
     }
 
     @Override
     public Icon getIcon() {
-      return null;  //To change body of implemented methods use File | Settings | File Templates.
+      return null;
     }
 
     @Override
     public ConfigurationFactory getFactory() {
-      return null;  //To change body of implemented methods use File | Settings | File Templates.
+      return null;
     }
 
     @Override
-    public void setName(final String name) {
-      //To change body of implemented methods use File | Settings | File Templates.
-    }
+    public void setName(String name) { }
 
     @NotNull
     @Override
     public SettingsEditor<? extends RunConfiguration> getConfigurationEditor() {
-      return null;  //To change body of implemented methods use File | Settings | File Templates.
+      throw new UnsupportedOperationException();
     }
 
     @Override
     public Project getProject() {
-      return null;  //To change body of implemented methods use File | Settings | File Templates.
+      return null;
     }
 
     @Override
@@ -517,18 +528,18 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
     }
 
     @Override
-    public ConfigurationPerRunnerSettings createRunnerSettings(final ConfigurationInfoProvider provider) {
-      return null;  //To change body of implemented methods use File | Settings | File Templates.
+    public ConfigurationPerRunnerSettings createRunnerSettings(ConfigurationInfoProvider provider) {
+      return null;
     }
 
     @Override
-    public SettingsEditor<ConfigurationPerRunnerSettings> getRunnerSettingsEditor(final ProgramRunner runner) {
-      return null;  //To change body of implemented methods use File | Settings | File Templates.
+    public SettingsEditor<ConfigurationPerRunnerSettings> getRunnerSettingsEditor(ProgramRunner runner) {
+      return null;
     }
 
     @Override
     public RunConfiguration clone() {
-      return null;  //To change body of implemented methods use File | Settings | File Templates.
+      return null;
     }
 
     @Override
@@ -537,28 +548,22 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
     }
 
     @Override
-    public RunProfileState getState(@NotNull final Executor executor, @NotNull final ExecutionEnvironment env) throws ExecutionException {
-      return null;  //To change body of implemented methods use File | Settings | File Templates.
+    public RunProfileState getState(@NotNull Executor executor, @NotNull ExecutionEnvironment env) throws ExecutionException {
+      return null;
     }
 
     @Override
     public String getName() {
-      return "";  //To change body of implemented methods use File | Settings | File Templates.
+      return "";
     }
 
     @Override
-    public void checkConfiguration() throws RuntimeConfigurationException {
-      //To change body of implemented methods use File | Settings | File Templates.
-    }
+    public void checkConfiguration() throws RuntimeConfigurationException { }
 
     @Override
-    public void readExternal(final Element element) throws InvalidDataException {
-      //To change body of implemented methods use File | Settings | File Templates.
-    }
+    public void readExternal(Element element) throws InvalidDataException { }
 
     @Override
-    public void writeExternal(final Element element) throws WriteExternalException {
-      //To change body of implemented methods use File | Settings | File Templates.
-    }
+    public void writeExternal(Element element) throws WriteExternalException { }
   }
 }

@@ -19,8 +19,6 @@ package org.intellij.plugins.relaxNG;
 import com.intellij.javaee.ExternalResourceManagerEx;
 import com.intellij.javaee.ExternalResourceManagerExImpl;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.fileTypes.FileTypeManager;
-import com.intellij.openapi.fileTypes.StdFileTypes;
 import org.intellij.plugins.testUtil.CopyFile;
 
 /**
@@ -38,7 +36,6 @@ public class RngXmlHighlightingTest extends HighlightingTestBase {
   @Override
   protected void init() {
     super.init();
-    FileTypeManager.getInstance().registerFileType(StdFileTypes.XML, "fo");
 
     ApplicationManager.getApplication().runWriteAction(new Runnable() {
       @Override
@@ -64,6 +61,7 @@ public class RngXmlHighlightingTest extends HighlightingTestBase {
         m.addIgnoredResource("http://www.ascc.net/xml/schematron");
         m.addIgnoredResource("http://www.w3.org/2000/svg");
         m.addIgnoredResource("http://www.w3.org/1998/Math/MathML");
+        m.addIgnoredResource("http://www.w3.org/1999/02/22-rdf-syntax-ns#");
         m.addIgnoredResource("http://nwalsh.com/xmlns/schema-control/");
         m.addIgnoredResource("http://xml.apache.org/fop/extensions");
         m.addIgnoredResource("http://www.antennahouse.com/names/XSL/Extensions");

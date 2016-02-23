@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.intellij.openapi.editor.ex;
 
+import com.intellij.openapi.actionSystem.ActionGroup;
 import com.intellij.openapi.editor.EditorGutter;
 import com.intellij.openapi.editor.FoldRegion;
 import com.intellij.openapi.editor.markup.GutterIconRenderer;
@@ -30,8 +31,6 @@ public abstract class EditorGutterComponentEx extends JComponent implements Edit
   public abstract boolean isFoldingOutlineShown();
 
   public abstract boolean isLineMarkersShown();
-
-  public abstract boolean isAnnotationsShown();
 
   @Nullable
   public abstract FoldRegion findFoldingAnchorAt(int x, int y);
@@ -50,15 +49,31 @@ public abstract class EditorGutterComponentEx extends JComponent implements Edit
   public abstract void revalidateMarkup();
 
   public abstract int getLineMarkerAreaOffset();
+  
+  public abstract int getIconAreaOffset();
+  
+  public abstract int getLineMarkerFreePaintersAreaOffset();
 
   public abstract int getIconsAreaWidth();
 
+  public abstract int getAnnotationsAreaOffset();
+
+  public abstract int getAnnotationsAreaWidth();
+
   @Nullable
-  public abstract Point getPoint(GutterIconRenderer renderer);
+  public abstract Point getCenterPoint(GutterIconRenderer renderer);
 
   public abstract void setLineNumberConvertor(@NotNull TIntFunction lineNumberConvertor);
 
   public abstract void setLineNumberConvertor(@NotNull TIntFunction lineNumberConvertor1, @Nullable TIntFunction lineNumberConvertor2);
 
   public abstract void setShowDefaultGutterPopup(boolean show);
+
+  public abstract void setGutterPopupGroup(@Nullable ActionGroup group);
+  
+  public abstract void setPaintBackground(boolean value);
+
+  public abstract void setForceShowLeftFreePaintersArea(boolean value);
+
+  public abstract void setForceShowRightFreePaintersArea(boolean value);
 }

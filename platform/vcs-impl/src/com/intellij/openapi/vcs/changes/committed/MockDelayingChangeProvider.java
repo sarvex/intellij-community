@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,12 @@ package com.intellij.openapi.vcs.changes.committed;
 
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.vcs.VcsException;
-import com.intellij.openapi.vcs.changes.*;
+import com.intellij.openapi.vcs.changes.ChangeListManagerGate;
+import com.intellij.openapi.vcs.changes.ChangeProvider;
+import com.intellij.openapi.vcs.changes.ChangelistBuilder;
+import com.intellij.openapi.vcs.changes.VcsDirtyScope;
 import com.intellij.openapi.vfs.VirtualFile;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
 
@@ -31,8 +35,8 @@ public class MockDelayingChangeProvider implements ChangeProvider {
     myLock = new Object();
   }
 
-  public void getChanges(final VcsDirtyScope dirtyScope, final ChangelistBuilder builder, final ProgressIndicator progress,
-                         final ChangeListManagerGate addGate)
+  public void getChanges(@NotNull final VcsDirtyScope dirtyScope, @NotNull final ChangelistBuilder builder, @NotNull final ProgressIndicator progress,
+                         @NotNull final ChangeListManagerGate addGate)
     throws VcsException {
     synchronized (myLock) {
       if (myExecuteInsideUpdate == null) {
@@ -65,7 +69,7 @@ public class MockDelayingChangeProvider implements ChangeProvider {
               runnable.run();
             }
           }
-        });
+        },"vcs delaying execute");
       }
     }
   }

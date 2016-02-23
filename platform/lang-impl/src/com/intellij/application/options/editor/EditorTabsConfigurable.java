@@ -48,6 +48,7 @@ public class EditorTabsConfigurable implements EditorOptionsProvider {
   private JCheckBox myShowDirectoryInTabCheckBox;
   private JRadioButton myActivateRightNeighbouringTabRadioButton;
   private JCheckBox myHideTabsCheckbox;
+  private JCheckBox myReuseNotModifiedTabsCheckBox;
 
   public EditorTabsConfigurable() {
     myEditorTabPlacement.setModel(new DefaultComboBoxModel(new Object[]{
@@ -79,6 +80,7 @@ public class EditorTabsConfigurable implements EditorOptionsProvider {
 
     boolean none = i == UISettings.TABS_NONE;
     myHideKnownExtensions.setEnabled(!none);
+    myHideTabsCheckbox.setEnabled(!none && myScrollTabLayoutInEditorCheckBox.isSelected());
     myScrollTabLayoutInEditorCheckBox.setEnabled(!none);
     myCbModifiedTabsMarkedWithAsterisk.setEnabled(!none);
     myShowTabsTooltipsCheckBox.setEnabled(!none);
@@ -116,11 +118,13 @@ public class EditorTabsConfigurable implements EditorOptionsProvider {
     myCbModifiedTabsMarkedWithAsterisk.setSelected(uiSettings.MARK_MODIFIED_TABS_WITH_ASTERISK);
     myShowTabsTooltipsCheckBox.setSelected(uiSettings.SHOW_TABS_TOOLTIPS);
     myScrollTabLayoutInEditorCheckBox.setSelected(uiSettings.SCROLL_TAB_LAYOUT_IN_EDITOR);
+    myHideTabsCheckbox.setEnabled(myScrollTabLayoutInEditorCheckBox.isSelected());
     myHideTabsCheckbox.setSelected(uiSettings.HIDE_TABS_IF_NEED);
     myEditorTabPlacement.setSelectedItem(uiSettings.EDITOR_TAB_PLACEMENT);
     myHideKnownExtensions.setSelected(uiSettings.HIDE_KNOWN_EXTENSION_IN_TABS);
     myShowDirectoryInTabCheckBox.setSelected(uiSettings.SHOW_DIRECTORY_FOR_NON_UNIQUE_FILENAMES);
     myEditorTabLimitField.setText(Integer.toString(uiSettings.EDITOR_TAB_LIMIT));
+    myReuseNotModifiedTabsCheckBox.setSelected(uiSettings.REUSE_NOT_MODIFIED_TABS);
     myShowCloseButtonOnCheckBox.setSelected(uiSettings.SHOW_CLOSE_BUTTON);
 
     if (uiSettings.CLOSE_NON_MODIFIED_FILES_FIRST) {
@@ -168,12 +172,15 @@ public class EditorTabsConfigurable implements EditorOptionsProvider {
     uiSettings.HIDE_KNOWN_EXTENSION_IN_TABS = hide;
 
     boolean dir = myShowDirectoryInTabCheckBox.isSelected();
-    if (uiSettings.SHOW_DIRECTORY_FOR_NON_UNIQUE_FILENAMES != hide) uiSettingsChanged = true;
-    uiSettings.SHOW_DIRECTORY_FOR_NON_UNIQUE_FILENAMES = myShowDirectoryInTabCheckBox.isSelected();
+    if (uiSettings.SHOW_DIRECTORY_FOR_NON_UNIQUE_FILENAMES != dir) uiSettingsChanged = true;
+    uiSettings.SHOW_DIRECTORY_FOR_NON_UNIQUE_FILENAMES = dir;
 
     uiSettings.CLOSE_NON_MODIFIED_FILES_FIRST = myCloseNonModifiedFilesFirstRadio.isSelected();
     uiSettings.ACTIVATE_MRU_EDITOR_ON_CLOSE = myActivateMRUEditorOnCloseRadio.isSelected();
     uiSettings.ACTIVATE_RIGHT_EDITOR_ON_CLOSE = myActivateRightNeighbouringTabRadioButton.isSelected();
+
+    if (isModified(myReuseNotModifiedTabsCheckBox, uiSettings.REUSE_NOT_MODIFIED_TABS)) uiSettingsChanged = true;
+    uiSettings.REUSE_NOT_MODIFIED_TABS = myReuseNotModifiedTabsCheckBox.isSelected();
 
     String temp = myEditorTabLimitField.getText();
     if (temp.trim().length() > 0) {
@@ -198,6 +205,7 @@ public class EditorTabsConfigurable implements EditorOptionsProvider {
     boolean isModified = isModified(myCbModifiedTabsMarkedWithAsterisk, uiSettings.MARK_MODIFIED_TABS_WITH_ASTERISK);
     isModified |= isModified(myShowTabsTooltipsCheckBox, uiSettings.SHOW_TABS_TOOLTIPS);
     isModified |= isModified(myEditorTabLimitField, uiSettings.EDITOR_TAB_LIMIT);
+    isModified |= isModified(myReuseNotModifiedTabsCheckBox, uiSettings.REUSE_NOT_MODIFIED_TABS);
     int tabPlacement = ((Integer)myEditorTabPlacement.getSelectedItem()).intValue();
     isModified |= tabPlacement != uiSettings.EDITOR_TAB_PLACEMENT;
     isModified |= myHideKnownExtensions.isSelected() != uiSettings.HIDE_KNOWN_EXTENSION_IN_TABS;

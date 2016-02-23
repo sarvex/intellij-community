@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -230,7 +230,7 @@ public class LivePreview extends DocumentAdapter implements SearchResults.Search
 
     final FindResult cursor = mySearchResults.getCursor();
     Editor editor = mySearchResults.getEditor();
-    if (cursor != null) {
+    if (cursor != null && cursor.getEndOffset() <= editor.getDocument().getTextLength()) {
       Set<RangeHighlighter> dummy = new HashSet<RangeHighlighter>();
       Color color = editor.getColorsScheme().getColor(EditorColors.CARET_COLOR);
       highlightRange(cursor, new TextAttributes(null, null, color, EffectType.ROUNDED_BOX, 0), dummy);
@@ -338,6 +338,7 @@ public class LivePreview extends DocumentAdapter implements SearchResults.Search
     final HashSet<RangeHighlighter> toRemove = new HashSet<RangeHighlighter>();
     Set<RangeHighlighter> toAdd = new HashSet<RangeHighlighter>();
     for (RangeHighlighter highlighter : myHighlighters) {
+      if (!highlighter.isValid()) continue;
       boolean intersectsWithSelection = false;
       for (int i = 0; i < starts.length; ++i) {
         TextRange selectionRange = new TextRange(starts[i], ends[i]);
@@ -373,6 +374,7 @@ public class LivePreview extends DocumentAdapter implements SearchResults.Search
 
   private void showReplacementPreview() {
     hideBalloon();
+    if (!mySearchResults.isUpToDate()) return;
     final FindResult cursor = mySearchResults.getCursor();
     final Editor editor = mySearchResults.getEditor();
     if (myDelegate != null && cursor != null) {
@@ -406,7 +408,7 @@ public class LivePreview extends DocumentAdapter implements SearchResults.Search
     balloonBuilder.setCloseButtonEnabled(true);
     myReplacementBalloon = balloonBuilder.createBalloon();
 
-    myReplacementBalloon.show(new ReplacementBalloonPositionTracker(editor), Balloon.Position.above);
+    myReplacementBalloon.show(new ReplacementBalloonPositionTracker(editor), Balloon.Position.below);
   }
 
   private void hideBalloon() {
@@ -455,8 +457,6 @@ public class LivePreview extends DocumentAdapter implements SearchResults.Search
       new Processor<RangeHighlighterEx>() {
         @Override
         public boolean process(RangeHighlighterEx highlighter) {
-          if (!highlighter.getEditorFilter().avaliableIn(mySearchResults.getEditor())) return true;
-
           TextAttributes textAttributes =
             highlighter.getTextAttributes();
           if (highlighter.getUserData(SEARCH_MARKER) != null &&
@@ -534,7 +534,7 @@ public class LivePreview extends DocumentAdapter implements SearchResults.Search
 
       Point startPoint = myEditor.visualPositionToXY(myEditor.offsetToVisualPosition(startOffset));
       Point endPoint = myEditor.visualPositionToXY(myEditor.offsetToVisualPosition(endOffset));
-      Point point = new Point((startPoint.x + endPoint.x)/2, startPoint.y);
+      Point point = new Point((startPoint.x + endPoint.x)/2, startPoint.y + myEditor.getLineHeight());
 
       return new RelativePoint(myEditor.getContentComponent(), point);
     }

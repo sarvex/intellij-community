@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,6 +42,7 @@ import com.intellij.openapi.vfs.pointers.VirtualFilePointer;
 import com.intellij.openapi.vfs.pointers.VirtualFilePointerListener;
 import com.intellij.openapi.vfs.pointers.VirtualFilePointerManager;
 import com.intellij.psi.PsiDocumentManager;
+import com.intellij.util.Consumer;
 import com.intellij.util.PathUtil;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.MessageBusConnection;
@@ -50,6 +51,8 @@ import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.concurrency.AsyncPromise;
+import org.jetbrains.concurrency.Promise;
 import org.jetbrains.idea.maven.model.MavenConstants;
 import org.jetbrains.idea.maven.model.MavenExplicitProfiles;
 import org.jetbrains.idea.maven.utils.MavenMergingUpdateQueue;
@@ -112,7 +115,7 @@ public class MavenProjectsManagerWatcher {
 
     myBusConnection.subscribe(ProjectTopics.MODULES, new ModuleAdapter() {
       @Override
-      public void moduleRemoved(Project project, Module module) {
+      public void moduleRemoved(@NotNull Project project, @NotNull Module module) {
         MavenProject mavenProject = myManager.findProject(module);
         if (mavenProject != null && !myManager.isIgnored(mavenProject)) {
           VirtualFile file = mavenProject.getFile();
@@ -127,7 +130,7 @@ public class MavenProjectsManagerWatcher {
       }
 
       @Override
-      public void moduleAdded(final Project project, final Module module) {
+      public void moduleAdded(@NotNull final Project project, @NotNull final Module module) {
         // this method is needed to return non-ignored status for modules that were deleted (and thus ignored) and then created again with a different module type
         if (myManager.isMavenizedModule(module)) {
           MavenProject mavenProject = myManager.findProject(module);
@@ -166,7 +169,7 @@ public class MavenProjectsManagerWatcher {
               public void run() {
                 new WriteAction() {
                   @Override
-                  protected void run(Result result) throws Throwable {
+                  protected void run(@NotNull Result result) throws Throwable {
                     for (Document each : copy) {
                       PsiDocumentManager.getInstance(myProject).commitDocument(each);
                       ((FileDocumentManagerImpl)FileDocumentManager.getInstance()).saveDocument(each, false);
@@ -270,38 +273,55 @@ public class MavenProjectsManagerWatcher {
     scheduleUpdateAll(false, false);
   }
 
-  public void scheduleUpdateAll(boolean force, final boolean forceImportAndResolve) {
-    Runnable onCompletion = new Runnable() {
-      @Override
-      public void run() {
-        if (myProject.isDisposed()) return;
-
-        if (forceImportAndResolve || myManager.getImportingSettings().isImportAutomatically()) {
-          myManager.scheduleImportAndResolve();
-        }
-      }
-    };
+  /**
+   * Returned {@link Promise} instance isn't guarantied to be marked as rejected in all cases where importing wasn't performed (e.g.
+   * if project is closed)
+   */
+  public Promise<Void> scheduleUpdateAll(boolean force, final boolean forceImportAndResolve) {
+    final AsyncPromise<Void> promise = new AsyncPromise<Void>();
+    Runnable onCompletion = createScheduleImportAction(forceImportAndResolve, promise);
     myReadingProcessor.scheduleTask(new MavenProjectsProcessorReadingTask(force, myProjectsTree, myGeneralSettings, onCompletion));
+    return promise;
   }
 
-  public void scheduleUpdate(List<VirtualFile> filesToUpdate,
-                             List<VirtualFile> filesToDelete,
-                             boolean force,
-                             final boolean forceImportAndResolve) {
-    Runnable onCompletion = new Runnable() {
-      @Override
-      public void run() {
-        if (forceImportAndResolve || myManager.getImportingSettings().isImportAutomatically()) {
-          myManager.scheduleImportAndResolve();
-        }
-      }
-    };
+  public Promise<Void> scheduleUpdate(List<VirtualFile> filesToUpdate,
+                                      List<VirtualFile> filesToDelete,
+                                      boolean force,
+                                      final boolean forceImportAndResolve) {
+    final AsyncPromise<Void> promise = new AsyncPromise<Void>();
+    Runnable onCompletion = createScheduleImportAction(forceImportAndResolve, promise);
     myReadingProcessor.scheduleTask(new MavenProjectsProcessorReadingTask(filesToUpdate,
                                                                           filesToDelete,
                                                                           force,
                                                                           myProjectsTree,
                                                                           myGeneralSettings,
                                                                           onCompletion));
+    return promise;
+  }
+
+  @NotNull
+  private Runnable createScheduleImportAction(final boolean forceImportAndResolve, final AsyncPromise<Void> promise) {
+    return new Runnable() {
+        @Override
+        public void run() {
+          if (myProject.isDisposed()) {
+            promise.setError("Project disposed");
+            return;
+          }
+
+          if (forceImportAndResolve || myManager.getImportingSettings().isImportAutomatically()) {
+            myManager.scheduleImportAndResolve().done(new Consumer<List<Module>>() {
+              @Override
+              public void consume(List<Module> modules) {
+                promise.setResult(null);
+              }
+            });
+          }
+          else {
+            promise.setResult(null);
+          }
+        }
+      };
   }
 
   private void onSettingsChange() {

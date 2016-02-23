@@ -93,12 +93,7 @@ import java.util.Collections;
 import java.util.List;
 
 public abstract class DaemonAnalyzerTestCase extends CodeInsightTestCase {
-  private final FileTreeAccessFilter myFileTreeAccessFilter = new FileTreeAccessFilter();
-
-  @Override
-  protected boolean isRunInWriteAction() {
-    return false;
-  }
+  private VirtualFileFilter myVirtualFileFilter = new FileTreeAccessFilter();
 
   @Override
   protected void setUp() throws Exception {
@@ -221,7 +216,7 @@ public abstract class DaemonAnalyzerTestCase extends CodeInsightTestCase {
       public HighlightTestInfo doTest() {
         try { configureByFiles(projectRoot, filePaths); }
         catch (Exception e) { throw new RuntimeException(e); }
-        ExpectedHighlightingData data = new ExpectedHighlightingData(myEditor.getDocument(), checkWarnings, checkWeakWarnings, checkInfos, myFile);
+        ExpectedHighlightingData data = new JavaExpectedHighlightingData(myEditor.getDocument(), checkWarnings, checkWeakWarnings, checkInfos, myFile);
         if (checkSymbolNames) data.checkSymbolNames();
         checkHighlighting(data);
         return this;
@@ -254,9 +249,9 @@ public abstract class DaemonAnalyzerTestCase extends CodeInsightTestCase {
       new Condition<HighlightInfo>() {
         @Override
         public boolean value(HighlightInfo info) {
-          return (info.getSeverity() == HighlightSeverity.INFORMATION) && checkInfos ||
-                 (info.getSeverity() == HighlightSeverity.WARNING) && checkWarnings ||
-                 (info.getSeverity() == HighlightSeverity.WEAK_WARNING) && checkWeakWarnings ||
+          return info.getSeverity() == HighlightSeverity.INFORMATION && checkInfos ||
+                 info.getSeverity() == HighlightSeverity.WARNING && checkWarnings ||
+                 info.getSeverity() == HighlightSeverity.WEAK_WARNING && checkWeakWarnings ||
                   info.getSeverity().compareTo(HighlightSeverity.WARNING) > 0;
         }
       });
@@ -282,7 +277,7 @@ public abstract class DaemonAnalyzerTestCase extends CodeInsightTestCase {
     }
     final JavaPsiFacadeEx facade = getJavaFacade();
     if (facade != null) {
-      facade.setAssertOnFileLoadingFilter(myFileTreeAccessFilter, myTestRootDisposable); // check repository work
+      facade.setAssertOnFileLoadingFilter(myVirtualFileFilter, myTestRootDisposable); // check repository work
     }
 
     try {
@@ -300,12 +295,26 @@ public abstract class DaemonAnalyzerTestCase extends CodeInsightTestCase {
     }
   }
 
+  @Override
+  protected Editor createEditor(@NotNull VirtualFile file) {
+    if (myVirtualFileFilter instanceof FileTreeAccessFilter) {
+      allowTreeAccessForFile(file);
+    }
+    return super.createEditor(file);
+  }
+
+  protected void setVirtualFileFilter(@NotNull VirtualFileFilter filter) {
+    myVirtualFileFilter = filter;
+  }
+
   protected void allowTreeAccessForFile(@NotNull VirtualFile file) {
-    myFileTreeAccessFilter.allowTreeAccessForFile(file);
+    assert myVirtualFileFilter instanceof FileTreeAccessFilter : "configured filter does not support this method";
+    ((FileTreeAccessFilter)myVirtualFileFilter).allowTreeAccessForFile(file);
   }
 
   protected void allowTreeAccessForAllFiles() {
-    myFileTreeAccessFilter.allowTreeAccessForAllFiles();
+    assert myVirtualFileFilter instanceof FileTreeAccessFilter : "configured filter does not support this method";
+    ((FileTreeAccessFilter)myVirtualFileFilter).allowTreeAccessForAllFiles();
   }
 
   @NotNull
@@ -363,7 +372,7 @@ public abstract class DaemonAnalyzerTestCase extends CodeInsightTestCase {
   }
 
   @NotNull
-  protected static List<HighlightInfo> filter(@NotNull List<HighlightInfo> infos, @NotNull HighlightSeverity minSeverity) {
+  public static List<HighlightInfo> filter(@NotNull List<HighlightInfo> infos, @NotNull HighlightSeverity minSeverity) {
     ArrayList<HighlightInfo> result = new ArrayList<HighlightInfo>();
     for (final HighlightInfo info : infos) {
       if (info.getSeverity().compareTo(minSeverity) >= 0) result.add(info);

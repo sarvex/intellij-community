@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.jetbrains.python.run;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.execution.process.KillableColoredProcessHandler;
+import com.intellij.openapi.util.registry.Registry;
 import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.Charset;
@@ -26,22 +27,22 @@ import java.nio.charset.Charset;
  * @author traff
  */
 public class PythonProcessHandler extends KillableColoredProcessHandler {
-  protected PythonProcessHandler(@NotNull GeneralCommandLine commandLine) throws ExecutionException {
-    super(commandLine);
+  public static final boolean SOFT_KILL_ON_WIN = Registry.is("kill.windows.processes.softly", false);
+
+  public PythonProcessHandler(@NotNull GeneralCommandLine commandLine) throws ExecutionException {
+    this(commandLine, SOFT_KILL_ON_WIN);
   }
 
-  public PythonProcessHandler(Process process, String commandLine, @NotNull Charset charset) {
+  public PythonProcessHandler(@NotNull GeneralCommandLine commandLine, boolean softKillOnWin) throws ExecutionException {
+    super(commandLine, softKillOnWin);
+  }
+
+  public PythonProcessHandler(Process process, @NotNull String commandLine, @NotNull Charset charset) {
     super(process, commandLine, charset);
   }
 
   @Override
   protected boolean shouldDestroyProcessRecursively() {
     return true;
-  }
-
-  public static PythonProcessHandler createProcessHandler(@NotNull GeneralCommandLine commandLine)
-    throws ExecutionException {
-
-    return new PythonProcessHandler(commandLine);
   }
 }

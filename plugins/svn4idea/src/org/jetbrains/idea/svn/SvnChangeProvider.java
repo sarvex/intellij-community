@@ -33,6 +33,7 @@ import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.EventDispatcher;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.svn.actions.CleanupWorker;
@@ -76,8 +77,8 @@ public class SvnChangeProvider implements ChangeProvider {
     mySvnFileUrlMapping = (SvnFileUrlMappingImpl) vcs.getSvnFileUrlMapping();
   }
 
-  public void getChanges(@NotNull VcsDirtyScope dirtyScope, @NotNull ChangelistBuilder builder, @Nullable ProgressIndicator progress,
-                         final ChangeListManagerGate addGate) throws VcsException {
+  public void getChanges(@NotNull VcsDirtyScope dirtyScope, @NotNull ChangelistBuilder builder, @NotNull ProgressIndicator progress,
+                         @NotNull ChangeListManagerGate addGate) throws VcsException {
     final SvnScopeZipper zipper = new SvnScopeZipper(dirtyScope);
     zipper.run();
 
@@ -137,14 +138,14 @@ public class SvnChangeProvider implements ChangeProvider {
   }
 
   private static void processUnsaved(@NotNull VcsDirtyScope dirtyScope,
-                                     ChangeListManagerGate addGate,
+                                     @NotNull ChangeListManagerGate addGate,
                                      @NotNull SvnChangeProviderContext context)
     throws SVNException {
     FileDocumentManager fileDocumentManager = FileDocumentManager.getInstance();
 
     for (Document unsavedDocument : fileDocumentManager.getUnsavedDocuments()) {
       final VirtualFile file = fileDocumentManager.getFile(unsavedDocument);
-      if (file != null && dirtyScope.belongsTo(new FilePathImpl(file)) && fileDocumentManager.isFileModified(file)) {
+      if (file != null && dirtyScope.belongsTo(VcsUtil.getFilePath(file)) && fileDocumentManager.isFileModified(file)) {
         final FileStatus status = addGate.getStatus(file);
         if (status == null || FileStatus.NOT_CHANGED.equals(status)) {
           context.addModifiedNotSavedChange(file);
@@ -300,7 +301,7 @@ public class SvnChangeProvider implements ChangeProvider {
     FilePath path = changedFile.getFilePath();
 
     return SvnContentRevision
-      .createBaseRevision(myVcs, forDeleted ? FilePathImpl.createForDeletedFile(status.getFile(), path.isDirectory()) : path,
+      .createBaseRevision(myVcs, forDeleted ? VcsUtil.getFilePath(status.getFile(), path.isDirectory()) : path,
                           status.getRevision());
   }
 

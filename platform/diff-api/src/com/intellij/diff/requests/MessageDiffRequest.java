@@ -18,7 +18,7 @@ package com.intellij.diff.requests;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class MessageDiffRequest extends DiffRequest {
+public class MessageDiffRequest extends DiffRequest {
   @Nullable private String myTitle;
   @NotNull private String myMessage;
 
@@ -48,5 +48,9 @@ public abstract class MessageDiffRequest extends DiffRequest {
 
   public void setMessage(@NotNull String message) {
     myMessage = message;
+  }
+
+  @Override
+  public final void onAssigned(boolean isAssigned) {
   }
 }

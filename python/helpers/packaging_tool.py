@@ -33,7 +33,7 @@ def error(message, retcode):
 
 
 def error_no_pip():
-    tb = sys.exc_traceback
+    type, value, tb = sys.exc_info()
     if tb is not None and tb.tb_next is None:
         error("Python packaging tool 'pip' not found", ERROR_NO_PIP)
     else:
@@ -50,6 +50,52 @@ def do_list():
         sys.stdout.write('\t'.join([pkg.project_name, pkg.version, pkg.location, requires])+chr(10))
     sys.stdout.flush()
 
+
+def do_get_versions(urls, req):
+    if req is not None:
+        for version in VersionsFinder(urls).get_versions(req):
+            if len(version) > 2:
+                sys.stdout.write(version[2] + chr(10))
+        sys.stdout.flush()
+
+
+
+def do_get_latest_version(urls, req):
+    try:
+        from pip.index import PackageFinder, Link
+    except ImportError:
+        error_no_pip()
+
+    class VersionsFinder(PackageFinder):
+        def __init__(self, index_urls, *args, **kwargs):
+            super(VersionsFinder, self).__init__([], index_urls, *args, **kwargs)
+
+        def get_versions(self, req):
+            class Req:
+                def __init__(self, name):
+                    self.name = name
+
+            def mkurl_pypi_url(url):
+                loc = os.path.join(url, req)
+                if not loc.endswith('/'):
+                    loc += '/'
+                return loc
+
+            locations = [mkurl_pypi_url(url) for url in self.index_urls] + self.find_links
+            locations = [Link(url, trusted=True) for url in locations]
+
+            versions = []
+            for page in self._get_pages(locations, Req(req)):
+                versions.extend(self._package_versions(page.links, req.lower()))
+
+            return sorted(list(versions), reverse=True)
+    if req is not None:
+        for version in VersionsFinder(urls).get_versions(req):
+            if len(version) > 2:
+                sys.stdout.write(version[2] + chr(10))
+                sys.stdout.flush()
+                return
+    return ""
 
 def do_install(pkgs):
     try:
@@ -115,6 +161,10 @@ def main():
             if len(sys.argv) != 2:
                 usage()
             do_list()
+        elif cmd == 'latestVersion':
+            if len(sys.argv) < 4:
+                usage()
+            do_get_latest_version(sys.argv[3:], sys.argv[2])
         elif cmd == 'install':
             if len(sys.argv) < 2:
                 usage()

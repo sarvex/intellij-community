@@ -20,7 +20,6 @@ import com.intellij.lang.ASTFactory;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.properties.*;
 import com.intellij.lang.properties.ResourceBundle;
-import com.intellij.lang.properties.ResourceBundleManager;
 import com.intellij.lang.properties.parsing.PropertiesElementTypes;
 import com.intellij.lang.properties.psi.PropertiesElementFactory;
 import com.intellij.lang.properties.psi.PropertiesFile;
@@ -99,16 +98,6 @@ public class PropertiesFileImpl extends PsiFileBase implements PropertiesFile {
     }
   }
 
-  public Character findFirstKeyValueDelimiter() {
-    for (IProperty property : myProperties) {
-      final Character separator = ((PropertyImpl)property).getKeyValueDelimiter();
-      if (separator != null) {
-        return separator;
-      }
-    }
-    return null;
-  }
-
   @Override
   public IProperty findPropertyByKey(@NotNull String key) {
     ensurePropertiesLoaded();
@@ -136,7 +125,7 @@ public class PropertiesFileImpl extends PsiFileBase implements PropertiesFile {
   @Override
   @NotNull
   public Locale getLocale() {
-    return ResourceBundleManager.getInstance(getProject()).getLocale(getVirtualFile());
+    return PropertiesUtil.getLocale(this);
   }
 
   @Override
@@ -151,7 +140,7 @@ public class PropertiesFileImpl extends PsiFileBase implements PropertiesFile {
   @NotNull
   public PsiElement addProperty(@NotNull IProperty property) throws IncorrectOperationException {
     final IProperty position = findInsertionPosition(property);
-    return addPropertyAfter((Property)property, (Property)position);
+    return addPropertyAfter(property, position);
   }
 
   private IProperty findInsertionPosition(@NotNull IProperty property) {
@@ -167,7 +156,7 @@ public class PropertiesFileImpl extends PsiFileBase implements PropertiesFile {
             final String k1 = p1.getKey();
             final String k2 = p2.getKey();
             LOG.assertTrue(k1 != null && k2 != null);
-            return k1.compareTo(k2);
+            return String.CASE_INSENSITIVE_ORDER.compare(k1, k2);
           }
         });
         return insertIndex == -1 ? null :myProperties.get(insertIndex < 0 ? - insertIndex - 2 : insertIndex);
@@ -178,11 +167,11 @@ public class PropertiesFileImpl extends PsiFileBase implements PropertiesFile {
 
   @Override
   @NotNull
-  public PsiElement addPropertyAfter(@NotNull final Property property, @Nullable final Property anchor) throws IncorrectOperationException {
-    final TreeElement copy = ChangeUtil.copyToElement(property);
+  public PsiElement addPropertyAfter(@NotNull final IProperty property, @Nullable final IProperty anchor) throws IncorrectOperationException {
+    final TreeElement copy = ChangeUtil.copyToElement(property.getPsiElement());
     List<IProperty> properties = getProperties();
     ASTNode anchorBefore = anchor == null ? properties.isEmpty() ? null : properties.get(0).getPsiElement().getNode()
-                           : anchor.getNode().getTreeNext();
+                           : anchor.getPsiElement().getNode().getTreeNext();
     if (anchorBefore != null) {
       if (anchorBefore.getElementType() == TokenType.WHITE_SPACE) {
         anchorBefore = anchorBefore.getTreeNext();
@@ -201,13 +190,13 @@ public class PropertiesFileImpl extends PsiFileBase implements PropertiesFile {
   @NotNull
   @Override
   public IProperty addProperty(String key, String value) {
-    return (IProperty)addProperty(PropertiesElementFactory.createProperty(getProject(), key, value));
+    return (IProperty)addProperty(PropertiesElementFactory.createProperty(getProject(), key, value, null));
   }
 
   @NotNull
   @Override
-  public IProperty addPropertyAfter(String key, String value, @Nullable Property anchor) {
-    return (IProperty)addPropertyAfter((Property) PropertiesElementFactory.createProperty(getProject(), key, value), anchor);
+  public IProperty addPropertyAfter(String key, String value, @Nullable IProperty anchor) {
+    return (IProperty)addPropertyAfter(PropertiesElementFactory.createProperty(getProject(), key, value, null), anchor);
   }
 
   private void insertLineBreakBefore(final ASTNode anchorBefore) {

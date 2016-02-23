@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,40 +32,52 @@ import com.intellij.debugger.settings.DebuggerSettings;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Computable;
-import com.intellij.psi.PsiMethod;
-import com.intellij.psi.util.PsiTreeUtil;
+import com.intellij.psi.PsiElement;
 import com.intellij.util.Range;
 import com.sun.jdi.Location;
 import com.sun.jdi.Method;
 import com.sun.jdi.VMDisconnectedException;
 import com.sun.jdi.request.StepRequest;
+import org.intellij.lang.annotations.MagicConstant;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class RequestHint {
   public static final int STOP = 0;
+  public static final int RESUME = -100;
+
   private static final Logger LOG = Logger.getInstance("#com.intellij.debugger.engine.RequestHint");
+  @MagicConstant (intValues = {StepRequest.STEP_MIN, StepRequest.STEP_LINE})
   private final int mySize;
+  @MagicConstant (intValues = {StepRequest.STEP_INTO, StepRequest.STEP_OVER, StepRequest.STEP_OUT})
   private final int myDepth;
   private final SourcePosition myPosition;
   private final int myFrameCount;
+  private boolean mySteppedOut = false;
 
   @Nullable
   private final MethodFilter myMethodFilter;
   private boolean myTargetMethodMatched = false;
 
   private boolean myIgnoreFilters = false;
+  private boolean myResetIgnoreFilters = false;
   private boolean myRestoreBreakpoints = false;
 
   public RequestHint(final ThreadReferenceProxyImpl stepThread, final SuspendContextImpl suspendContext, @NotNull MethodFilter methodFilter) {
     this(stepThread, suspendContext, StepRequest.STEP_LINE, StepRequest.STEP_INTO, methodFilter);
   }
 
-  public RequestHint(final ThreadReferenceProxyImpl stepThread, final SuspendContextImpl suspendContext, int depth) {
+  public RequestHint(final ThreadReferenceProxyImpl stepThread,
+                     final SuspendContextImpl suspendContext,
+                     @MagicConstant (intValues = {StepRequest.STEP_INTO, StepRequest.STEP_OVER, StepRequest.STEP_OUT}) int depth) {
     this(stepThread, suspendContext, StepRequest.STEP_LINE, depth, null);
   }
 
-  private RequestHint(final ThreadReferenceProxyImpl stepThread, final SuspendContextImpl suspendContext, int stepSize, int depth, @Nullable MethodFilter methodFilter) {
+  private RequestHint(final ThreadReferenceProxyImpl stepThread,
+                      final SuspendContextImpl suspendContext,
+                      @MagicConstant (intValues = {StepRequest.STEP_MIN, StepRequest.STEP_LINE}) int stepSize,
+                      @MagicConstant (intValues = {StepRequest.STEP_INTO, StepRequest.STEP_OVER, StepRequest.STEP_OUT}) int depth,
+                      @Nullable MethodFilter methodFilter) {
     mySize = stepSize;
     myDepth = depth;
     myMethodFilter = methodFilter;
@@ -111,6 +123,14 @@ public class RequestHint {
     myIgnoreFilters = ignoreFilters;
   }
 
+  public void setResetIgnoreFilters(boolean resetIgnoreFilters) {
+    myResetIgnoreFilters = resetIgnoreFilters;
+  }
+
+  public boolean isResetIgnoreFilters() {
+    return myResetIgnoreFilters;
+  }
+
   public void setRestoreBreakpoints(boolean restoreBreakpoints) {
     myRestoreBreakpoints = restoreBreakpoints;
   }
@@ -123,10 +143,12 @@ public class RequestHint {
     return myIgnoreFilters;
   }
 
+  @MagicConstant (intValues = {StepRequest.STEP_MIN, StepRequest.STEP_LINE})
   public int getSize() {
     return mySize;
   }
 
+  @MagicConstant (intValues = {StepRequest.STEP_INTO, StepRequest.STEP_OVER, StepRequest.STEP_OUT})
   public int getDepth() {
     return myDepth;
   }
@@ -140,11 +162,14 @@ public class RequestHint {
     return myMethodFilter instanceof BreakpointStepMethodFilter || myTargetMethodMatched;
   }
 
-  private boolean isTheSameDepth(SuspendContextImpl context) {
+  private boolean isTheSameFrame(SuspendContextImpl context) {
+    if (mySteppedOut) return false;
     final ThreadReferenceProxyImpl contextThread = context.getThread();
     if (contextThread != null) {
       try {
-        return myFrameCount == contextThread.frameCount();
+        int currentDepth = contextThread.frameCount();
+        if (currentDepth < myFrameCount) mySteppedOut = true;
+        return currentDepth == myFrameCount;
       }
       catch (EvaluateException ignored) {
       }
@@ -158,8 +183,15 @@ public class RequestHint {
     }
     else {
       Range<Integer> exprLines = myMethodFilter.getCallingExpressionLines();
-      return exprLines != null && locationPosition.getLine() >= exprLines.getFrom() && locationPosition.getLine() <= exprLines.getTo();
+      return exprLines != null && exprLines.isWithin(locationPosition.getLine());
     }
+  }
+
+  private static int reached(MethodFilter filter, SuspendContextImpl context) {
+    if (filter instanceof ActionMethodFilter) {
+      return ((ActionMethodFilter)filter).onReached(context);
+    }
+    return STOP;
   }
 
   public int getNextStepDepth(final SuspendContextImpl context) {
@@ -171,10 +203,10 @@ public class RequestHint {
           frameProxy != null &&
           !(myMethodFilter instanceof BreakpointStepMethodFilter) &&
           myMethodFilter.locationMatches(context.getDebugProcess(), frameProxy.location()) &&
-          !isTheSameDepth(context)
+          !isTheSameFrame(context)
         ) {
         myTargetMethodMatched = true;
-        return STOP;
+        return reached(myMethodFilter, context);
       }
 
       if ((myDepth == StepRequest.STEP_OVER || myDepth == StepRequest.STEP_INTO) && myPosition != null) {
@@ -182,7 +214,7 @@ public class RequestHint {
           public Integer compute() {
             final SourcePosition locationPosition = ContextUtil.getSourcePosition(context);
             if (locationPosition != null) {
-              if (myPosition.getFile().equals(locationPosition.getFile()) && isTheSameDepth(context)) {
+              if (myPosition.getFile().equals(locationPosition.getFile()) && isTheSameFrame(context) && !mySteppedOut) {
                 return isOnTheSameLine(locationPosition) ? myDepth : STOP;
               }
             }
@@ -211,8 +243,8 @@ public class RequestHint {
         if(settings.SKIP_GETTERS) {
           boolean isGetter = ApplicationManager.getApplication().runReadAction(new Computable<Boolean>(){
             public Boolean compute() {
-              final PsiMethod psiMethod = PsiTreeUtil.getParentOfType(PositionUtil.getContextElement(context), PsiMethod.class);
-              return (psiMethod != null && DebuggerUtils.isSimpleGetter(psiMethod))? Boolean.TRUE : Boolean.FALSE;
+              PsiElement contextElement = PositionUtil.getContextElement(context);
+              return contextElement != null && DebuggerUtils.isInsideSimpleGetter(contextElement);
             }
           }).booleanValue();
 
@@ -241,11 +273,15 @@ public class RequestHint {
         }
 
         for (ExtraSteppingFilter filter : ExtraSteppingFilter.EP_NAME.getExtensions()) {
-          if (filter.isApplicable(context)) return filter.getStepRequestDepth(context);
+          try {
+            if (filter.isApplicable(context)) return filter.getStepRequestDepth(context);
+          }
+          catch (Exception e) {LOG.error(e);}
+          catch (AssertionError e) {LOG.error(e);}
         }
       }
       // smart step feature
-      if (myMethodFilter != null) {
+      if (myMethodFilter != null && !mySteppedOut) {
         return StepRequest.STEP_OUT;
       }
     }

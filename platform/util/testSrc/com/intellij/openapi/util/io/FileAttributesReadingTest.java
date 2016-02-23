@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,27 +23,67 @@ import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.util.SystemProperties;
 import com.intellij.util.TimeoutUtil;
 import org.jetbrains.annotations.NotNull;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.io.File;
 import java.util.Arrays;
 
 import static com.intellij.openapi.util.io.IoTestUtil.assertTimestampsEqual;
 import static org.junit.Assert.*;
+import static org.junit.Assume.assumeFalse;
 import static org.junit.Assume.assumeTrue;
 
-public class FileAttributesReadingTest {
+public abstract class FileAttributesReadingTest {
+
+  public static class MainTest extends FileAttributesReadingTest {
+    @BeforeClass
+    public static void checkMediator() {
+      FileSystemUtil.resetMediator();
+      assertEquals(SystemInfo.isWindows ? "IdeaWin32" : "JnaUnix", FileSystemUtil.getMediatorName());
+    }
+  }
+
+  public static class Nio2Test extends FileAttributesReadingTest {
+    @BeforeClass
+    public static void setUpClass() {
+      assumeTrue(SystemInfo.isJavaVersionAtLeast("1.7"));
+
+      System.setProperty(FileSystemUtil.FORCE_USE_NIO2_KEY, "true");
+      FileSystemUtil.resetMediator();
+      assertEquals("Nio2", FileSystemUtil.getMediatorName());
+    }
+
+    @AfterClass
+    public static void tearDownClass() {
+      System.clearProperty(FileSystemUtil.FORCE_USE_NIO2_KEY);
+      FileSystemUtil.resetMediator();
+    }
+  }
+
+  public static class FallbackTest extends FileAttributesReadingTest {
+    @BeforeClass
+    public static void setUpClass() {
+      System.setProperty(FileSystemUtil.FORCE_USE_FALLBACK_KEY, "true");
+      FileSystemUtil.resetMediator();
+      assertEquals("Fallback", FileSystemUtil.getMediatorName());
+    }
+
+    @AfterClass
+    public static void tearDownClass() {
+      System.clearProperty(FileSystemUtil.FORCE_USE_FALLBACK_KEY);
+      FileSystemUtil.resetMediator();
+    }
+
+    @Override public void linkToFile() { }
+    @Override public void doubleLink() { }
+    @Override public void linkToDirectory() { }
+    @Override public void missingLink() { }
+    @Override public void selfLink() { }
+    @Override public void junction() { }
+  }
+
   private final byte[] myTestData = new byte[]{'t', 'e', 's', 't'};
   private File myTempDirectory;
-
-  @BeforeClass
-  public static void checkMediator() throws Exception {
-    final String expectedName = SystemInfo.isWindows ? "IdeaWin32" : "JnaUnix";
-    assertEquals(expectedName, FileSystemUtil.getMediatorName());
-  }
 
   @Before
   public void setUp() throws Exception {
@@ -80,6 +120,18 @@ public class FileAttributesReadingTest {
   }
 
   @Test
+  public void readOnlyFile() throws Exception {
+    final File file = FileUtil.createTempFile(myTempDirectory, "test.", ".txt");
+
+    String[] cmd = SystemInfo.isWindows ? new String[]{"attrib", "+R", file.getPath()} : new String[]{"chmod", "500", file.getPath()};
+    assertEquals(0, Runtime.getRuntime().exec(cmd).waitFor());
+
+    FileAttributes attributes = getAttributes(file);
+    assertEquals(FileAttributes.Type.FILE, attributes.type);
+    assertFalse(attributes.isWritable());
+  }
+
+  @Test
   public void directory() throws Exception {
     final File file = FileUtil.createTempDirectory(myTempDirectory, "test.", ".tmp");
 
@@ -95,6 +147,18 @@ public class FileAttributesReadingTest {
 
     final String target = FileSystemUtil.resolveSymLink(file);
     assertEquals(file.getPath(), target);
+  }
+
+  @Test
+  public void readOnlyDirectory() throws Exception {
+    File file = FileUtil.createTempDirectory(myTempDirectory, "test.", ".tmp");
+
+    String[] cmd = SystemInfo.isWindows ? new String[]{"attrib", "+R", file.getPath()} : new String[]{"chmod", "500", file.getPath()};
+    assertEquals(0, Runtime.getRuntime().exec(cmd).waitFor());
+
+    FileAttributes attributes = getAttributes(file);
+    assertEquals(FileAttributes.Type.DIRECTORY, attributes.type);
+    assertEquals(SystemInfo.isWindows, attributes.isWritable());
   }
 
   @Test
@@ -238,29 +302,34 @@ public class FileAttributesReadingTest {
 
   @Test
   public void junction() throws Exception {
-    assumeTrue(SystemInfo.isWindows);
+    assumeTrue(SystemInfo.isWinVistaOrNewer);
 
     final File target = FileUtil.createTempDirectory(myTempDirectory, "temp.", ".dir");
     final File path = FileUtil.createTempFile(myTempDirectory, "junction.", ".dir", false);
     final File junction = IoTestUtil.createJunction(target.getPath(), path.getAbsolutePath());
 
-    FileAttributes attributes = getAttributes(junction);
-    assertEquals(FileAttributes.Type.DIRECTORY, attributes.type);
-    assertEquals(0, attributes.flags);
-    assertTrue(attributes.isWritable());
+    try {
+      FileAttributes attributes = getAttributes(junction);
+      assertEquals(FileAttributes.Type.DIRECTORY, attributes.type);
+      assertEquals(0, attributes.flags);
+      assertTrue(attributes.isWritable());
 
-    final String resolved1 = FileSystemUtil.resolveSymLink(junction);
-    assertEquals(SystemInfo.isWinVistaOrNewer ? target.getPath() : junction.getPath(), resolved1);
+      final String resolved1 = FileSystemUtil.resolveSymLink(junction);
+      assertEquals(target.getPath(), resolved1);
 
-    FileUtil.delete(target);
+      FileUtil.delete(target);
 
-    attributes = getAttributes(junction);
-    assertEquals(FileAttributes.Type.DIRECTORY, attributes.type);
-    assertEquals(0, attributes.flags);
-    assertTrue(attributes.isWritable());
+      attributes = getAttributes(junction);
+      assertEquals(FileAttributes.Type.DIRECTORY, attributes.type);
+      assertEquals(0, attributes.flags);
+      assertTrue(attributes.isWritable());
 
-    final String resolved2 = FileSystemUtil.resolveSymLink(junction);
-    assertEquals(SystemInfo.isWinVistaOrNewer ? null : junction.getPath(), resolved2);
+      final String resolved2 = FileSystemUtil.resolveSymLink(junction);
+      assertEquals(null, resolved2);
+    }
+    finally {
+      IoTestUtil.deleteJunction(junction.getPath());
+    }
   }
 
   @Test
@@ -391,6 +460,8 @@ public class FileAttributesReadingTest {
 
   @Test
   public void hardLink() throws Exception {
+    //todo[Roman Shevchenko] currently it fails on new windows agents
+    assumeFalse(SystemInfo.isWindows);
     final File target = FileUtil.createTempFile(myTempDirectory, "test.", ".txt");
     final File link = IoTestUtil.createHardLink(target.getPath(), myTempDirectory.getPath() + "/link");
 

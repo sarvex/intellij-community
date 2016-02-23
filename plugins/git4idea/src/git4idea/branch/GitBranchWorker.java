@@ -32,6 +32,7 @@ import git4idea.GitPlatformFacade;
 import git4idea.changes.GitChangeUtils;
 import git4idea.commands.Git;
 import git4idea.history.GitHistoryUtils;
+import git4idea.rebase.GitRebaseUtils;
 import git4idea.repo.GitRepository;
 import git4idea.ui.branch.GitCompareBranchesDialog;
 import git4idea.util.GitCommitCompareInfo;
@@ -92,12 +93,12 @@ public final class GitBranchWorker {
   public void checkoutNewBranchStartingFrom(@NotNull String newBranchName, @NotNull String startPoint,
                                             @NotNull List<GitRepository> repositories) {
     updateInfo(repositories);
-    new GitCheckoutOperation(myProject, myFacade, myGit, myUiHandler, repositories, startPoint, newBranchName).execute();
+    new GitCheckoutOperation(myProject, myFacade, myGit, myUiHandler, repositories, startPoint, false, true, newBranchName).execute();
   }
 
-  public void checkout(@NotNull final String reference, @NotNull List<GitRepository> repositories) {
+  public void checkout(@NotNull final String reference, boolean detach, @NotNull List<GitRepository> repositories) {
     updateInfo(repositories);
-    new GitCheckoutOperation(myProject, myFacade, myGit, myUiHandler, repositories, reference, null).execute();
+    new GitCheckoutOperation(myProject, myFacade, myGit, myUiHandler, repositories, reference, detach, false, null).execute();
   }
 
 
@@ -119,6 +120,22 @@ public final class GitBranchWorker {
       revisions.put(repository, repository.getCurrentRevision());
     }
     new GitMergeOperation(myProject, myFacade, myGit, myUiHandler, repositories, branchName, deleteOnMerge, revisions).execute();
+  }
+
+  public void rebase(@NotNull List<GitRepository> repositories, @NotNull String branchName) {
+    updateInfo(repositories);
+    GitRebaseUtils.rebase(myProject, repositories, new GitRebaseParams(branchName), myUiHandler.getProgressIndicator());
+  }
+
+  public void rebaseOnCurrent(@NotNull List<GitRepository> repositories, @NotNull String branchName) {
+    updateInfo(repositories);
+    GitRebaseUtils.rebase(myProject, repositories, new GitRebaseParams(branchName, null, "HEAD", false, false),
+                          myUiHandler.getProgressIndicator());
+  }
+
+  public void renameBranch(@NotNull String currentName, @NotNull String newName, @NotNull List<GitRepository> repositories) {
+    updateInfo(repositories);
+    new GitRenameBranchOperation(myProject, myFacade, myGit, myUiHandler, currentName, newName, repositories).execute();
   }
 
   public void compare(@NotNull final String branchName, @NotNull final List<GitRepository> repositories,
@@ -148,7 +165,8 @@ public final class GitBranchWorker {
   @NotNull
   private static Collection<Change> loadTotalDiff(@NotNull GitRepository repository, @NotNull String branchName) {
     try {
-      return GitChangeUtils.getDiff(repository.getProject(), repository.getRoot(), null, branchName, null);
+      // return git diff between current working directory and branchName: working dir should be displayed as a 'left' one (base)
+      return GitChangeUtils.getDiffWithWorkingDir(repository.getProject(), repository.getRoot(), branchName, null, true);
     }
     catch (VcsException e) {
       // we treat it as critical and report an error

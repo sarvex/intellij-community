@@ -20,6 +20,7 @@ import com.intellij.codeInspection.dataFlow.Nullness;
 import com.intellij.ide.highlighter.JavaFileType;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Splitter;
 import com.intellij.openapi.util.text.StringUtil;
@@ -66,7 +67,7 @@ public class ExtractMethodDialog extends DialogWrapper implements AbstractExtrac
   private final PsiTypeParameterList myTypeParameterList;
   private final PsiType[] myExceptions;
   private final boolean myStaticFlag;
-  private boolean myCanBeStatic;
+  private final boolean myCanBeStatic;
   private final Nullness myNullness;
   private final PsiElement[] myElementsToExtract;
   private final String myHelpId;
@@ -193,7 +194,7 @@ public class ExtractMethodDialog extends DialogWrapper implements AbstractExtrac
     }
 
     if (myGenerateAnnotations != null && myGenerateAnnotations.isEnabled()) {
-      PropertiesComponent.getInstance(myProject).setValue(EXTRACT_METHOD_GENERATE_ANNOTATIONS, String.valueOf(myGenerateAnnotations.isSelected()));
+      PropertiesComponent.getInstance(myProject).setValue(EXTRACT_METHOD_GENERATE_ANNOTATIONS, myGenerateAnnotations.isSelected(), true);
     }
     super.doOKAction();
   }
@@ -215,6 +216,7 @@ public class ExtractMethodDialog extends DialogWrapper implements AbstractExtrac
     });
 
     myVisibilityPanel = createVisibilityPanel();
+    myVisibilityPanel.registerUpDownActionsFor(myNameField);
     final JPanel visibilityAndReturnType = new JPanel(new BorderLayout(2, 0));
     if (!myTargetClass.isInterface()) {
       visibilityAndReturnType.add(myVisibilityPanel, BorderLayout.WEST);
@@ -255,7 +257,7 @@ public class ExtractMethodDialog extends DialogWrapper implements AbstractExtrac
     };
     mySelector = manager.getTypeSelector();
     final JComponent component = mySelector.getComponent();
-    if (component instanceof JComboBox) {
+    if (component instanceof ComboBox) {
       if (isVoidReturn()) {
         mySelector.selectType(PsiType.VOID);
       }
@@ -267,20 +269,32 @@ public class ExtractMethodDialog extends DialogWrapper implements AbstractExtrac
       ((JComboBox)component).addActionListener(new ActionListener() {
         @Override
         public void actionPerformed(ActionEvent e) {
+          final PsiType selectedType = mySelector.getSelectedType();
           if (myGenerateAnnotations != null) {
-            final PsiType selectedType = mySelector.getSelectedType();
             final boolean enabled = PsiUtil.resolveClassInType(selectedType) != null;
             if (!enabled) {
               myGenerateAnnotations.setSelected(false);
             }
             myGenerateAnnotations.setEnabled(enabled);
           }
+          resizeReturnCombo(component, selectedType);
+          returnTypePanel.revalidate();
+          returnTypePanel.repaint();
           updateSignature();
         }
       });
+      resizeReturnCombo(component, mySelector.getSelectedType());
       return returnTypePanel;
     }
     return null;
+  }
+
+  private static void resizeReturnCombo(JComponent component, PsiType selectedType) {
+    if (selectedType != null) {
+      final String presentableText = selectedType.getPresentableText();
+      final int presentableTextWidth = component.getFontMetrics(component.getFont()).stringWidth(presentableText);
+      ((ComboBox)component).setMinimumAndPreferredWidth(presentableTextWidth);
+    }
   }
 
   protected PsiExpression[] findOccurrences() {
@@ -397,7 +411,7 @@ public class ExtractMethodDialog extends DialogWrapper implements AbstractExtrac
     final JavaComboBoxVisibilityPanel panel = new JavaComboBoxVisibilityPanel();
     final PsiMethod containingMethod = getContainingMethod();
     panel.setVisibility(containingMethod != null && containingMethod.hasModifierProperty(PsiModifier.PUBLIC) 
-                        ? PropertiesComponent.getInstance(myProject).getOrInit( EXTRACT_METHOD_DEFAULT_VISIBILITY, PsiModifier.PRIVATE)
+                        ? PropertiesComponent.getInstance(myProject).getValue(EXTRACT_METHOD_DEFAULT_VISIBILITY, PsiModifier.PRIVATE)
                         : PsiModifier.PRIVATE);
     panel.addListener(new ChangeListener() {
       @Override

@@ -15,16 +15,21 @@
  */
 package com.jetbrains.python.actions;
 
+import com.google.common.collect.Iterables;
 import com.intellij.ide.actions.QualifiedNameProvider;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.EditorModificationUtil;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiElement;
+import com.intellij.util.containers.ContainerUtil;
 import com.jetbrains.python.psi.PyClass;
 import com.jetbrains.python.psi.PyFunction;
 import com.jetbrains.python.psi.stubs.PyClassNameIndex;
+import com.jetbrains.python.psi.stubs.PyFunctionNameIndex;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.Collection;
 
 
 /**
@@ -48,6 +53,9 @@ public class PyQualifiedNameProvider implements QualifiedNameProvider {
       if (containingClass != null) {
         return containingClass.getQualifiedName() + "#" + ((PyFunction)element).getName();
       }
+      else {
+        return ((PyFunction)element).getQualifiedName();
+      } 
     }
     return null;
   }
@@ -59,6 +67,10 @@ public class PyQualifiedNameProvider implements QualifiedNameProvider {
     if (aClass != null) {
       return aClass;
     }
+    final Collection<PyFunction> functions = PyFunctionNameIndex.find(fqn, project);
+    if (!functions.isEmpty()) {
+      return ContainerUtil.getFirstItem(functions);
+    }
     final int sharpIdx = fqn.indexOf("#");
     if (sharpIdx > -1) {
       final String className = StringUtil.getPackageName(fqn, '#');
@@ -67,7 +79,7 @@ public class PyQualifiedNameProvider implements QualifiedNameProvider {
         final String memberName = StringUtil.getShortName(fqn, '#');
         final PyClass nestedClass = aClass.findNestedClass(memberName, false);
         if (nestedClass != null) return nestedClass;
-        final PyFunction methodByName = aClass.findMethodByName(memberName, false);
+        final PyFunction methodByName = aClass.findMethodByName(memberName, false, null);
         if (methodByName != null) return methodByName;
       }
     }

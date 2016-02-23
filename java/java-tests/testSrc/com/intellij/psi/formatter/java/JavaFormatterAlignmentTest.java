@@ -16,6 +16,7 @@
 package com.intellij.psi.formatter.java;
 
 import com.intellij.openapi.fileTypes.StdFileTypes;
+import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
 import com.intellij.util.IncorrectOperationException;
 
@@ -47,7 +48,42 @@ public class JavaFormatterAlignmentTest extends AbstractJavaFormatterTest {
       "        .foo();"
     );
   }
+  
+  public void testChainedMethodWithComments() throws Exception {
+    getSettings().ALIGN_MULTILINE_CHAINED_METHODS = true;
+    doMethodTest("AAAAA.b()\n" +
+                 ".c() // comment after line\n" +
+                 ".d()\n" +
+                 ".e();",
 
+                 "AAAAA.b()\n" +
+                 "     .c() // comment after line\n" +
+                 "     .d()\n" +
+                 "     .e();");
+  }
+
+  public void testChainedMethodWithBlockComment() {
+    getSettings().ALIGN_MULTILINE_CHAINED_METHODS = true;
+    doTextTest("class X {\n" +
+               "    public void test() {\n" +
+               "        AAAAAA.b()\n" +
+               ".c()\n" +
+               ".d()\n" +
+               "          /* simple block comment */\n" +
+               ".e();\n" +
+               "    }\n" +
+               "}",
+               "class X {\n" +
+               "    public void test() {\n" +
+               "        AAAAAA.b()\n" +
+               "              .c()\n" +
+               "              .d()\n" +
+               "          /* simple block comment */\n" +
+               "              .e();\n" +
+               "    }\n" +
+               "}");
+  }
+  
   public void testMultipleMethodAnnotationsCommentedInTheMiddle() throws Exception {
     getSettings().BLANK_LINES_AFTER_CLASS_HEADER = 1;
     getSettings().getRootSettings().getIndentOptions(StdFileTypes.JAVA).INDENT_SIZE = 4;
@@ -255,7 +291,7 @@ public class JavaFormatterAlignmentTest extends AbstractJavaFormatterTest {
       "}"
     );
   }
-  
+
   public void testAnnotatedAndNonAnnotatedFieldsInColumnsAlignment() {
     // Inspired by IDEA-60237
 
@@ -280,10 +316,10 @@ public class JavaFormatterAlignmentTest extends AbstractJavaFormatterTest {
       "}"
     );
   }
-  
+
   public void testAlignThrowsKeyword() throws Exception {
     // Inspired by IDEA-63820
-    
+
     getSettings().ALIGN_THROWS_KEYWORD = true;
     doClassTest(
       "public void test()\n" +
@@ -592,5 +628,209 @@ public class JavaFormatterAlignmentTest extends AbstractJavaFormatterTest {
       "    int    a           = 2;\n" +
       "    String superString = \"\";\n" +
       "}");
+  }
+
+  public void test_Shift_All_AlignedParameters() {
+    myLineRange = new TextRange(2, 2);
+    getSettings().ALIGN_MULTILINE_PARAMETERS_IN_CALLS = true;
+    doTextTest(
+      Action.REFORMAT_WITH_CONTEXT,
+      "public class Test {\n" +
+      "  \n" +
+      "    public void fooooo(String foo,\n" +
+      "                    String booo,\n" +
+      "                    String kakadoo) {\n" +
+      "\n" +
+      "    }\n" +
+      "\n" +
+      "}",
+
+      "public class Test {\n" +
+      "\n" +
+      "    public void fooooo(String foo,\n" +
+      "                       String booo,\n" +
+      "                       String kakadoo) {\n" +
+      "\n" +
+      "    }\n" +
+      "\n" +
+      "}"
+    );
+  }
+
+  public void test_Align_UnselectedField_IfNeeded() {
+    myLineRange = new TextRange(2, 2);
+    getSettings().ALIGN_GROUP_FIELD_DECLARATIONS = true;
+    doTextTest(
+      Action.REFORMAT_WITH_CONTEXT,
+      "public class Test {\n" +
+      "    public int    i = 1;\n" +
+      "    public String iiiiiiiiii = 2;\n" +
+      "}",
+      "public class Test {\n" +
+      "    public int    i          = 1;\n" +
+      "    public String iiiiiiiiii = 2;\n" +
+      "}"
+    );
+  }
+
+  public void test_Align_UnselectedVariable_IfNeeded() {
+    myLineRange = new TextRange(3, 3);
+    getSettings().ALIGN_CONSECUTIVE_VARIABLE_DECLARATIONS = true;
+    doTextTest(
+      Action.REFORMAT_WITH_CONTEXT,
+      "public class Test {\n" +
+      "    public void test() {\n" +
+      "        int s = 2;\n" +
+      "        String sssss = 3;\n" +
+      "    }\n" +
+      "}",
+      "public class Test {\n" +
+      "    public void test() {\n" +
+      "        int    s     = 2;\n" +
+      "        String sssss = 3;\n" +
+      "    }\n" +
+      "}"
+    );
+  }
+
+  public void test_Align_ConsecutiveVars_InsideIfBlock() {
+    getSettings().ALIGN_CONSECUTIVE_VARIABLE_DECLARATIONS = true;
+    doMethodTest(
+      "if (a > 2) {\n" +
+      "int a=2;\n" +
+      "String name=\"Yarik\";\n" +
+      "}\n",
+      "if (a > 2) {\n" +
+      "    int    a    = 2;\n" +
+      "    String name = \"Yarik\";\n" +
+      "}\n"
+    );
+  }
+
+  public void test_Align_ConsecutiveVars_InsideForBlock() {
+    getSettings().ALIGN_CONSECUTIVE_VARIABLE_DECLARATIONS = true;
+    doMethodTest(
+      "    for (int i = 0; i < 10; i++) {\n" +
+      "      int a=2;\n" +
+      "      String name=\"Xa\";\n" +
+      "    }\n",
+      "for (int i = 0; i < 10; i++) {\n" +
+      "    int    a    = 2;\n" +
+      "    String name = \"Xa\";\n" +
+      "}\n"
+    );
+  }
+
+  public void test_Align_ConsecutiveVars_InsideTryBlock() {
+    getSettings().ALIGN_CONSECUTIVE_VARIABLE_DECLARATIONS = true;
+    doMethodTest(
+      "    try {\n" +
+      "      int x = getX();\n" +
+      "      String name = \"Ha\";\n" +
+      "    }\n" +
+      "    catch (IOException exception) {\n" +
+      "      int y = 12;\n" +
+      "      String test = \"Test\";\n" +
+      "    }\n" +
+      "    finally {\n" +
+      "      int z = 12;\n" +
+      "      String zzzz = \"pnmhd\";\n" +
+      "    }\n",
+      "try {\n" +
+      "    int    x    = getX();\n" +
+      "    String name = \"Ha\";\n" +
+      "} catch (IOException exception) {\n" +
+      "    int    y    = 12;\n" +
+      "    String test = \"Test\";\n" +
+      "} finally {\n" +
+      "    int    z    = 12;\n" +
+      "    String zzzz = \"pnmhd\";\n" +
+      "}\n"
+    );
+  }
+
+  public void test_Align_ConsecutiveVars_InsideCodeBlock() {
+    getSettings().ALIGN_CONSECUTIVE_VARIABLE_DECLARATIONS = true;
+    doMethodTest(
+      "    System.out.println(\"AAAA\");\n" +
+      "    int a = 2;\n" +
+      "    \n" +
+      "    {\n" +
+      "      int x=2;\n" +
+      "      String name=3;\n" +
+      "    }\n",
+      "System.out.println(\"AAAA\");\n" +
+      "int a = 2;\n" +
+      "\n" +
+      "{\n" +
+      "    int    x    = 2;\n" +
+      "    String name = 3;\n" +
+      "}\n"
+    );
+  }
+  
+  public void test_AlignComments_BetweenChainedMethodCalls() {
+    getSettings().ALIGN_MULTILINE_CHAINED_METHODS = true;
+    doMethodTest(
+      "ActionBarPullToRefresh.from(getActivity())\n" +
+      "        // Mark the ListView as pullable\n" +
+      "        .theseChildrenArePullable(eventsListView)\n" +
+      "                // Set the OnRefreshListener\n" +
+      "        .listener(this)\n" +
+      "                // Use the AbsListView delegate for StickyListHeadersListView\n" +
+      "        .useViewDelegate(StickyListHeadersListView.class, new AbsListViewDelegate())\n" +
+      "                // Finally commit the setup to our PullToRefreshLayout\n" +
+      "        .setup(mPullToRefreshLayout);",
+      "ActionBarPullToRefresh.from(getActivity())\n" +
+      "                      // Mark the ListView as pullable\n" +
+      "                      .theseChildrenArePullable(eventsListView)\n" +
+      "                      // Set the OnRefreshListener\n" +
+      "                      .listener(this)\n" +
+      "                      // Use the AbsListView delegate for StickyListHeadersListView\n" +
+      "                      .useViewDelegate(StickyListHeadersListView.class, new AbsListViewDelegate())\n" +
+      "                      // Finally commit the setup to our PullToRefreshLayout\n" +
+      "                      .setup(mPullToRefreshLayout);"
+    );
+  }
+  
+  public void test_AlignComments_2() {
+    getSettings().ALIGN_MULTILINE_CHAINED_METHODS = true;
+    doClassTest(
+      "public String returnWithBuilder2() {\n" +
+      "    return MoreObjects\n" +
+      "        .toStringHelper(this)\n" +
+      "        .add(\"value\", value)\n" +
+      "                   // comment\n" +
+      "        .toString();\n" +
+      "  }",
+      "public String returnWithBuilder2() {\n" +
+      "    return MoreObjects\n" +
+      "            .toStringHelper(this)\n" +
+      "            .add(\"value\", value)\n" +
+      "            // comment\n" +
+      "            .toString();\n" +
+      "}"
+    );
+  }
+  
+  public void test_AlignSubsequentOneLineMethods() {
+    getSettings().KEEP_SIMPLE_METHODS_IN_ONE_LINE = true;
+    getSettings().ALIGN_SUBSEQUENT_SIMPLE_METHODS = true;
+    doTextTest(
+      "public class Test {\n" +
+      "\n" +
+      "    public void testSuperDuperFuckerMother() { System.out.println(\"AAA\"); }\n" +
+      "\n" +
+      "    public void testCounterMounter() { System.out.println(\"XXXX\"); }\n" +
+      "\n" +
+      "}",
+      "public class Test {\n" +
+      "\n" +
+      "    public void testSuperDuperFuckerMother() { System.out.println(\"AAA\"); }\n" +
+      "\n" +
+      "    public void testCounterMounter()         { System.out.println(\"XXXX\"); }\n" +
+      "\n" +
+      "}"
+    );
   }
 }

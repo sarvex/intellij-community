@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2014 Dave Griffith, Bas Leijdekkers
+ * Copyright 2003-2016 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.InheritanceUtil;
+import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.TypeConversionUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -66,10 +67,13 @@ public class TypeUtils {
     return getType(CommonClassNames.JAVA_LANG_STRING, context);
   }
 
-  public static boolean isNarrowingConversion(@NotNull PsiType operandType, @NotNull PsiType castType) {
-    final Integer operandPrecision = typePrecisions.get(operandType);
-    final Integer castPrecision = typePrecisions.get(castType);
-    return operandPrecision != null && castPrecision != null && operandPrecision.intValue() > castPrecision.intValue();
+  /**
+   * JLS 5.1.3. Narrowing Primitive Conversion
+   */
+  public static boolean isNarrowingConversion(@Nullable PsiType sourceType, @Nullable PsiType targetType) {
+    final Integer sourcePrecision = typePrecisions.get(sourceType);
+    final Integer targetPrecision = typePrecisions.get(targetType);
+    return sourcePrecision != null && targetPrecision != null && targetPrecision.intValue() < sourcePrecision.intValue();
   }
 
   public static boolean isJavaLangObject(@Nullable PsiType targetType) {
@@ -78,6 +82,19 @@ public class TypeUtils {
 
   public static boolean isJavaLangString(@Nullable PsiType targetType) {
     return typeEquals(CommonClassNames.JAVA_LANG_STRING, targetType);
+  }
+
+  public static boolean isOptional(@Nullable PsiType type) {
+    final PsiClass aClass = PsiUtil.resolveClassInClassTypeOnly(type);
+    if (aClass == null) {
+      return false;
+    }
+    final String qualifiedName = aClass.getQualifiedName();
+    return CommonClassNames.JAVA_UTIL_OPTIONAL.equals(qualifiedName)
+           || "java.util.OptionalDouble".equals(qualifiedName)
+           || "java.util.OptionalInt".equals(qualifiedName)
+           || "java.util.OptionalLong".equals(qualifiedName)
+           || "com.google.common.base.Optional".equals(qualifiedName);
   }
 
   public static boolean isExpressionTypeAssignableWith(@NotNull PsiExpression expression, @NotNull Iterable<String> rhsTypeTexts) {
@@ -104,7 +121,7 @@ public class TypeUtils {
     if (expression == null) {
       return null;
     }
-    PsiType type = expression instanceof PsiFunctionalExpression ? ((PsiFunctionalExpression)expression).getFunctionalInterfaceType() 
+    PsiType type = expression instanceof PsiFunctionalExpression ? ((PsiFunctionalExpression)expression).getFunctionalInterfaceType()
                                                                  : expression.getType();
     if (type == null) {
       return null;
@@ -179,6 +196,9 @@ public class TypeUtils {
   }
 
   public static boolean areConvertible(PsiType type1, PsiType type2) {
+    if (TypeConversionUtil.areTypesConvertible(type1, type2)) {
+      return true;
+    }
     final PsiType comparedTypeErasure = TypeConversionUtil.erasure(type1);
     final PsiType comparisonTypeErasure = TypeConversionUtil.erasure(type2);
     if (comparedTypeErasure == null || comparisonTypeErasure == null ||
@@ -200,5 +220,38 @@ public class TypeUtils {
       return true;
     }
     return false;
+  }
+
+  public static boolean isTypeParameter(PsiType type) {
+    if (!(type instanceof PsiClassType)) {
+      return false;
+    }
+    final PsiClassType classType = (PsiClassType)type;
+    final PsiClass aClass = classType.resolve();
+    return aClass != null && aClass instanceof PsiTypeParameter;
+  }
+
+  /**
+   * JLS 5.6.1 Unary Numeric Promotion
+   */
+  public static PsiType unaryNumericPromotion(PsiType type) {
+    if (type == null) {
+      return null;
+    }
+    if (type.equalsToText("java.lang.Byte") || type.equalsToText("java.lang.Short") ||
+        type.equalsToText("java.lang.Character") || type.equalsToText("java.lang.Integer") ||
+        type.equals(PsiType.BYTE) || type.equals(PsiType.SHORT) || type.equals(PsiType.CHAR)) {
+      return PsiType.INT;
+    }
+    else if (type.equalsToText("java.lang.Long")) {
+      return PsiType.LONG;
+    }
+    else if (type.equalsToText("java.lang.Float")) {
+      return PsiType.FLOAT;
+    }
+    else if (type.equalsToText("java.lang.Double")) {
+      return PsiType.DOUBLE;
+    }
+    return type;
   }
 }

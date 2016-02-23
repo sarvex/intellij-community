@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import org.jetbrains.plugins.groovy.util.TestUtils
 public class GroovyDslTest extends LightCodeInsightFixtureTestCase {
   private static descriptor = new DefaultLightProjectDescriptor() {
     @Override
-    void configureModule(Module module, ModifiableRootModel model, ContentEntry contentEntry) {
+    void configureModule(@NotNull Module module, @NotNull ModifiableRootModel model, @NotNull ContentEntry contentEntry) {
       PsiTestUtil.addLibrary(module, model, "GROOVY", TestUtils.getMockGroovyLibraryHome(), TestUtils.GROOVY_JAR);
     }
   }
@@ -59,7 +59,7 @@ public class GroovyDslTest extends LightCodeInsightFixtureTestCase {
 
   private def addGdsl(String text) {
     final PsiFile file = myFixture.addFileToProject(getTestName(false) + "Enhancer.gdsl", text);
-    GroovyDslFileIndex.activateUntilModification(file.virtualFile)
+    GroovyDslFileIndex.activate(file.virtualFile)
   }
 
   public void doTest() throws Throwable {

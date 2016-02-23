@@ -79,13 +79,23 @@ public class LibraryImpl extends TraceableDisposable implements LibraryEx.Modifi
   private final Disposable myPointersDisposable = Disposer.newDisposable();
   private final JarDirectoryWatcher myRootsWatcher = JarDirectoryWatcherFactory.getInstance().createWatcher(myJarDirectories, myRootProvider);
 
-  LibraryImpl(LibraryTable table, Element element, ModifiableRootModel rootModel) throws InvalidDataException {
-    this(table, rootModel, null, element.getAttributeValue(LIBRARY_NAME_ATTR),
-         (PersistentLibraryKind<?>)LibraryKind.findById(element.getAttributeValue(LIBRARY_TYPE_ATTR)));
+  LibraryImpl(LibraryTable table, @NotNull Element element, ModifiableRootModel rootModel) throws InvalidDataException {
+    this(table, rootModel, null, element.getAttributeValue(LIBRARY_NAME_ATTR), findPersistentLibraryKind(element));
     readProperties(element);
     myJarDirectories.readExternal(element);
     readRoots(element);
     myRootsWatcher.updateWatchedRoots();
+  }
+
+  @Nullable
+  private static PersistentLibraryKind<?> findPersistentLibraryKind(@NotNull Element element) {
+    String typeString = element.getAttributeValue(LIBRARY_TYPE_ATTR);
+    LibraryKind kind = LibraryKind.findById(typeString);
+    if (kind != null && !(kind instanceof PersistentLibraryKind<?>)) {
+      LOG.error("Cannot load non-persistable library kind: " + typeString);
+      return null;
+    }
+    return (PersistentLibraryKind<?>)kind;
   }
 
   LibraryImpl(String name, @Nullable final PersistentLibraryKind<?> kind, LibraryTable table, ModifiableRootModel rootModel) {
@@ -117,7 +127,7 @@ public class LibraryImpl extends TraceableDisposable implements LibraryEx.Modifi
 
   // primary
   private LibraryImpl(LibraryTable table, ModifiableRootModel rootModel, LibraryImpl newSource, String name, @Nullable final PersistentLibraryKind<?> kind) {
-    super(new Throwable());
+    super(true);
     myLibraryTable = table;
     myRootModel = rootModel;
     mySource = newSource;
@@ -579,7 +589,9 @@ public class LibraryImpl extends TraceableDisposable implements LibraryEx.Modifi
   public void commit() {
     checkDisposed();
 
-    mySource.commit(this);
+    if (isChanged()) {
+      mySource.commit(this);
+    }
     Disposer.dispose(this);
   }
 

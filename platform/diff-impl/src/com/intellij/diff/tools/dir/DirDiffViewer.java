@@ -29,6 +29,7 @@ import com.intellij.ide.diff.DirDiffSettings;
 import com.intellij.ide.diff.JarFileDiffElement;
 import com.intellij.ide.diff.VirtualFileDiffElement;
 import com.intellij.ide.highlighter.ArchiveFileType;
+import com.intellij.internal.statistic.UsageTrigger;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.DataProvider;
@@ -38,7 +39,10 @@ import com.intellij.openapi.diff.impl.dir.DirDiffFrame;
 import com.intellij.openapi.diff.impl.dir.DirDiffPanel;
 import com.intellij.openapi.diff.impl.dir.DirDiffTableModel;
 import com.intellij.openapi.diff.impl.dir.DirDiffWindow;
+import com.intellij.openapi.project.DefaultProjectFactory;
+import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.util.ArrayUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -57,13 +61,19 @@ class DirDiffViewer implements FrameDiffTool.DiffViewer {
   @NotNull private final JPanel myPanel;
 
   public DirDiffViewer(@NotNull DiffContext context, @NotNull ContentDiffRequest request) {
+    UsageTrigger.trigger("diff.DirDiffViewer");
+
     myContext = context;
     myRequest = request;
 
     List<DiffContent> contents = request.getContents();
     DiffElement element1 = createDiffElement(contents.get(0));
     DiffElement element2 = createDiffElement(contents.get(1));
-    DirDiffTableModel model = new DirDiffTableModel(context.getProject(), element1, element2, new DirDiffSettings());
+
+    Project project = context.getProject();
+    if (project == null) project = DefaultProjectFactory.getInstance().getDefaultProject();
+
+    DirDiffTableModel model = new DirDiffTableModel(project, element1, element2, new DirDiffSettings());
 
     myDirDiffPanel = new DirDiffPanel(model, new DirDiffWindow((DirDiffFrame)null) {
       @Override
@@ -147,6 +157,7 @@ class DirDiffViewer implements FrameDiffTool.DiffViewer {
     if (content instanceof DirectoryContent) return true;
     if (content instanceof FileContent &&
         content.getContentType() instanceof ArchiveFileType &&
+        ((FileContent)content).getFile().isValid() &&
         ((FileContent)content).getFile().isInLocalFileSystem()) {
       return true;
     }
@@ -189,7 +200,6 @@ class DirDiffViewer implements FrameDiffTool.DiffViewer {
           return EMPTY_ARRAY;
         }
 
-        @Nullable
         @Override
         public byte[] getContent() throws IOException {
           return null;

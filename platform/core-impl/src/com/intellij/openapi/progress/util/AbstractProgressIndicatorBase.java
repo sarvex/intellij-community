@@ -23,6 +23,7 @@ import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.util.UserDataHolderBase;
+import com.intellij.ui.mac.foundation.MacUtil;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.DoubleArrayList;
 import com.intellij.util.containers.Stack;
@@ -43,6 +44,8 @@ public class AbstractProgressIndicatorBase extends UserDataHolderBase implements
   private volatile boolean myFinished;
 
   private volatile boolean myIndeterminate;
+  private volatile Object myMacActivity;
+  private volatile boolean myShouldStartActivity = true;
 
   private Stack<String> myTextStack;
   private DoubleArrayList myFractionStack;
@@ -68,6 +71,7 @@ public class AbstractProgressIndicatorBase extends UserDataHolderBase implements
     myText = "";
     myFraction = 0;
     myText2 = "";
+    startSystemActivity();
     myRunning = true;
   }
 
@@ -82,6 +86,20 @@ public class AbstractProgressIndicatorBase extends UserDataHolderBase implements
     LOG.assertTrue(myRunning, "stop() should be called only if start() called before");
     myRunning = false;
     myFinished = true;
+    stopSystemActivity();
+  }
+
+  protected void startSystemActivity() {
+    myMacActivity = myShouldStartActivity ? MacUtil.wakeUpNeo(toString()) : null;
+  }
+
+  protected void stopSystemActivity() {
+    if (myMacActivity != null) {
+      synchronized (myMacActivity) {
+        MacUtil.matrixHasYou(myMacActivity);
+        myMacActivity = null;
+      }
+    }
   }
 
   @Override
@@ -92,7 +110,10 @@ public class AbstractProgressIndicatorBase extends UserDataHolderBase implements
   @Override
   public void cancel() {
     myCanceled = true;
-    ProgressManager.canceled(this);
+    stopSystemActivity();
+    if (ApplicationManager.getApplication() != null) {
+      ProgressManager.canceled(this);
+    }
   }
 
   @Override
@@ -241,6 +262,7 @@ public class AbstractProgressIndicatorBase extends UserDataHolderBase implements
 
       myFractionStack = new DoubleArrayList(stacked.getFractionStack());
     }
+    myShouldStartActivity = false;
   }
 
   @Override

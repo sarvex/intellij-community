@@ -1,8 +1,7 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
- * Licensed under the Apache License, Version 2.0 (the "License")
-
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -27,6 +26,7 @@ import com.intellij.util.Processor
 import com.intellij.util.ThrowableRunnable
 import junit.framework.TestCase
 import org.jetbrains.annotations.NonNls
+import org.jetbrains.annotations.NotNull
 import org.jetbrains.annotations.Nullable
 /**
  * @author peter
@@ -411,7 +411,7 @@ R_PARENTH (')')
     
     CharSequence bombed = new SlowCharSequence(text)
     ThrowableRunnable cl = { LexerTestCase.printTokens(bombed, 0, new CustomFileTypeLexer(table)) } as ThrowableRunnable
-    PlatformTestUtil.startPerformanceTest("slow", 10000, cl).cpuBound().assertTiming()
+    PlatformTestUtil.startPerformanceTest("slow", 10000, cl).cpuBound().useLegacyScaling().assertTiming()
   }
 
 
@@ -422,6 +422,7 @@ class SlowCharSequence extends StringUtil.BombedCharSequence {
     super(sequence)
   }
 
+  @NotNull
   @Override
   CharSequence subSequence(int i, int i1) {
     return new SlowCharSequence(super.subSequence(i, i1))

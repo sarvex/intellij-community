@@ -23,8 +23,6 @@ import com.intellij.codeInsight.daemon.impl.analysis.JavaHighlightUtil;
 import com.intellij.codeInsight.daemon.impl.quickfix.AnonymousTargetClassPreselectionUtil;
 import com.intellij.codeInsight.generation.GenerateMembersUtil;
 import com.intellij.codeInsight.highlighting.HighlightManager;
-import com.intellij.codeInsight.intention.impl.AddNotNullAnnotationFix;
-import com.intellij.codeInsight.intention.impl.AddNullableAnnotationFix;
 import com.intellij.codeInsight.intention.impl.AddNullableNotNullAnnotationFix;
 import com.intellij.codeInsight.navigation.NavigationUtil;
 import com.intellij.codeInspection.dataFlow.*;
@@ -47,7 +45,6 @@ import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.wm.WindowManager;
-import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.*;
 import com.intellij.psi.controlFlow.ControlFlowUtil;
@@ -270,10 +267,10 @@ public class ExtractMethodProcessor implements MatchProvider {
     if (expressionType == null) {
       expressionType = PsiType.VOID;
     }
-    myHasExpressionOutput = expressionType != PsiType.VOID;
+    myHasExpressionOutput = !PsiType.VOID.equals(expressionType);
 
     final PsiType returnStatementType = getExpectedReturnType();
-    myHasReturnStatementOutput = myHasReturnStatement && returnStatementType != null && returnStatementType != PsiType.VOID;
+    myHasReturnStatementOutput = myHasReturnStatement && returnStatementType != null && !PsiType.VOID.equals(returnStatementType);
 
     if (myGenerateConditionalExit && myOutputVariables.length == 1) {
       if (!(myOutputVariables[0].getType() instanceof PsiPrimitiveType)) {
@@ -384,7 +381,7 @@ public class ExtractMethodProcessor implements MatchProvider {
 
   private boolean areAllExitPointsAreNotNull(PsiType returnStatementType) {
     if (insertNotNullCheckIfPossible() && myControlFlowWrapper.getOutputVariables(false).length == 0) {
-      boolean isNotNull = returnStatementType != null && returnStatementType != PsiType.VOID;
+      boolean isNotNull = returnStatementType != null && !PsiType.VOID.equals(returnStatementType);
       for (PsiStatement statement : myExitStatements) {
         if (statement instanceof PsiReturnStatement) {
           final PsiExpression returnValue = ((PsiReturnStatement)statement).getReturnValue();
@@ -435,7 +432,7 @@ public class ExtractMethodProcessor implements MatchProvider {
       return;
     }
     final PsiMethod method = (PsiMethod)myCodeFragmentMember;
-    if (!method.isConstructor() || myReturnType != PsiType.VOID) {
+    if (!method.isConstructor() || !PsiType.VOID.equals(myReturnType)) {
       return;
     }
     final PsiCodeBlock body = method.getBody();
@@ -643,7 +640,7 @@ public class ExtractMethodProcessor implements MatchProvider {
       if (classCopy == null) {
         return null;
       }
-      final PsiMethod emptyMethod = (PsiMethod)classCopy.add(generateEmptyMethod("name"));
+      final PsiMethod emptyMethod = (PsiMethod)classCopy.addAfter(generateEmptyMethod("name"), classCopy.getLBrace());
       prepareMethodBody(emptyMethod, false);
       if (myNotNullConditionalCheck || myNullConditionalCheck) {
         return Nullness.NULLABLE;
@@ -674,6 +671,7 @@ public class ExtractMethodProcessor implements MatchProvider {
       }
 
       final String nameByComment = getNameByComment();
+      final PsiField field = JavaPsiFacade.getElementFactory(myProject).createField("fieldNameToReplace", myReturnType instanceof PsiEllipsisType ? ((PsiEllipsisType)myReturnType).toArrayType() : myReturnType);
       final List<String> getters = new ArrayList<String>(ContainerUtil.map(initialMethodNames, new Function<String, String>() {
         @Override
         public String fun(String propertyName) {
@@ -681,7 +679,8 @@ public class ExtractMethodProcessor implements MatchProvider {
             LOG.info(propertyName + "; " + myExpression);
             return null;
           }
-          return GenerateMembersUtil.suggestGetterName(propertyName, myReturnType, myProject);
+          field.setName(propertyName);
+          return GenerateMembersUtil.suggestGetterName(field);
         }
       }));
       ContainerUtil.addIfNotNull(nameByComment, getters);
@@ -861,7 +860,7 @@ public class ExtractMethodProcessor implements MatchProvider {
     final PsiStatement exitStatementCopy = prepareMethodBody(newMethod, true);
 
     if (myExpression == null) {
-      if (myNeedChangeContext) {
+      if (myNeedChangeContext && isNeedToChangeCallContext()) {
         for (PsiElement element : myElements) {
           ChangeContextUtil.encodeContextInfo(element, false);
         }
@@ -997,13 +996,14 @@ public class ExtractMethodProcessor implements MatchProvider {
     if (myNullness != null &&
         PsiUtil.resolveClassInType(newMethod.getReturnType()) != null &&
         PropertiesComponent.getInstance(myProject).getBoolean(ExtractMethodDialog.EXTRACT_METHOD_GENERATE_ANNOTATIONS, true)) {
+      final NullableNotNullManager notNullManager = NullableNotNullManager.getInstance(myProject);
       AddNullableNotNullAnnotationFix annotationFix;
       switch (myNullness) {
         case NOT_NULL:
-          annotationFix = new AddNotNullAnnotationFix(newMethod);
+          annotationFix = new AddNullableNotNullAnnotationFix(notNullManager.getDefaultNotNull(), newMethod);
           break;
         case NULLABLE:
-          annotationFix = new AddNullableAnnotationFix(newMethod);
+          annotationFix = new AddNullableNotNullAnnotationFix(notNullManager.getDefaultNullable(), newMethod);
           break;
         default:
           annotationFix = null;
@@ -1387,7 +1387,7 @@ public class ExtractMethodProcessor implements MatchProvider {
     else {
       skipInstanceQualifier = instanceQualifier == null || instanceQualifier instanceof PsiThisExpression;
       if (skipInstanceQualifier) {
-        if (myNeedChangeContext) {
+        if (isNeedToChangeCallContext() && myNeedChangeContext) {
           boolean needsThisQualifier = false;
           PsiElement parent = myCodeFragmentMember;
           while (!myTargetClass.equals(parent)) {
@@ -1439,7 +1439,7 @@ public class ExtractMethodProcessor implements MatchProvider {
   }
 
   private boolean chooseTargetClass(PsiElement codeFragment, final Pass<ExtractMethodProcessor> extractPass) throws PrepareFailedException {
-    final List<PsiVariable> inputVariables = myControlFlowWrapper.getInputVariables(codeFragment, myElements);
+    final List<PsiVariable> inputVariables = myControlFlowWrapper.getInputVariables(codeFragment, myElements, myOutputVariables);
 
     myNeedChangeContext = false;
     myTargetClass = myCodeFragmentMember instanceof PsiMember
@@ -1514,7 +1514,7 @@ public class ExtractMethodProcessor implements MatchProvider {
   }
 
   private void declareNecessaryVariablesInsideBody(PsiCodeBlock body) throws IncorrectOperationException {
-    List<PsiVariable> usedVariables = myControlFlowWrapper.getUsedVariablesInBody();
+    List<PsiVariable> usedVariables = myControlFlowWrapper.getUsedVariablesInBody(ControlFlowUtil.findCodeFragment(myElements[0]), myOutputVariables);
     for (PsiVariable variable : usedVariables) {
       boolean toDeclare = !isDeclaredInside(variable) && myInputVariables.toDeclareInsideBody(variable);
       if (toDeclare) {
@@ -1722,7 +1722,7 @@ public class ExtractMethodProcessor implements MatchProvider {
 
     if (myExtractedMethod != null) {
       final ExtractMethodSignatureSuggester suggester = new ExtractMethodSignatureSuggester(myProject, myExtractedMethod, myMethodCall, myVariableDatum);
-      duplicates = suggester.getDuplicates(myExtractedMethod, myMethodCall);
+      duplicates = suggester.getDuplicates(myExtractedMethod, myMethodCall, myInputVariables.getFolding());
       if (duplicates != null && !duplicates.isEmpty()) {
         myDuplicates      = duplicates;
         myExtractedMethod = suggester.getExtractedMethod();

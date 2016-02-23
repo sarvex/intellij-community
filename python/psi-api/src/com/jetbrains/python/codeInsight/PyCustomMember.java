@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +15,20 @@
  */
 package com.jetbrains.python.codeInsight;
 
+import com.google.common.base.Preconditions;
 import com.intellij.extapi.psi.ASTWrapperPsiElement;
 import com.intellij.icons.AllIcons;
+import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.UserDataHolderBase;
 import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiReference;
+import com.intellij.psi.util.*;
 import com.intellij.util.Function;
 import com.jetbrains.python.psi.PyClass;
 import com.jetbrains.python.psi.PyFunction;
 import com.jetbrains.python.psi.PyPsiFacade;
 import com.jetbrains.python.psi.PyTypedElement;
+import com.jetbrains.python.psi.types.PyClassType;
 import com.jetbrains.python.psi.types.PyType;
 import com.jetbrains.python.psi.types.TypeEvalContext;
 import org.jetbrains.annotations.NotNull;
@@ -31,10 +37,15 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 
 /**
+ * Note: if you use {@link #myTypeName} to override real field, be sure to use
+ * {@link com.jetbrains.python.psi.types.PyOverridingClassMembersProvider}
+ *
  * @author Dennis.Ushakov
  */
-public class PyCustomMember {
-  private String myName;
+public class PyCustomMember extends UserDataHolderBase {
+  private static final Key<ParameterizedCachedValue<PyClass, PsiElement>>
+    RESOLVE = Key.create("resolve");
+  private final String myName;
   private final boolean myResolveToInstance;
   private final Function<PsiElement, PyType> myTypeCallback;
   @Nullable
@@ -49,6 +60,8 @@ public class PyCustomMember {
    * Force resolving to {@link MyInstanceElement} even if element is function
    */
   private boolean myAlwaysResolveToCustomElement;
+  private Icon myIcon = AllIcons.Nodes.Method;
+  private PyCustomMemberTypeInfo<?> myCustomTypeInfo;
 
   public PyCustomMember(@NotNull final String name, @Nullable final String type, final boolean resolveToInstance) {
     myName = name;
@@ -160,16 +173,31 @@ public class PyCustomMember {
     if (myTarget != null) {
       return myTarget.getIcon(0);
     }
-    return AllIcons.Nodes.Method;
+    return myIcon;
   }
 
   @Nullable
-  public PsiElement resolve(@NotNull PsiElement context) {
+  public PsiElement resolve(@NotNull final PsiElement context) {
+
     if (myTarget != null) {
       return myTarget;
     }
-    PyClass targetClass =
-      myTypeName != null && myTypeName.indexOf('.') > 0 ? PyPsiFacade.getInstance(context.getProject()).findClass(myTypeName) : null;
+
+    PyClass targetClass = null;
+    if (myTypeName != null) {
+
+      final ParameterizedCachedValueProvider<PyClass, PsiElement> provider = new ParameterizedCachedValueProvider<PyClass, PsiElement>() {
+        @Nullable
+        @Override
+        public CachedValueProvider.Result<PyClass> compute(
+          final PsiElement param) {
+          final PyClass result = PyPsiFacade.getInstance(param.getProject()).createClassByQName(myTypeName, param);
+          return CachedValueProvider.Result.create(result, PsiModificationTracker.MODIFICATION_COUNT);
+        }
+      };
+      targetClass = CachedValuesManager.getManager(context.getProject()).getParameterizedCachedValue(this, RESOLVE,
+                                                                                                     provider, false, context);
+    }
     final PsiElement resolveTarget = findResolveTarget(context);
     if (resolveTarget instanceof PyFunction && !myAlwaysResolveToCustomElement) {
       return resolveTarget;
@@ -206,6 +234,40 @@ public class PyCustomMember {
     return myFunction;
   }
 
+  /**
+   * Checks if some reference points to this element
+   *
+   * @param reference reference to check
+   * @return true if reference points to it
+   */
+  public final boolean isReferenceToMe(@NotNull final PsiReference reference) {
+    final PsiElement element = reference.resolve();
+    if (!(element instanceof MyInstanceElement)) {
+      return false;
+    }
+    return ((MyInstanceElement)element).getThis().equals(this);
+  }
+
+  /**
+   * @param icon icon to use (will be used method icon otherwise)
+   */
+  public PyCustomMember withIcon(@NotNull final Icon icon) {
+    myIcon = icon;
+    return this;
+  }
+
+  /**
+   * Adds custom info to type if class has {@link #myTypeName} set.
+   * Info could be later obtained by key.
+   *
+   * @param customInfo custom info to add
+   */
+  public PyCustomMember withCustomTypeInfo(@NotNull final PyCustomMemberTypeInfo<?> customInfo) {
+    Preconditions.checkState(myTypeName != null, "Cant add custom type info if no type provided");
+    myCustomTypeInfo = customInfo;
+    return this;
+  }
+
   private class MyInstanceElement extends ASTWrapperPsiElement implements PyTypedElement {
     private final PyClass myClass;
     private final PsiElement myContext;
@@ -216,12 +278,20 @@ public class PyCustomMember {
       myContext = context;
     }
 
+    private PyCustomMember getThis() {
+      return PyCustomMember.this;
+    }
+
     public PyType getType(@NotNull TypeEvalContext context, @NotNull TypeEvalContext.Key key) {
       if (myTypeCallback != null) {
         return myTypeCallback.fun(myContext);
       }
       else if (myClass != null) {
-        return PyPsiFacade.getInstance(getProject()).createClassType(myClass, !myResolveToInstance);
+        final PyClassType type = PyPsiFacade.getInstance(getProject()).createClassType(myClass, !myResolveToInstance);
+        if (myCustomTypeInfo != null) {
+          myCustomTypeInfo.fill(type);
+        }
+        return type;
       }
       return null;
     }

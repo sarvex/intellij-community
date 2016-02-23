@@ -16,6 +16,7 @@
 package com.intellij.ui;
 
 import com.intellij.ide.BrowserUtil;
+import com.intellij.ide.ui.UISettings;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
@@ -33,7 +34,6 @@ import org.jetbrains.annotations.Nullable;
 import javax.accessibility.Accessible;
 import javax.accessibility.AccessibleContext;
 import javax.accessibility.AccessibleRole;
-import javax.accessibility.AccessibleStateSet;
 import javax.swing.*;
 import javax.swing.border.Border;
 import javax.swing.tree.TreeCellRenderer;
@@ -47,7 +47,6 @@ import java.text.CharacterIterator;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * This is high performance Swing component which represents an icon
@@ -112,8 +111,6 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
   private boolean myIconOpaque = false;
 
   private boolean myAutoInvalidate = !(this instanceof TreeCellRenderer);
-
-  private final AccessibleContext myContext = new MyAccessibleContext();
 
   private boolean myIconOnTheRight = false;
   private boolean myTransparentIconBackground;
@@ -316,7 +313,7 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
    * Sets a new gap between icon and text
    *
    * @param iconTextGap the gap between text and icon
-   * @throws java.lang.IllegalArgumentException if the <code>iconTextGap</code>
+   * @throws IllegalArgumentException if the <code>iconTextGap</code>
    *                                            has a negative value
    */
   public void setIconTextGap(final int iconTextGap) {
@@ -482,7 +479,7 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
   }
 
   @Nullable
-  private TextLayout createTextLayout(String text, Font basefont, FontRenderContext fontRenderContext) {
+  private static TextLayout createTextLayout(String text, Font basefont, FontRenderContext fontRenderContext) {
     if (StringUtil.isEmpty(text)) return null;
     AttributedString string = new AttributedString(text);
     int start = 0;
@@ -737,13 +734,14 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
 
     final List<Object[]> searchMatches = new ArrayList<Object[]>();
 
-    UIUtil.applyRenderingHints(g);
     applyAdditionalHints(g);
     final Font ownFont = getFont();
     if (ownFont != null) {
       offset += computeTextAlignShift(ownFont);
     }
     int baseSize = ownFont != null ? ownFont.getSize() : g.getFont().getSize();
+    FontMetrics baseMetrics = g.getFontMetrics(ownFont != null ? ownFont : g.getFont());
+    final int textBaseline = getTextBaseLine(baseMetrics, getHeight());
     boolean wasSmaller = false;
     for (int i = 0; i < myFragments.size(); i++) {
       final SimpleTextAttributes attributes = myAttributes.get(i);
@@ -778,8 +776,6 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
       }
       g.setColor(color);
 
-      final int textBaseline = getTextBaseLine(metrics, getHeight());
-
       final int fragmentAlignment = myFragmentAlignment.get(i);
 
       final int endOffset;
@@ -787,7 +783,7 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
           fragmentPadding > fragmentWidth) {
         endOffset = fragmentPadding;
         if (fragmentAlignment == SwingConstants.RIGHT || fragmentAlignment == SwingConstants.TRAILING) {
-          offset = (fragmentPadding - fragmentWidth);
+          offset = fragmentPadding - fragmentWidth;
         }
       }
       else {
@@ -812,9 +808,8 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
       g.setStroke(g.getStroke());
 
       // 1. Strikeout effect
-      if (attributes.isStrikeout()) {
-        final int strikeOutAt = textBaseline + (metrics.getDescent() - metrics.getAscent()) / 2;
-        UIUtil.drawLine(g, offset, strikeOutAt, offset + fragmentWidth, strikeOutAt);
+      if (attributes.isStrikeout() && !attributes.isSearchMatch()) {
+        drawStrikeout(g, offset, offset + fragmentWidth, textBaseline);
       }
       // 2. Waved effect
       if (attributes.isWaved()) {
@@ -836,7 +831,7 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
       }
 
       if (attributes.isSearchMatch()) {
-        searchMatches.add(new Object[]{offset, offset + fragmentWidth, textBaseline, fragment, g.getFont()});
+        searchMatches.add(new Object[]{offset, offset + fragmentWidth, textBaseline, fragment, g.getFont(), attributes});
       }
 
       offset = endOffset;
@@ -854,18 +849,32 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
 
     // draw search matches after all
     for (final Object[] info : searchMatches) {
-      UIUtil.drawSearchMatch(g, (Integer)info[0], (Integer)info[1], getHeight());
+      Integer x1 = (Integer)info[0];
+      Integer x2 = (Integer)info[1];
+      UIUtil.drawSearchMatch(g, x1, x2, getHeight());
       g.setFont((Font)info[4]);
 
+      Integer baseline = (Integer)info[2];
+      String text = (String)info[3];
       if (shouldDrawMacShadow()) {
         g.setColor(SHADOW_COLOR);
-        g.drawString((String)info[3], (Integer)info[0], (Integer)info[2] + 1);
+        g.drawString(text, x1, baseline + 1);
       }
 
       g.setColor(new JBColor(Gray._50, Gray._0));
-      g.drawString((String)info[3], (Integer)info[0], (Integer)info[2]);
+      g.drawString(text, x1, baseline);
+
+      if (((SimpleTextAttributes)info[5]).isStrikeout()) {
+        drawStrikeout(g, x1, x2, baseline);
+      }
     }
     return offset;
+  }
+
+  private static void drawStrikeout(Graphics g, int x1, int x2, int y) {
+    // magic of determining character height
+    int strikeOutAt = y - g.getFontMetrics().charWidth('a') / 2;
+    UIUtil.drawLine(g, x1, strikeOutAt, x2, strikeOutAt);
   }
 
   private int computeTextAlignShift(@NotNull Font font) {
@@ -906,6 +915,7 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
   }
 
   protected void applyAdditionalHints(@NotNull Graphics2D g) {
+    UISettings.setupAntialiasing(g);
   }
 
   @Override
@@ -1015,39 +1025,20 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
 
   @Override
   public AccessibleContext getAccessibleContext() {
-    return myContext;
+    if (accessibleContext == null) {
+      accessibleContext = new MyAccessibleContext();
+    }
+    return accessibleContext;
   }
 
-  private static class MyAccessibleContext extends AccessibleContext {
+  private class MyAccessibleContext extends JComponent.AccessibleJComponent {
+    @Override
+    public String getAccessibleName() {
+      return getCharSequence(false).toString();
+    }
     @Override
     public AccessibleRole getAccessibleRole() {
-      return AccessibleRole.AWT_COMPONENT;
-    }
-
-    @Override
-    public AccessibleStateSet getAccessibleStateSet() {
-      return new AccessibleStateSet();
-    }
-
-    @Override
-    public int getAccessibleIndexInParent() {
-      return 0;
-    }
-
-    @Override
-    public int getAccessibleChildrenCount() {
-      return 0;
-    }
-
-    @Nullable
-    @Override
-    public Accessible getAccessibleChild(int i) {
-      return null;
-    }
-
-    @Override
-    public Locale getLocale() throws IllegalComponentStateException {
-      return Locale.getDefault();
+      return AccessibleRole.LABEL;
     }
   }
 

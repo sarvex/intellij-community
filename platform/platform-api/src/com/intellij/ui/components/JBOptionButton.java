@@ -17,14 +17,18 @@ package com.intellij.ui.components;
 
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.ui.GraphicsConfig;
 import com.intellij.openapi.ui.JBMenuItem;
 import com.intellij.openapi.ui.JBPopupMenu;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Ref;
+import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.Weighted;
 import com.intellij.openapi.wm.IdeGlassPane;
 import com.intellij.openapi.wm.IdeGlassPaneUtil;
 import com.intellij.ui.ScreenUtil;
+import com.intellij.util.ui.GraphicsUtil;
+import com.intellij.util.ui.JBInsets;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 
@@ -129,8 +133,8 @@ public class JBOptionButton extends JButton implements MouseMotionListener, Weig
   @Override
   public Dimension getPreferredSize() {
     final Dimension size = super.getPreferredSize();
-    size.width += (myMoreRec.width + myDownIconInsets.left + myDownIconInsets.right);
-    size.height += (myDownIconInsets.top + myDownIconInsets.bottom);
+    size.width += myMoreRec.width;
+    JBInsets.addTo(size, myDownIconInsets);
     return size;
   }
 
@@ -359,6 +363,16 @@ public class JBOptionButton extends JButton implements MouseMotionListener, Weig
   @Override
   protected void paintChildren(Graphics g) {
     super.paintChildren(g);
+    if (SystemInfo.isMac && UIUtil.isUnderIntelliJLaF()) {
+      int x = getWidth() - getInsets().right - 10;
+      Icon icon = AllIcons.Mac.YosemiteOptionButtonSelector;
+      int y = (getHeight() - icon.getIconHeight()) / 2;
+      GraphicsConfig config = isEnabled() ? new GraphicsConfig(g) : GraphicsUtil.paintWithAlpha(g, 0.6f);
+      icon.paintIcon(this, g, x, y);
+      config.restore();
+      return;
+    }
+
     boolean dark = UIUtil.isUnderDarcula();
     int off = dark ? 6 : 0;
     AllIcons.General.ArrowDown.paintIcon(this, g, myMoreRec.x - off, myMoreRec.y);

@@ -17,6 +17,7 @@ package com.intellij.openapi.roots.ui.configuration;
 
 import com.intellij.openapi.actionSystem.CustomShortcutSet;
 import com.intellij.openapi.extensions.ExtensionPointName;
+import com.intellij.openapi.project.ProjectBundle;
 import com.intellij.openapi.roots.SourceFolder;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -37,14 +38,15 @@ public abstract class ModuleSourceRootEditHandler<P extends JpsElement> {
     myRootType = rootType;
   }
 
-  @NotNull
+  @Nullable
   public static <P extends JpsElement> ModuleSourceRootEditHandler<P> getEditHandler(@NotNull JpsModuleSourceRootType<P> type) {
     for (ModuleSourceRootEditHandler editor : EP_NAME.getExtensions()) {
       if (editor.getRootType().equals(type)) {
+        //noinspection unchecked
         return editor;
       }
     }
-    throw new IllegalArgumentException("Cannot find edit handler for " + type);
+    return null;
   }
 
   public final JpsModuleSourceRootType<P> getRootType() {
@@ -53,6 +55,11 @@ public abstract class ModuleSourceRootEditHandler<P extends JpsElement> {
 
   @NotNull
   public abstract String getRootTypeName();
+
+  @NotNull
+  public String getFullRootTypeName() {
+    return ProjectBundle.message("module.paths.root.node", getRootTypeName());
+  }
 
   @NotNull
   public abstract Icon getRootIcon();

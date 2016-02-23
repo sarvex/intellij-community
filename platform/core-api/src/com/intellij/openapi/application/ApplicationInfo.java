@@ -27,32 +27,23 @@ public abstract class ApplicationInfo {
   public abstract String getApiVersion();
   public abstract String getMajorVersion();
   public abstract String getMinorVersion();
+  public abstract String getMicroVersion();
+  public abstract String getPatchVersion();
   public abstract String getVersionName();
   public abstract String getHelpURL();
   public abstract String getCompanyName();
   public abstract String getCompanyURL();
   public abstract String getThirdPartySoftwareURL();
   public abstract String getJetbrainsTvUrl();
+  public abstract String getEvalLicenseUrl();
+  public abstract String getKeyConversionUrl();
 
   public abstract Rectangle getAboutLogoRect();
   public abstract boolean hasHelp();
   public abstract boolean hasContextHelp();
 
-  public String getFullVersion() {
-    final String majorVersion = getMajorVersion();
-    if (majorVersion != null && majorVersion.trim().length() > 0) {
-      final String minorVersion = getMinorVersion();
-      if (minorVersion != null && minorVersion.trim().length() > 0) {
-        return majorVersion + "." + minorVersion;
-      }
-      else {
-        return majorVersion + ".0";
-      }
-    }
-    else {
-      return getVersionName();
-    }
-  }
+  public abstract String getFullVersion();
+  public abstract String getStrictVersion();
 
   public static ApplicationInfo getInstance() {
     return ServiceManager.getService(ApplicationInfo.class);
@@ -66,7 +57,7 @@ public abstract class ApplicationInfo {
     return ApplicationManager.getApplication() != null && getInstance() != null && getInstance().hasContextHelp();
   }
 
-  /** @deprecated use {@link #getBuild()} instead (to remove in IDEA 14) */
+  /** @deprecated use {@link #getBuild()} instead (to remove in IDEA 16) */
   @SuppressWarnings("UnusedDeclaration")
   public String getBuildNumber() {
     return getBuild().asString();

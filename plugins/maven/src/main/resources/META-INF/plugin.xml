@@ -28,12 +28,14 @@
     <extensionPoint name="pluginDescriptor" beanClass="org.jetbrains.idea.maven.plugins.api.MavenPluginDescriptor" />
 
     <extensionPoint name="repositoryProvider" interface="org.jetbrains.idea.maven.indices.MavenRepositoryProvider"/>
+    <extensionPoint name="repositoryLibrary" interface="org.jetbrains.idea.maven.utils.library.RepositoryLibraryDescription"/>
   </extensionPoints>
 
   <depends>com.intellij.properties</depends>
   <depends optional="true" config-file="groovy-support.xml">org.intellij.groovy</depends>
 
   <extensions defaultExtensionNs="com.intellij">
+    <customJavadocTagProvider implementation="org.jetbrains.idea.maven.javadoc.MojoClassAnnotationTagProvider"/>
     <fileTypeFactory implementation="org.jetbrains.idea.maven.utils.MavenFileTypeFactory"/>
     <projectImportProvider implementation="org.jetbrains.idea.maven.wizards.MavenProjectImportProvider"/>
     <projectOpenProcessor implementation="org.jetbrains.idea.maven.wizards.MavenProjectOpenProcessor"/>
@@ -62,8 +64,7 @@
     </projectConfigurable>
 
     <stepsBeforeRunProvider implementation="org.jetbrains.idea.maven.tasks.MavenBeforeRunTasksProvider"/>
-    <keymapExtension implementation="org.jetbrains.idea.maven.tasks.MavenKeymapExtension"/>
-    <errorHandler implementation="com.intellij.diagnostic.ITNReporter"/>
+    <externalSystemKeymapProvider implementation="org.jetbrains.idea.maven.tasks.MavenKeymapExtension"/>
     <configurationType implementation="org.jetbrains.idea.maven.execution.MavenRunConfigurationType"/>
     <configurationProducer implementation="org.jetbrains.idea.maven.execution.MavenConfigurationProducer"/>
     <orderEnumerationHandlerFactory implementation="org.jetbrains.idea.maven.execution.MavenOrderEnumeratorHandler$FactoryImpl"/>
@@ -175,6 +176,11 @@
     <projectService serviceImplementation="org.jetbrains.idea.maven.project.MavenWorkspaceSettingsComponent"/>
     <projectService serviceImplementation="org.jetbrains.idea.maven.execution.MavenRunner"/>
     <projectService serviceImplementation="org.jetbrains.idea.maven.project.MavenProjectSettings"/>
+
+    <postStartupActivity implementation="org.jetbrains.idea.maven.utils.MavenRehighlighter$MavenRehighlighterPostStartupActivity"/>
+    <projectService serviceImplementation="org.jetbrains.idea.maven.utils.MavenRehighlighter"/>
+    <projectModelModifier implementation="org.jetbrains.idea.maven.importing.MavenProjectModelModifier"/>
+    <library.dependencyScopeSuggester implementation="org.jetbrains.idea.maven.utils.library.RepositoryLibraryDependencyScopeSuggester"/>
   </extensions>
 
   <extensions defaultExtensionNs="org.jetbrains.idea.maven">
@@ -311,6 +317,14 @@
       <loadForDefaultProject/>
     </component>
     <component>
+      <implementation-class>org.jetbrains.idea.maven.utils.library.remote.MavenVersionsRemoteManager</implementation-class>
+      <loadForDefaultProject/>
+    </component>
+    <component>
+      <implementation-class>org.jetbrains.idea.maven.utils.library.remote.MavenDependenciesRemoteManager</implementation-class>
+      <loadForDefaultProject/>
+    </component>
+    <component>
       <implementation-class>org.jetbrains.idea.maven.indices.MavenProjectIndicesManager</implementation-class>
     </component>
     <component>
@@ -327,9 +341,6 @@
     </component>
     <component>
       <implementation-class>org.jetbrains.idea.maven.utils.MavenImportNotifier</implementation-class>
-    </component>
-    <component>
-      <implementation-class>org.jetbrains.idea.maven.utils.MavenRehighlighter</implementation-class>
     </component>
   </project-components>
 

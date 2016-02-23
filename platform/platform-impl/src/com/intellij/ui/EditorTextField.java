@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +46,7 @@ import com.intellij.psi.PsiFile;
 import com.intellij.ui.components.panels.NonOpaquePanel;
 import com.intellij.util.IJSwingUtilities;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.ui.JBInsets;
 import com.intellij.util.ui.MacUIUtil;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
@@ -364,8 +365,8 @@ public class EditorTextField extends NonOpaquePanel implements DocumentListener,
 
   private void initEditor() {
     myEditor = createEditor();
-    final JComponent component = myEditor.getComponent();
-    add(component, BorderLayout.CENTER);
+    myEditor.getContentComponent().setEnabled(isEnabled());
+    add(myEditor.getComponent(), BorderLayout.CENTER);
   }
 
   @Override
@@ -425,17 +426,6 @@ public class EditorTextField extends NonOpaquePanel implements DocumentListener,
 
     EditorColorsScheme colorsScheme = editor.getColorsScheme();
     editor.getSettings().setCaretRowShown(false);
-    editor.setColorsScheme(new DelegateColorScheme(colorsScheme) {
-      @Override
-      public TextAttributes getAttributes(TextAttributesKey key) {
-        final TextAttributes attributes = super.getAttributes(key);
-        if (!isEnabled() && attributes != null) {
-          return new TextAttributes(UIUtil.getInactiveTextColor(), attributes.getBackgroundColor(), attributes.getEffectColor(), attributes.getEffectType(), attributes.getFontType());
-        }
-
-        return attributes;
-      }
-    });
 
     // color scheme settings:
     setupEditorFont(editor);
@@ -478,10 +468,10 @@ public class EditorTextField extends NonOpaquePanel implements DocumentListener,
     editor.setCaretEnabled(!myIsViewer);
     settings.setLineCursorWidth(1);
 
-    if (myProject != null && myIsViewer) {
-      final PsiFile psiFile = PsiDocumentManager.getInstance(myProject).getPsiFile(editor.getDocument());
+    if (myProject != null) {
+      PsiFile psiFile = PsiDocumentManager.getInstance(myProject).getPsiFile(editor.getDocument());
       if (psiFile != null) {
-        DaemonCodeAnalyzer.getInstance(myProject).setHighlightingEnabled(psiFile, false);
+        DaemonCodeAnalyzer.getInstance(myProject).setHighlightingEnabled(psiFile, !myIsViewer);
       }
     }
 
@@ -489,27 +479,7 @@ public class EditorTextField extends NonOpaquePanel implements DocumentListener,
       editor.setHighlighter(EditorHighlighterFactory.getInstance().createEditorHighlighter(myProject, myFileType));
     }
 
-    final EditorColorsScheme colorsScheme = editor.getColorsScheme();
     editor.getSettings().setCaretRowShown(false);
-    if (!isEnabled()) {
-      editor.setColorsScheme(new DelegateColorScheme(colorsScheme) {
-        @Nullable
-        @Override
-        public Color getColor(ColorKey key) {
-          return super.getColor(key);
-        }
-
-        @Override
-        public TextAttributes getAttributes(TextAttributesKey key) {
-          final TextAttributes attributes = super.getAttributes(key);
-          if (!isEnabled()) {
-            return new TextAttributes(UIUtil.getInactiveTextColor(), attributes.getBackgroundColor(), attributes.getEffectColor(), attributes.getEffectType(), attributes.getFontType());
-          }
-
-          return attributes;
-        }
-      });
-    }
 
     editor.setOneLineMode(myOneLineMode);
     editor.getCaretModel().moveToOffset(myDocument.getTextLength());
@@ -594,7 +564,7 @@ public class EditorTextField extends NonOpaquePanel implements DocumentListener,
   public void setEnabled(boolean enabled) {
     if (isEnabled() != enabled) {
       super.setEnabled(enabled);
-      myIsViewer = !enabled;
+      setViewerEnabled(enabled);
       EditorEx editor = myEditor;
       if (editor == null) {
         return;
@@ -603,6 +573,10 @@ public class EditorTextField extends NonOpaquePanel implements DocumentListener,
       initEditor();
       revalidate();
     }
+  }
+
+  protected void setViewerEnabled(boolean enabled) {
+    myIsViewer = !enabled;
   }
 
   @Override
@@ -617,7 +591,7 @@ public class EditorTextField extends NonOpaquePanel implements DocumentListener,
       return getParent().getBackground();
     }
 
-    if (UIUtil.isUnderDarcula() || UIUtil.isUnderIntelliJLaF()) return UIUtil.getTextFieldBackground();
+    if (UIUtil.isUnderDarcula()/* || UIUtil.isUnderIntelliJLaF()*/) return UIUtil.getTextFieldBackground();
 
     return enabled
            ? colorsScheme.getDefaultBackground()
@@ -655,13 +629,7 @@ public class EditorTextField extends NonOpaquePanel implements DocumentListener,
         preferredSize.width = myPreferredWidth;
       }
 
-      final Insets insets = getInsets();
-      if (insets != null) {
-        preferredSize.width += insets.left;
-        preferredSize.width += insets.right;
-        preferredSize.height += insets.top;
-        preferredSize.height += insets.bottom;
-      }
+      JBInsets.addTo(preferredSize, getInsets());
       size = preferredSize;
     } else if (myPassivePreferredSize != null) {
       size = myPassivePreferredSize;
@@ -685,8 +653,8 @@ public class EditorTextField extends NonOpaquePanel implements DocumentListener,
     if (myEditor != null) {
       size.height = myEditor.getLineHeight();
 
-      size = UIUtil.addInsets(size, getInsets());
-      size = UIUtil.addInsets(size, myEditor.getInsets());
+      JBInsets.addTo(size, getInsets());
+      JBInsets.addTo(size, myEditor.getInsets());
     }
 
     return size;

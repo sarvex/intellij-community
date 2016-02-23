@@ -15,9 +15,11 @@
  */
 package com.intellij.openapi.actionSystem.impl;
 
+import com.intellij.ide.ui.UISettings;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.actionSystem.ex.ActionButtonLook;
 import com.intellij.util.ui.EmptyIcon;
+import com.intellij.util.ui.JBInsets;
 import com.intellij.util.ui.UIUtil;
 import org.intellij.lang.annotations.MagicConstant;
 import sun.swing.SwingUtilities2;
@@ -61,10 +63,12 @@ public class ActionButtonWithText extends ActionButton {
     int x2 = Math.max(iconR.x + iconR.width, textR.x + textR.width);
     int y1 = Math.min(iconR.y, textR.y);
     int y2 = Math.max(iconR.y + iconR.height, textR.y + textR.height);
-    Dimension rv = new Dimension(x2 - x1, y2 - y1);
+    Dimension rv = new Dimension(x2 - x1 + dx, y2 - y1 + dy);
 
-    rv.width = Math.max(rv.width += dx, basicSize.width);
-    rv.height = Math.max(rv.height += dy, basicSize.height);
+    rv.width += Math.max(basicSize.height - rv.height, 0);
+
+    rv.width = Math.max(rv.width, basicSize.width);
+    rv.height = Math.max(rv.height, basicSize.height);
     return rv;
   }
 
@@ -72,11 +76,7 @@ public class ActionButtonWithText extends ActionButton {
     Icon icon = getIcon();
     FontMetrics fm = getFontMetrics(getFont());
     Rectangle viewRect = new Rectangle(getSize());
-    Insets i = getInsets();
-    viewRect.x += i.left;
-    viewRect.y += i.top;
-    viewRect.width -= (i.right + viewRect.x);
-    viewRect.height -= (i.bottom + viewRect.y);
+    JBInsets.removeFrom(viewRect, getInsets());
 
     Rectangle iconRect = new Rectangle();
     Rectangle textRect = new Rectangle();
@@ -89,12 +89,16 @@ public class ActionButtonWithText extends ActionButton {
     look.paintIconAt(g, this, icon, iconRect.x, iconRect.y);
     look.paintBorder(g, this);
 
-    UIUtil.applyRenderingHints(g);
-    g.setColor(isButtonEnabled() ? getForeground() : UIUtil.getInactiveTextColor());
+    UISettings.setupAntialiasing(g);
+    g.setColor(isButtonEnabled() ? getForeground() : getInactiveTextColor());
     SwingUtilities2.drawStringUnderlineCharAt(this, g, text,
                                               getMnemonicCharIndex(text),
                                               textRect.x,
                                               textRect.y + fm.getAscent());
+  }
+
+  public Color getInactiveTextColor() {
+    return UIUtil.getInactiveTextColor();
   }
 
   public void setHorizontalTextPosition(@MagicConstant(valuesFromClass = SwingConstants.class) int position) {

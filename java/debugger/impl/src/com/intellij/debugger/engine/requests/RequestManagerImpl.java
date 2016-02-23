@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,9 +52,9 @@ public class RequestManagerImpl extends DebugProcessAdapterImpl implements Reque
   private static final Key<Requestor> REQUESTOR = Key.create("Requestor");
 
   private final DebugProcessImpl myDebugProcess;
-  private final Map<Requestor, String> myRequestWarnings = new HashMap<Requestor, String>();
+  private final Map<Requestor, String> myRequestWarnings = new HashMap<>();
 
-  private final Map<Requestor, Set<EventRequest>> myRequestorToBelongedRequests = new HashMap<Requestor, Set<EventRequest>>();
+  private final Map<Requestor, Set<EventRequest>> myRequestorToBelongedRequests = new HashMap<>();
   private EventRequestManager myEventRequestManager;
   private @Nullable ThreadReference myFilterThread;
 
@@ -195,14 +195,19 @@ public class RequestManagerImpl extends DebugProcessAdapterImpl implements Reque
   private void registerRequest(Requestor requestor, EventRequest request) {
     Set<EventRequest> reqSet = myRequestorToBelongedRequests.get(requestor);
     if(reqSet == null) {
-      reqSet = new HashSet<EventRequest>();
+      reqSet = new HashSet<>();
       myRequestorToBelongedRequests.put(requestor, reqSet);
     }
     reqSet.add(request);
   }
 
   // requests creation
+  @Nullable
   public ClassPrepareRequest createClassPrepareRequest(ClassPrepareRequestor requestor, String pattern) {
+    if (myEventRequestManager == null) { // detached already
+      return null;
+    }
+
     ClassPrepareRequest classPrepareRequest = myEventRequestManager.createClassPrepareRequest();
     classPrepareRequest.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
     classPrepareRequest.addClassFilter(pattern);
@@ -321,10 +326,12 @@ public class RequestManagerImpl extends DebugProcessAdapterImpl implements Reque
     DebuggerManagerThreadImpl.assertIsManagerThread();
     ClassPrepareRequest classPrepareRequest = createClassPrepareRequest(requestor, classOrPatternToBeLoaded);
 
-    registerRequest(requestor, classPrepareRequest);
-    classPrepareRequest.enable();
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("classOrPatternToBeLoaded = " + classOrPatternToBeLoaded);
+    if (classPrepareRequest != null) {
+      registerRequest(requestor, classPrepareRequest);
+      classPrepareRequest.enable();
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("classOrPatternToBeLoaded = " + classOrPatternToBeLoaded);
+      }
     }
   }
 
@@ -346,13 +353,14 @@ public class RequestManagerImpl extends DebugProcessAdapterImpl implements Reque
       }
       request.enable();
     } catch (InternalException e) {
-      //noinspection StatementWithEmptyBody
-      if (e.errorCode() == 41) {
+      switch (e.errorCode()) {
+        case 40 /* DUPLICATE */ : LOG.info(e); break;
+
+        case 41 /* NOT_FOUND */ : break;
         //event request not found
         //there could be no requests after hotswap
-      }
-      else {
-        LOG.error(e);
+
+        default: LOG.error(e);
       }
     }
   }

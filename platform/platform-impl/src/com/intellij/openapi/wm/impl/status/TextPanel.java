@@ -15,11 +15,13 @@
  */
 package com.intellij.openapi.wm.impl.status;
 
+import com.intellij.icons.AllIcons;
+import com.intellij.ide.ui.UISettings;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.ui.Gray;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -32,7 +34,6 @@ public class TextPanel extends JComponent {
   private Integer   myPrefHeight;
   private Dimension myExplicitSize;
 
-  private boolean myDecorate = true;
   private float myAlignment;
   private int myRightPadding = JBUI.scale(14);
 
@@ -45,19 +46,10 @@ public class TextPanel extends JComponent {
     return SystemInfo.isMac ? JBUI.Fonts.label(11) : JBUI.Fonts.label();
   }
 
-  protected TextPanel(final boolean decorate) {
-    this();
-    myDecorate = decorate;
-  }
-
   public void recomputeSize() {
     final JLabel label = new JLabel("XXX");
     label.setFont(getFont());
     myPrefHeight = label.getPreferredSize().height;
-  }
-
-  public void setDecorate(boolean decorate) {
-    myDecorate = decorate;
   }
 
   public void resetColor() {
@@ -82,7 +74,7 @@ public class TextPanel extends JComponent {
     final Graphics2D g2 = (Graphics2D)g;
     g2.setFont(getFont());
 
-    UIUtil.applyRenderingHints(g2);
+    UISettings.setupAntialiasing(g);
 
     final FontMetrics fm = g2.getFontMetrics();
     final int sWidth = fm.stringWidth(s);
@@ -106,10 +98,6 @@ public class TextPanel extends JComponent {
     }
 
     final int y = UIUtil.getStringY(s, bounds, g2);
-    if (SystemInfo.isMac && !UIUtil.isUnderDarcula() && myDecorate) {
-      g2.setColor(myCustomColor == null ? Gray._215 : myCustomColor);
-      g2.drawString(s, x, y + 1);
-    }
 
     g2.setColor(myCustomColor == null ? getForeground() : myCustomColor);
     g2.drawString(s, x, y);
@@ -187,5 +175,56 @@ public class TextPanel extends JComponent {
 
   public void setExplicitSize(@Nullable Dimension explicitSize) {
     myExplicitSize = explicitSize;
+  }
+
+  public static class WithIconAndArrows extends TextPanel {
+    private final static int GAP = 2;
+    @Nullable private Icon myIcon;
+
+    @Override
+    protected void paintComponent(@NotNull final Graphics g) {
+      super.paintComponent(g);
+      if (getText() != null) {
+        Rectangle r = getBounds();
+        Insets insets = getInsets();
+        Icon arrows = AllIcons.Ide.Statusbar_arrows;
+        arrows.paintIcon(this, g, r.width - insets.right - arrows.getIconWidth() - 1,
+                         r.height / 2 - arrows.getIconHeight() / 2);
+        if (myIcon != null) {
+          myIcon.paintIcon(this, g, insets.left - GAP - myIcon.getIconWidth(), r.height / 2 - myIcon.getIconHeight() / 2);
+        }
+      }
+    }
+
+    @NotNull
+    @Override
+    public Insets getInsets() {
+      Insets insets = super.getInsets();
+      if (myIcon != null) {
+        insets.left += myIcon.getIconWidth() + GAP * 2;
+      }
+      return insets;
+    }
+
+    @Override
+    public Dimension getPreferredSize() {
+      final Dimension preferredSize = super.getPreferredSize();
+      int deltaWidth = AllIcons.Ide.Statusbar_arrows.getIconWidth();
+      if (myIcon != null) {
+        deltaWidth += myIcon.getIconWidth();
+      }
+      return new Dimension(preferredSize.width + deltaWidth, preferredSize.height);
+    }
+
+    public void setIcon(@Nullable Icon icon) {
+      myIcon = icon;
+    }
+  }
+
+  public static class ExtraSize extends TextPanel {
+    public Dimension getPreferredSize() {
+      Dimension size = super.getPreferredSize();
+      return new Dimension(size.width + 3, size.height);
+    }
   }
 }

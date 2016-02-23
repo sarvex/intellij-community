@@ -62,6 +62,10 @@ public class NewMethodRefHighlightingTest extends LightDaemonAnalyzerTestCase {
     doTest(true);
   }
 
+  public void testUncheckedWarningWithRawSecondSearchAndMethodFromSuper() throws Exception {
+    doTest(true);
+  }
+
   public void testWildcardReturns() throws Exception {
     doTest(false);
   }
@@ -395,6 +399,98 @@ public class NewMethodRefHighlightingTest extends LightDaemonAnalyzerTestCase {
   }
 
   public void testSkipCheckedExceptionsHandledByInterfaceMethod() throws Exception {
+    doTest();
+  }
+
+  public void testConstraintsFromNonRawReceiverType() throws Exception {
+    doTest();
+  }
+
+  public void testSubstitutionForReturnTypeConstraintsForTargetGenericMethod() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA140586() throws Exception {
+    doTest();
+  }
+
+  public void testUnhandledExceptionsInQualifier() throws Exception {
+    doTest();
+  }
+
+  public void testRawClassTypeOnConstructorReference() throws Exception {
+    doTest();
+  }
+
+  public void testIncompleteCodeWithMethodReferenceOverLambdaParameter() throws Exception {
+    doTest();
+  }
+
+  public void testIncompleteMethodReferenceWithUncheckedWarningInspection() throws Exception {
+    doTest();
+  }
+
+  public void testCapturedReturnTypeOfMethodReference() throws Exception {
+    doTest();
+  }
+
+  public void testEnumConstantsAsContext() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA138752() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA136708() throws Exception {
+    doTest();
+  }
+
+  public void testContainingClassTypeParametersShouldNotBeInferredDuringMethodReferenceProcessing() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA147511() throws Exception {
+    doTest();
+  }
+
+  public void testRawInferredTypeCheck() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA147873() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA148553() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA148093() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA148841() throws Exception {
+    doTest();
+  }
+
+  public void testCapturedTypesOfImplicitParameterTypes() throws Exception {
+    doTest();
+  }
+
+  public void testApplicabilityConflictMessage() throws Exception {
+    doTest();
+  }
+
+  public void testQualifierOfCapturedWildcardType() throws Exception {
+    doTest();
+  }
+
+  public void testCapturedWildcardInReceiverPosition() throws Exception {
+    doTest();
+  }
+
+  public void testGetClassReturnTypeInMethodReference() throws Exception {
     doTest();
   }
 

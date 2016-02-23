@@ -17,11 +17,11 @@ package org.jetbrains.plugins.gradle.action;
 
 import com.intellij.execution.RunManagerEx;
 import com.intellij.execution.RunnerAndConfigurationSettings;
-import com.intellij.execution.actions.ConfigurationContext;
 import com.intellij.execution.executors.DefaultRunExecutor;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
-import com.intellij.openapi.actionSystem.DataContext;
+import com.intellij.openapi.actionSystem.Presentation;
+import com.intellij.openapi.externalSystem.action.ExternalSystemAction;
 import com.intellij.openapi.externalSystem.action.ExternalSystemActionUtil;
 import com.intellij.openapi.externalSystem.model.ExternalSystemDataKeys;
 import com.intellij.openapi.externalSystem.model.execution.ExternalSystemTaskExecutionSettings;
@@ -33,12 +33,13 @@ import com.intellij.openapi.externalSystem.service.notification.NotificationData
 import com.intellij.openapi.externalSystem.service.notification.NotificationSource;
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil;
+import com.intellij.openapi.externalSystem.view.ExternalProjectsView;
 import com.intellij.openapi.externalSystem.view.ExternalSystemNode;
 import com.intellij.openapi.module.Module;
-import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.Function;
+import com.intellij.util.execution.ParametersListUtil;
 import org.gradle.cli.CommandLineArgumentException;
 import org.gradle.cli.CommandLineParser;
 import org.gradle.cli.ParsedCommandLine;
@@ -56,7 +57,26 @@ import java.util.Map;
  * @author Vladislav.Soroka
  * @since 11/25/2014
  */
-public class GradleExecuteTaskAction extends DumbAwareAction {
+public class GradleExecuteTaskAction extends ExternalSystemAction {
+
+  @Override
+  protected boolean isVisible(AnActionEvent e) {
+    if (!super.isVisible(e)) return false;
+    final ExternalProjectsView projectsView = ExternalSystemDataKeys.VIEW.getData(e.getDataContext());
+    return projectsView == null || GradleConstants.SYSTEM_ID.equals(getSystemId(e));
+  }
+
+  protected boolean isEnabled(AnActionEvent e) {
+    return true;
+  }
+
+  @Override
+  public void update(@NotNull AnActionEvent e) {
+    Presentation p = e.getPresentation();
+    p.setVisible(isVisible(e));
+    p.setEnabled(isEnabled(e));
+  }
+
   @Override
   public void actionPerformed(@NotNull final AnActionEvent e) {
     final Project project = e.getRequiredData(CommonDataKeys.PROJECT);
@@ -129,7 +149,7 @@ public class GradleExecuteTaskAction extends DumbAwareAction {
 
     GradleCommandLineOptionsConverter commandLineConverter = new GradleCommandLineOptionsConverter();
     commandLineConverter.configure(gradleCmdParser);
-    ParsedCommandLine parsedCommandLine = gradleCmdParser.parse(StringUtil.split(fullCommandLine, " "));
+    ParsedCommandLine parsedCommandLine = gradleCmdParser.parse(ParametersListUtil.parse(fullCommandLine, true));
 
     final Map<String, List<String>> optionsMap =
       commandLineConverter.convert(parsedCommandLine, new HashMap<String, List<String>>());

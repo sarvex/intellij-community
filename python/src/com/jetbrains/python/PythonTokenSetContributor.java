@@ -45,20 +45,7 @@ public class PythonTokenSetContributor extends PythonDialectsTokenSetContributor
                            LAMBDA_EXPRESSION, LIST_COMP_EXPRESSION, DICT_LITERAL_EXPRESSION, KEY_VALUE_EXPRESSION,
                            REPR_EXPRESSION, GENERATOR_EXPRESSION, CONDITIONAL_EXPRESSION, YIELD_EXPRESSION,
                            TARGET_EXPRESSION, NONE_LITERAL_EXPRESSION, BOOL_LITERAL_EXPRESSION,
-                           SET_LITERAL_EXPRESSION, SET_COMP_EXPRESSION, DICT_COMP_EXPRESSION, STAR_EXPRESSION);
-  }
-
-  @NotNull
-  @Override
-  public TokenSet getNameDefinerTokens() {
-    // FROM_IMPORT_STATEMENT is not exactly a NameDefiner but needed anyway in mypackage/__init__.py, 'from mypackage.foo import bar' makes
-    // 'foo' name visible
-    return TokenSet.create(STAR_IMPORT_ELEMENT, IMPORT_ELEMENT, CLASS_DECLARATION,
-                           GLOBAL_STATEMENT, GENERATOR_EXPRESSION, DICT_COMP_EXPRESSION,
-                           LIST_COMP_EXPRESSION, SET_COMP_EXPRESSION, WITH_STATEMENT,
-                           FUNCTION_DECLARATION, ASSIGNMENT_STATEMENT, EXCEPT_PART,
-                           FOR_STATEMENT,
-                           FROM_IMPORT_STATEMENT);
+                           SET_LITERAL_EXPRESSION, SET_COMP_EXPRESSION, DICT_COMP_EXPRESSION, STAR_EXPRESSION, DOUBLE_STAR_EXPRESSION);
   }
 
   @NotNull
@@ -73,7 +60,7 @@ public class PythonTokenSetContributor extends PythonDialectsTokenSetContributor
       LAMBDA_KEYWORD, NOT_KEYWORD, OR_KEYWORD, PASS_KEYWORD, PRINT_KEYWORD,
       RAISE_KEYWORD, RETURN_KEYWORD, TRY_KEYWORD, WITH_KEYWORD, WHILE_KEYWORD,
       YIELD_KEYWORD,
-      NONE_KEYWORD, TRUE_KEYWORD, FALSE_KEYWORD, NONLOCAL_KEYWORD, DEBUG_KEYWORD);
+      NONE_KEYWORD, TRUE_KEYWORD, FALSE_KEYWORD, NONLOCAL_KEYWORD, DEBUG_KEYWORD, ASYNC_KEYWORD, AWAIT_KEYWORD);
   }
 
   @NotNull

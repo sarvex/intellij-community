@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 package org.jetbrains.plugins.groovy.lang.resolve
-import com.intellij.codeInsight.TargetElementUtilBase
+import com.intellij.codeInsight.TargetElementUtil
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.roots.ContentEntry
 import com.intellij.openapi.roots.ModifiableRootModel
@@ -24,6 +24,7 @@ import com.intellij.openapi.vfs.JarFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiMethod
 import com.intellij.testFramework.LightProjectDescriptor
+import org.jetbrains.annotations.NotNull
 import org.jetbrains.plugins.groovy.GroovyLightProjectDescriptor
 import org.jetbrains.plugins.groovy.LightGroovyTestCase
 import org.jetbrains.plugins.groovy.util.TestUtils
@@ -37,7 +38,7 @@ public class NavigateDelegatedClsMethodsTest extends LightGroovyTestCase {
 
   final LightProjectDescriptor projectDescriptor = new GroovyLightProjectDescriptor(TestUtils.mockGroovy2_1LibraryName) {
     @Override
-    public void configureModule(Module module, ModifiableRootModel model, ContentEntry contentEntry) {
+    public void configureModule(@NotNull Module module, @NotNull ModifiableRootModel model, @NotNull ContentEntry contentEntry) {
       super.configureModule(module, model, contentEntry)
 
       final Library.ModifiableModel gebModel = model.moduleLibraryTable.createLibrary("Geb").modifiableModel;
@@ -64,7 +65,7 @@ class A extends Page {
     }
 }
 ''')
-      def instance = TargetElementUtilBase.getInstance()
+      def instance = TargetElementUtil.getInstance()
       def resolved = instance.findTargetElement(editor, instance.allAccepted, editor.caretModel.offset)
       assertInstanceOf resolved, PsiMethod
       assertEquals ('NavigableSupport', (resolved as PsiMethod).containingClass.name)
@@ -82,7 +83,7 @@ class A extends Page {
     }
 }
 ''')
-      def instance = TargetElementUtilBase.getInstance()
+      def instance = TargetElementUtil.getInstance()
       def resolved = instance.findTargetElement(editor, instance.allAccepted, editor.caretModel.offset).navigationElement
       assertInstanceOf resolved, PsiMethod
       assertEquals ('NavigableSupport', (resolved as PsiMethod).containingClass.name)

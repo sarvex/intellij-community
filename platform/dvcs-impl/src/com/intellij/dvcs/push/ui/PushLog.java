@@ -15,8 +15,9 @@
  */
 package com.intellij.dvcs.push.ui;
 
-import com.intellij.openapi.actionSystem.CommonShortcuts;
-import com.intellij.openapi.actionSystem.DataProvider;
+import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.keymap.KeymapUtil;
+import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Splitter;
 import com.intellij.openapi.util.Condition;
@@ -29,16 +30,18 @@ import com.intellij.openapi.vcs.changes.ui.EditSourceForDialogAction;
 import com.intellij.openapi.vcs.history.VcsRevisionNumber;
 import com.intellij.ui.*;
 import com.intellij.ui.components.JBScrollPane;
+import com.intellij.ui.components.JBViewport;
 import com.intellij.ui.components.labels.LinkLabel;
 import com.intellij.ui.components.labels.LinkListener;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.Function;
 import com.intellij.util.Processor;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.ui.ThreeStateCheckBox;
 import com.intellij.util.ui.tree.TreeUtil;
 import com.intellij.util.ui.tree.WideSelectionTreeUI;
 import com.intellij.vcs.log.Hash;
-import com.intellij.vcs.log.ui.VcsLogUiImpl;
+import com.intellij.vcs.log.ui.VcsLogActionPlaces;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -57,24 +60,29 @@ import java.util.List;
 
 public class PushLog extends JPanel implements DataProvider {
 
-  private final static String CONTEXT_MENU = "Vcs.Push.ContextMenu";
+  private static final String CONTEXT_MENU = "Vcs.Push.ContextMenu";
   private static final String START_EDITING = "startEditing";
   private final ChangesBrowser myChangesBrowser;
   private final CheckboxTree myTree;
   private final MyTreeCellRenderer myTreeCellRenderer;
   private final JScrollPane myScrollPane;
+  private final VcsCommitInfoBalloon myBalloon;
   private boolean myShouldRepaint = false;
   private boolean mySyncStrategy;
   @Nullable private String mySyncRenderedText;
   private final boolean myAllowSyncStrategy;
 
-
   public PushLog(Project project, final CheckedTreeNode root, final boolean allowSyncStrategy) {
     myAllowSyncStrategy = allowSyncStrategy;
     DefaultTreeModel treeModel = new DefaultTreeModel(root);
     treeModel.nodeStructureChanged(root);
+    final AnAction quickDocAction = ActionManager.getInstance().getAction(IdeActions.ACTION_QUICK_JAVADOC);
     myTreeCellRenderer = new MyTreeCellRenderer();
     myTree = new CheckboxTree(myTreeCellRenderer, root) {
+
+      protected boolean shouldShowBusyIconIfNeeded() {
+        return true;
+      }
 
       public boolean isPathEditable(TreePath path) {
         return isEditable() && path.getLastPathComponent() instanceof DefaultMutableTreeNode;
@@ -98,7 +106,9 @@ public class PushLog extends JPanel implements DataProvider {
           return "";
         }
         if (node instanceof TooltipNode) {
-          return ((TooltipNode)node).getTooltip();
+          return KeymapUtil.createTooltipText(
+            ((TooltipNode)node).getTooltip() +
+            "<p style='font-style:italic;color:gray;'>Show commit details", quickDocAction) + "</p>";
         }
         return "";
       }
@@ -182,12 +192,13 @@ public class PushLog extends JPanel implements DataProvider {
     TreeUtil.collapseAll(myTree, 1);
     final VcsBranchEditorListener linkMouseListener = new VcsBranchEditorListener(myTreeCellRenderer);
     linkMouseListener.installOn(myTree);
-
+    myBalloon = new VcsCommitInfoBalloon(myTree);
     myTree.getSelectionModel().setSelectionMode(TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION);
     myTree.addTreeSelectionListener(new TreeSelectionListener() {
       @Override
       public void valueChanged(TreeSelectionEvent e) {
         updateChangesView();
+        myBalloon.updateCommitDetails();
       }
     });
     myTree.addFocusListener(new FocusAdapter() {
@@ -204,14 +215,16 @@ public class PushLog extends JPanel implements DataProvider {
     myTree.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_F2, 0), START_EDITING);
     //override default tree behaviour.
     myTree.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "");
+    MyShowCommitInfoAction showCommitInfoAction = new MyShowCommitInfoAction();
+    showCommitInfoAction.registerCustomShortcutSet(quickDocAction.getShortcutSet(), myTree);
 
     ToolTipManager.sharedInstance().registerComponent(myTree);
-    PopupHandler.installPopupHandler(myTree, VcsLogUiImpl.POPUP_ACTION_GROUP, CONTEXT_MENU);
+    PopupHandler.installPopupHandler(myTree, VcsLogActionPlaces.POPUP_ACTION_GROUP, CONTEXT_MENU);
 
     myChangesBrowser =
       new ChangesBrowser(project, null, Collections.<Change>emptyList(), null, false, true, null, ChangesBrowser.MyUseCase.LOCAL_CHANGES,
                          null);
-    myChangesBrowser.getDiffAction().registerCustomShortcutSet(CommonShortcuts.getDiff(), myTree);
+    myChangesBrowser.getDiffAction().registerCustomShortcutSet(myChangesBrowser.getDiffAction().getShortcutSet(), myTree);
     final EditSourceForDialogAction editSourceAction = new EditSourceForDialogAction(myChangesBrowser);
     editSourceAction.registerCustomShortcutSet(CommonShortcuts.getEditSource(), myChangesBrowser);
     myChangesBrowser.addToolbarAction(editSourceAction);
@@ -233,6 +246,10 @@ public class PushLog extends JPanel implements DataProvider {
         }
       }
     };
+    if (syncStrategyPanel != null) {
+      myScrollPane.setViewport(new MyTreeViewPort(myTree, syncStrategyPanel.getPreferredSize().height));
+    }
+    myScrollPane.getViewport().setScrollMode(JViewport.SIMPLE_SCROLL_MODE);
     myScrollPane.setOpaque(false);
     if (syncStrategyPanel != null) {
       myScrollPane.add(syncStrategyPanel);
@@ -244,6 +261,18 @@ public class PushLog extends JPanel implements DataProvider {
     add(splitter);
     myTree.setMinimumSize(new Dimension(200, myTree.getPreferredSize().height));
     myTree.setRowHeight(0);
+  }
+
+  private class MyShowCommitInfoAction extends DumbAwareAction {
+    @Override
+    public void actionPerformed(AnActionEvent e) {
+      myBalloon.showCommitDetails();
+    }
+
+    @Override
+    public void update(AnActionEvent e) {
+      e.getPresentation().setEnabled(getSelectedCommitNodes().size() == 1);
+    }
   }
 
   private void restoreSelection(@Nullable DefaultMutableTreeNode node) {
@@ -261,11 +290,7 @@ public class PushLog extends JPanel implements DataProvider {
       @Override
       public void linkSelected(LinkLabel aSource, String aLinkData) {
         if (linkLabel.isEnabled()) {
-          mySyncStrategy = true;
-          DefaultMutableTreeNode nodeToEdit = getFirstNodeToEdit();
-          if (nodeToEdit != null) {
-            myTree.startEditingAtPath(TreeUtil.getPathFromRoot(nodeToEdit));
-          }
+          startSyncEditing();
         }
       }
     }, null);
@@ -282,6 +307,13 @@ public class PushLog extends JPanel implements DataProvider {
     return labelPanel;
   }
 
+  private void startSyncEditing() {
+    mySyncStrategy = true;
+    DefaultMutableTreeNode nodeToEdit = getFirstNodeToEdit();
+    if (nodeToEdit != null) {
+      myTree.startEditingAtPath(TreeUtil.getPathFromRoot(nodeToEdit));
+    }
+  }
 
   @NotNull
   private static List<Change> collectAllChanges(@NotNull List<CommitNode> commitNodes) {
@@ -418,11 +450,7 @@ public class PushLog extends JPanel implements DataProvider {
       return true;
     }
     if (myAllowSyncStrategy && e.getKeyCode() == KeyEvent.VK_F2 && e.getModifiers() == InputEvent.ALT_MASK && pressed) {
-      mySyncStrategy = true;
-      DefaultMutableTreeNode node = getFirstNodeToEdit();
-      if (node != null) {
-        myTree.startEditingAtPath(TreeUtil.getPathFromRoot(node));
-      }
+      startSyncEditing();
       return true;
     }
     return super.processKeyBinding(ks, e, condition, pressed);
@@ -454,7 +482,7 @@ public class PushLog extends JPanel implements DataProvider {
   }
 
   @NotNull
-  public JTree getTree() {
+  public CheckboxTree getTree() {
     return myTree;
   }
 
@@ -514,6 +542,14 @@ public class PushLog extends JPanel implements DataProvider {
 
   public void fireEditorUpdated(@NotNull String currentText) {
     if (mySyncStrategy) {
+      //update ui model
+      List<RepositoryNode> repositoryNodes =
+        getChildNodesByType((DefaultMutableTreeNode)myTree.getModel().getRoot(), RepositoryNode.class, false);
+      for (RepositoryNode node : repositoryNodes) {
+        if (node.isEditableNow()) {
+          node.forceUpdateUiModelWithTypedText(currentText);
+        }
+      }
       setSyncText(currentText);
       myTree.repaint();
     }
@@ -538,7 +574,14 @@ public class PushLog extends JPanel implements DataProvider {
       // null border works as expected always.
       if (value instanceof RepositoryNode) {
         //todo simplify, remove instance of
-        myCheckbox.setVisible(((RepositoryNode)value).isCheckboxVisible());
+        RepositoryNode valueNode = (RepositoryNode)value;
+        myCheckbox.setVisible(valueNode.isCheckboxVisible());
+        if (valueNode.isChecked() && valueNode.isLoading()) {
+          myCheckbox.setState(ThreeStateCheckBox.State.DONT_CARE);
+        }
+        else {
+          myCheckbox.setSelected(valueNode.isChecked());
+        }
       }
       Object userObject = ((DefaultMutableTreeNode)value).getUserObject();
       ColoredTreeCellRenderer renderer = getTextRenderer();
@@ -644,6 +687,23 @@ public class PushLog extends JPanel implements DataProvider {
           return dimensions;
         }
       };
+    }
+  }
+
+  private static class MyTreeViewPort extends JBViewport {
+
+    final int myHeightToReduce;
+
+    public MyTreeViewPort(@Nullable Component view, int heightToReduce) {
+      super();
+      setView(view);
+      myHeightToReduce = heightToReduce;
+    }
+
+    @Override
+    public Dimension getExtentSize() {
+      Dimension defaultSize = super.getExtentSize();
+      return new Dimension(defaultSize.width, defaultSize.height - myHeightToReduce);
     }
   }
 }

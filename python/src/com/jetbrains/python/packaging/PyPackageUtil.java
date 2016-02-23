@@ -17,6 +17,7 @@ package com.jetbrains.python.packaging;
 
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.openapi.roots.ProjectRootManager;
@@ -35,6 +36,10 @@ import com.jetbrains.python.codeInsight.controlflow.ScopeOwner;
 import com.jetbrains.python.psi.*;
 import com.jetbrains.python.psi.resolve.PyResolveContext;
 import com.jetbrains.python.psi.resolve.QualifiedResolveResult;
+import com.jetbrains.python.psi.types.TypeEvalContext;
+import com.jetbrains.python.remote.PyCredentialsContribution;
+import com.jetbrains.python.sdk.CredentialsTypeExChecker;
+import com.jetbrains.python.sdk.PythonSdkType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -111,7 +116,8 @@ public class PyPackageUtil {
                 return (PyListLiteralExpression)value;
               }
               if (value instanceof PyReferenceExpression) {
-                final PyResolveContext resolveContext = PyResolveContext.defaultContext();
+                final TypeEvalContext context = TypeEvalContext.deepCodeInsight(module.getProject());
+                final PyResolveContext resolveContext = PyResolveContext.noImplicits().withTypeEvalContext(context);
                 final QualifiedResolveResult result = ((PyReferenceExpression)value).followAssignmentsChain(resolveContext);
                 final PsiElement element = result.getElement();
                 if (element instanceof PyListLiteralExpression) {
@@ -187,5 +193,17 @@ public class PyPackageUtil {
         return true;
       }
     });
+  }
+
+  public static boolean packageManagementEnabled(@Nullable Sdk sdk) {
+    if (!PythonSdkType.isRemote(sdk)) {
+      return true;
+    }
+    return new CredentialsTypeExChecker() {
+      @Override
+      protected boolean checkLanguageContribution(PyCredentialsContribution languageContribution) {
+        return languageContribution.isPackageManagementEnabled();
+      }
+    }.withSshContribution(true).withVagrantContribution(true).withWebDeploymentContribution(true).check(sdk);
   }
 }

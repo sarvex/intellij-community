@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,11 @@ import com.intellij.codeInspection.LocalQuickFixProvider;
 import com.intellij.lang.LangBundle;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.fileTypes.FileType;
+import com.intellij.openapi.fileTypes.FileTypeRegistry;
+import com.intellij.openapi.fileTypes.UnknownFileType;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
@@ -42,6 +46,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.net.URI;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -230,6 +235,10 @@ public class FileReference implements PsiFileReference, FileReferenceOwner, PsiP
   @Nullable
   public
   String getNewFileTemplateName() {
+    FileType fileType = FileTypeRegistry.getInstance().getFileTypeByFileName(myText);
+    if (fileType != UnknownFileType.INSTANCE) {
+      return fileType.getName() + " File." + fileType.getDefaultExtension();
+    }
     return null;
   }
 
@@ -245,7 +254,11 @@ public class FileReference implements PsiFileReference, FileReferenceOwner, PsiP
   }
 
   @NotNull
-  public String decode(@NotNull final String text) {
+  public String decode(@NotNull String text) {
+    if (SystemInfo.isMac) {
+      text = Normalizer.normalize(text, Normalizer.Form.NFC);
+    }
+
     // strip http get parameters
     String _text = text;
     int paramIndex = text.lastIndexOf('?');
@@ -530,7 +543,7 @@ public class FileReference implements PsiFileReference, FileReferenceOwner, PsiP
   @Override
   public String getUnresolvedMessagePattern() {
     return LangBundle.message("error.cannot.resolve")
-           + " " + (isLast() ? LangBundle.message("terms.file") : LangBundle.message("terms.directory"))
+           + " " + (LangBundle.message(isLast() ? "terms.file" : "terms.directory"))
            + " '" + StringUtil.escapePattern(decode(getCanonicalText())) + "'";
   }
 

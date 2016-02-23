@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,16 +34,12 @@ import com.intellij.psi.impl.source.PsiFileImpl;
 import com.intellij.testFramework.LeakHunter;
 import com.intellij.testFramework.PlatformTestCase;
 import com.intellij.testFramework.fixtures.impl.CodeInsightTestFixtureImpl;
-import com.intellij.util.Processor;
-import org.picocontainer.MutablePicoContainer;
 
 public class LoadProjectTest extends PlatformTestCase {
   @Override
   protected void setUpProject() throws Exception {
     String projectPath = PathManagerEx.getTestDataPath() + "/model/model.ipr";
     myProject = ProjectManager.getInstance().loadAndOpenProject(projectPath);
-    MutablePicoContainer container = (MutablePicoContainer)getProject().getPicoContainer();
-    container.unregisterComponent(FileEditorManager.class.getName());
     ((ProjectImpl)getProject()).registerComponentImplementation(FileEditorManager.class, FileEditorManagerImpl.class);
   }
 
@@ -85,16 +81,8 @@ public class LoadProjectTest extends PlatformTestCase {
     FileEditorManager.getInstance(getProject()).closeFile(b);
     ProjectManagerEx.getInstanceEx().closeAndDispose(getProject());
 
-    LeakHunter.checkLeak(ApplicationManager.getApplication(), PsiFileImpl.class, new Processor<PsiFileImpl>() {
-      @Override
-      public boolean process(PsiFileImpl psiFile) {
-        return  psiFile.getViewProvider().getVirtualFile().getFileSystem() instanceof LocalFileSystem;
-      }
-    });
-  }
-
-  @Override
-  protected boolean isRunInWriteAction() {
-    return false;
+    LeakHunter.checkLeak(ApplicationManager.getApplication(), PsiFileImpl.class,
+                         psiFile -> psiFile.getViewProvider().getVirtualFile().getFileSystem() instanceof LocalFileSystem &&
+                                    psiFile.getProject() == getProject());
   }
 }

@@ -13,12 +13,19 @@ SVG.foreignObject.content |=
 	|	common.inner.flow
 	)
 
+SVG.Core.attrib &= common.attrs.aria?
+SVG.Core.attrib &= aria.global?
+
 annotation-xml.model.svg |= svg
 
 annotation-xml.model.xhtml |=
 	(	html.elem
 	|	common.elem.flow
 	)
+
+SVG.desc.content |= common.inner.flow
+SVG.title.content |= common.inner.flow
+SVG.metadata.content |= common.inner.flow
 
 # in our integration, <mtext> is the only MathML "token element" that can
 # contain HTML element content; the <mi>, <mn>, <mo> and <ms> elements

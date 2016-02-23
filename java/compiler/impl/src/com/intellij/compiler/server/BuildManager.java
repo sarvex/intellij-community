@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package com.intellij.compiler.server;
 
 import com.intellij.ProjectTopics;
+import com.intellij.compiler.CompilerConfiguration;
 import com.intellij.compiler.CompilerWorkspaceConfiguration;
 import com.intellij.compiler.impl.CompilerUtil;
 import com.intellij.compiler.impl.javaCompiler.javac.JavacConfiguration;
@@ -41,8 +42,8 @@ import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.compiler.CompilationStatusListener;
 import com.intellij.openapi.compiler.CompileContext;
+import com.intellij.openapi.compiler.CompilerPaths;
 import com.intellij.openapi.compiler.CompilerTopics;
-import com.intellij.openapi.components.ApplicationComponent;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.EditorFactory;
 import com.intellij.openapi.editor.event.DocumentAdapter;
@@ -75,10 +76,7 @@ import com.intellij.openapi.vfs.newvfs.BulkFileListener;
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
 import com.intellij.openapi.vfs.newvfs.impl.FileNameCache;
 import com.intellij.openapi.wm.IdeFrame;
-import com.intellij.util.Alarm;
-import com.intellij.util.ArrayUtil;
-import com.intellij.util.Function;
-import com.intellij.util.SmartList;
+import com.intellij.util.*;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.concurrency.SequentialTaskExecutor;
 import com.intellij.util.containers.IntArrayList;
@@ -100,7 +98,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.ide.PooledThreadExecutor;
 import org.jetbrains.io.ChannelRegistrar;
-import org.jetbrains.io.NettyUtil;
+import org.jetbrains.io.NettyKt;
 import org.jetbrains.jps.api.*;
 import org.jetbrains.jps.cmdline.BuildMain;
 import org.jetbrains.jps.cmdline.ClasspathBootstrap;
@@ -120,6 +118,7 @@ import java.util.*;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 import static org.jetbrains.jps.api.CmdlineRemoteProto.Message.ControllerMessage.ParametersMessage.TargetTypeBuildScope;
 
@@ -127,8 +126,9 @@ import static org.jetbrains.jps.api.CmdlineRemoteProto.Message.ControllerMessage
  * @author Eugene Zhuravlev
  *         Date: 9/6/11
  */
-public class BuildManager implements ApplicationComponent{
+public class BuildManager implements Disposable {
   public static final Key<Boolean> ALLOW_AUTOMAKE = Key.create("_allow_automake_when_process_is_active_");
+  private static final Key<Integer> COMPILER_PROCESS_DEBUG_PORT = Key.create("_compiler_process_debug_port_");
   private static final Key<String> FORCE_MODEL_LOADING_PARAMETER = Key.create(BuildParametersKeys.FORCE_MODEL_LOADING);
   private static final Key<CharSequence> STDERR_OUTPUT = Key.create("_process_launch_errors_");
   private static final SimpleDateFormat USAGE_STAMP_DATE_FORMAT = new SimpleDateFormat("dd.MM.yyyy");
@@ -230,21 +230,23 @@ public class BuildManager implements ApplicationComponent{
           return pathname.isDirectory() && !TEMP_DIR_NAME.equals(pathname.getName());
         }
       });
-      final Date now = new Date();
-      for (File buildDataProjectDir : dirs) {
-        final File usageFile = getUsageFile(buildDataProjectDir);
-        if (usageFile.exists()) {
-          final Pair<Date, File> usageData = readUsageFile(usageFile);
-          if (usageData != null) {
-            final File projectFile = usageData.second;
-            if ((projectFile != null && !projectFile.exists()) || DateFormatUtil.getDifferenceInDays(usageData.first, now) > unusedThresholdDays) {
-              LOG.info("Clearing project build data because the project does not exist or was not opened for more than " + unusedThresholdDays + " days: " + buildDataProjectDir.getPath());
-              FileUtil.delete(buildDataProjectDir);
+      if (dirs != null) {
+        final Date now = new Date();
+        for (File buildDataProjectDir : dirs) {
+          final File usageFile = getUsageFile(buildDataProjectDir);
+          if (usageFile.exists()) {
+            final Pair<Date, File> usageData = readUsageFile(usageFile);
+            if (usageData != null) {
+              final File projectFile = usageData.second;
+              if (projectFile != null && !projectFile.exists() || DateFormatUtil.getDifferenceInDays(usageData.first, now) > unusedThresholdDays) {
+                LOG.info("Clearing project build data because the project does not exist or was not opened for more than " + unusedThresholdDays + " days: " + buildDataProjectDir.getPath());
+                FileUtil.delete(buildDataProjectDir);
+              }
             }
           }
-        }
-        else {
-          updateUsageFile(null, buildDataProjectDir); // set usage stamp to start countdown
+          else {
+            updateUsageFile(null, buildDataProjectDir); // set usage stamp to start countdown
+          }
         }
       }
     }
@@ -256,6 +258,7 @@ public class BuildManager implements ApplicationComponent{
   private volatile int myListenPort = -1;
   @NotNull
   private final Charset mySystemCharset = CharsetToolkit.getDefaultSystemCharset();
+  private volatile boolean myBuildProcessDebuggingEnabled;
 
   public BuildManager(final ProjectManager projectManager) {
     final Application application = ApplicationManager.getApplication();
@@ -277,7 +280,7 @@ public class BuildManager implements ApplicationComponent{
     conn.subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener.Adapter() {
       @Override
       public void after(@NotNull List<? extends VFileEvent> events) {
-        if (shouldTriggerMake(events)) {
+        if (!IS_UNIT_TEST_MODE && shouldTriggerMake(events)) {
           scheduleAutoMake();
         }
       }
@@ -322,6 +325,7 @@ public class BuildManager implements ApplicationComponent{
     });
 
     conn.subscribe(BatchFileChangeListener.TOPIC, new BatchFileChangeListener.Adapter() {
+      @Override
       public void batchChangeStarted(Project project) {
         cancelAutoMakeTasks(project);
       }
@@ -341,12 +345,8 @@ public class BuildManager implements ApplicationComponent{
       }
     });
 
-    JobScheduler.getScheduler().scheduleAtFixedRate(new Runnable() {
-      @Override
-      public void run() {
-        runCommand(myGCTask);
-      }
-    }, 3, 180, TimeUnit.MINUTES);
+    ScheduledFuture<?> future = JobScheduler.getScheduler().scheduleWithFixedDelay((Runnable)() -> runCommand(myGCTask), 3, 180, TimeUnit.MINUTES);
+    Disposer.register(this, () -> future.cancel(false));
   }
 
   private List<Project> getOpenProjects() {
@@ -379,7 +379,7 @@ public class BuildManager implements ApplicationComponent{
     doNotify(paths, true);
   }
 
-  public void runCommand(Runnable command) {
+  public void runCommand(@NotNull Runnable command) {
     myRequestsProcessor.submit(command);
   }
 
@@ -513,6 +513,9 @@ public class BuildManager implements ApplicationComponent{
       }
       finally {
         myAutomakeFutures.remove(future);
+        if (handler.unprocessedFSChangesDetected()) {
+          scheduleAutoMake();
+        }
       }
     }
   }
@@ -596,6 +599,13 @@ public class BuildManager implements ApplicationComponent{
     return futures;
   }
 
+  private void cancelAllPreloadedBuilds() {
+    String[] paths = ArrayUtil.toStringArray(myPreloadedBuilds.keySet());
+    for (String path : paths) {
+      cancelPreloadedBuilds(path);
+    }
+  }
+
   private void cancelPreloadedBuilds(final String projectPath) {
     runCommand(new Runnable() {
       @Override
@@ -640,7 +650,7 @@ public class BuildManager implements ApplicationComponent{
       LOG.info(e);
       result = null;
     }
-    return result;
+    return result != null && !result.first.isDone()? result : null;
   }
 
   @Nullable
@@ -663,13 +673,12 @@ public class BuildManager implements ApplicationComponent{
       return null;
     }
 
-    final DelegateFuture<BuilderMessageHandler> _future = new DelegateFuture<BuilderMessageHandler>();
+    final DelegateFuture _future = new DelegateFuture();
     // by using the same queue that processes events we ensure that
     // the build will be aware of all events that have happened before this request
     runCommand(new Runnable() {
       @Override
       public void run() {
-
         final Pair<RequestFuture<PreloadedProcessMessageHandler>, OSProcessHandler> preloaded = takePreloadedProcess(projectPath);
         final RequestFuture<PreloadedProcessMessageHandler> preloadedFuture = preloaded != null? preloaded.first : null;
         final boolean usingPreloadedProcess = preloadedFuture != null;
@@ -685,148 +694,167 @@ public class BuildManager implements ApplicationComponent{
         }
 
         final RequestFuture<? extends BuilderMessageHandler> future = usingPreloadedProcess? preloadedFuture : new RequestFuture<BuilderMessageHandler>(handler, sessionId, new CancelBuildSessionAction<BuilderMessageHandler>());
-        _future.setDelegate(future);
+        // futures we need to wait for: either just "future" or both "future" and "buildFuture" below
+        TaskFuture[] delegatesToWait = {future};
 
         if (!usingPreloadedProcess && (future.isCancelled() || project.isDisposed())) {
           // in case of preloaded process the process was already running, so the handler will be notified upon process termination
           handler.sessionTerminated(sessionId);
           ((BasicFuture)future).setDone();
-          return;
-        }
-
-        final CmdlineRemoteProto.Message.ControllerMessage.GlobalSettings globals =
-          CmdlineRemoteProto.Message.ControllerMessage.GlobalSettings.newBuilder().setGlobalOptionsPath(PathManager.getOptionsPath()).build();
-        CmdlineRemoteProto.Message.ControllerMessage.FSEvent currentFSChanges;
-        final SequentialTaskExecutor projectTaskQueue;
-        final boolean needRescan;
-        synchronized (myProjectDataMap) {
-          final ProjectData data = getProjectData(projectPath);
-          if (isRebuild) {
-            data.dropChanges();
-          }
-          if (IS_UNIT_TEST_MODE) {
-            LOG.info("Scheduling build for " +
-                     projectPath +
-                     "; CHANGED: " +
-                     new HashSet<String>(convertToStringPaths(data.myChanged)) +
-                     "; DELETED: " +
-                     new HashSet<String>(convertToStringPaths(data.myDeleted)));
-          }
-          needRescan = data.getAndResetRescanFlag();
-          currentFSChanges = needRescan ? null : data.createNextEvent();
-          projectTaskQueue = data.taskQueue;
-        }
-
-        final CmdlineRemoteProto.Message.ControllerMessage params;
-        if (isRebuild) {
-          params = CmdlineProtoUtil.createBuildRequest(projectPath, scopes, Collections.<String>emptyList(), userData, globals, null);
-        }
-        else if (onlyCheckUpToDate) {
-          params = CmdlineProtoUtil.createUpToDateCheckRequest(projectPath, scopes, paths, userData, globals, currentFSChanges);
         }
         else {
-          params = CmdlineProtoUtil.createBuildRequest(projectPath, scopes, isMake ? Collections.<String>emptyList() : paths, userData, globals, currentFSChanges);
-        }
-        if (!usingPreloadedProcess) {
-          myMessageDispatcher.registerBuildMessageHandler(future, params);
-        }
+          final CmdlineRemoteProto.Message.ControllerMessage.GlobalSettings globals =
+            CmdlineRemoteProto.Message.ControllerMessage.GlobalSettings.newBuilder().setGlobalOptionsPath(PathManager.getOptionsPath())
+              .build();
+          CmdlineRemoteProto.Message.ControllerMessage.FSEvent currentFSChanges;
+          final SequentialTaskExecutor projectTaskQueue;
+          final boolean needRescan;
+          synchronized (myProjectDataMap) {
+            final ProjectData data = getProjectData(projectPath);
+            if (isRebuild) {
+              data.dropChanges();
+            }
+            if (IS_UNIT_TEST_MODE) {
+              LOG.info("Scheduling build for " +
+                       projectPath +
+                       "; CHANGED: " +
+                       new HashSet<String>(convertToStringPaths(data.myChanged)) +
+                       "; DELETED: " +
+                       new HashSet<String>(convertToStringPaths(data.myDeleted)));
+            }
+            needRescan = data.getAndResetRescanFlag();
+            currentFSChanges = needRescan ? null : data.createNextEvent();
+            projectTaskQueue = data.taskQueue;
+          }
 
-        try {
-          projectTaskQueue.submit(new Runnable() {
-            @Override
-            public void run() {
-              Throwable execFailure = null;
-              try {
-                if (project.isDisposed()) {
+          final CmdlineRemoteProto.Message.ControllerMessage params;
+          if (isRebuild) {
+            params = CmdlineProtoUtil.createBuildRequest(projectPath, scopes, Collections.<String>emptyList(), userData, globals, null);
+          }
+          else if (onlyCheckUpToDate) {
+            params = CmdlineProtoUtil.createUpToDateCheckRequest(projectPath, scopes, paths, userData, globals, currentFSChanges);
+          }
+          else {
+            params = CmdlineProtoUtil.createBuildRequest(projectPath, scopes, isMake ? Collections.<String>emptyList() : paths, userData, globals, currentFSChanges);
+          }
+          if (!usingPreloadedProcess) {
+            myMessageDispatcher.registerBuildMessageHandler(future, params);
+          }
+
+          try {
+            Future<?> buildFuture = projectTaskQueue.submit(new Runnable() {
+              @Override
+              public void run() {
+                Throwable execFailure = null;
+                try {
+                  if (project.isDisposed()) {
+                    if (usingPreloadedProcess) {
+                      future.cancel(false);
+                    }
+                    else {
+                      return;
+                    }
+                  }
+                  myBuildsInProgress.put(projectPath, future);
+                  final OSProcessHandler processHandler;
+                  CharSequence errorsOnLaunch;
                   if (usingPreloadedProcess) {
-                    future.cancel(false);
+                    final boolean paramsSent = myMessageDispatcher.sendBuildParameters(future.getRequestID(), params);
+                    if (!paramsSent) {
+                      myMessageDispatcher.cancelSession(future.getRequestID());
+                    }
+                    processHandler = preloaded.second;
+                    errorsOnLaunch = STDERR_OUTPUT.get(processHandler);
                   }
                   else {
-                    return;
-                  }
-                }
-                myBuildsInProgress.put(projectPath, future);
-                final OSProcessHandler processHandler;
-                CharSequence errorsOnLaunch;
-                if (usingPreloadedProcess) {
-                  final boolean paramsSent = myMessageDispatcher.sendBuildParameters(future.getRequestID(), params);
-                  if (!paramsSent) {
-                    myMessageDispatcher.cancelSession(future.getRequestID());
-                  }
-                  processHandler = preloaded.second;
-                  errorsOnLaunch = STDERR_OUTPUT.get(processHandler);
-                }
-                else {
-                  if (isAutomake && needRescan) {
-                    // if project state was cleared because of roots changed or this is the first compilation after project opening,
-                    // ensure project model is saved on disk, so that automake sees the latest model state.
-                    // For ordinary make all project, app settings and unsaved docs are always saved before build starts.
-                    try {
-                      SwingUtilities.invokeAndWait(new Runnable() {
-                        public void run() {
-                          project.save();
-                        }
-                      });
-                    }
-                    catch(Throwable e) {
-                      LOG.info(e);
-                    }
-                  }
-                  
-                  processHandler = launchBuildProcess(project, myListenPort, sessionId, false);
-                  errorsOnLaunch = new StringBuffer();
-                  processHandler.addProcessListener(new StdOutputCollector((StringBuffer)errorsOnLaunch));
-                  processHandler.startNotify();
-                }
-
-                while (!processHandler.waitFor()) {
-                  LOG.info("processHandler.waitFor() returned false for session " + sessionId + ", continue waiting");
-                }
-
-                final int exitValue = processHandler.getProcess().exitValue();
-                if (exitValue != 0) {
-                  final StringBuilder msg = new StringBuilder();
-                  msg.append("Abnormal build process termination: ");
-                  if (errorsOnLaunch != null && errorsOnLaunch.length() > 0) {
-                    msg.append("\n").append(errorsOnLaunch);
-                  }
-                  else {
-                    msg.append("unknown error");
-                  }
-                  handler.handleFailure(sessionId, CmdlineProtoUtil.createFailure(msg.toString(), null));
-                }
-
-              }
-              catch (Throwable e) {
-                execFailure = e;
-              }
-              finally {
-                myBuildsInProgress.remove(projectPath);
-                notifySessionTerminationIfNeeded(sessionId, execFailure);
-
-                if (isProcessPreloadingEnabled(project)) {
-                  runCommand(new Runnable() {
-                    public void run() {
-                      if (!myPreloadedBuilds.containsKey(projectPath)) {
-                        try {
-                          final Future<Pair<RequestFuture<PreloadedProcessMessageHandler>, OSProcessHandler>> preloadResult = launchPreloadedBuildProcess(project, projectTaskQueue);
-                          myPreloadedBuilds.put(projectPath, preloadResult);
-                        }
-                        catch (Throwable e) {
-                          LOG.info("Error pre-loading build process for project " + projectPath, e);
-                        }
+                    if (isAutomake && needRescan) {
+                      // if project state was cleared because of roots changed or this is the first compilation after project opening,
+                      // ensure project model is saved on disk, so that automake sees the latest model state.
+                      // For ordinary make all project, app settings and unsaved docs are always saved before build starts.
+                      try {
+                        SwingUtilities.invokeAndWait(new Runnable() {
+                          @Override
+                          public void run() {
+                            project.save();
+                          }
+                        });
+                      }
+                      catch (Throwable e) {
+                        LOG.info(e);
                       }
                     }
-                  });
-                }
 
+                    processHandler = launchBuildProcess(project, myListenPort, sessionId, false);
+                    errorsOnLaunch = new StringBuffer();
+                    processHandler.addProcessListener(new StdOutputCollector((StringBuffer)errorsOnLaunch));
+                    processHandler.startNotify();
+                  }
+
+                  Integer debugPort = processHandler.getUserData(COMPILER_PROCESS_DEBUG_PORT);
+                  if (debugPort != null) {
+                    String message = "Make: waiting for debugger connection on port " + debugPort;
+                    messageHandler
+                      .handleCompileMessage(sessionId, CmdlineProtoUtil.createCompileProgressMessageResponse(message).getCompileMessage());
+                  }
+
+                  while (!processHandler.waitFor()) {
+                    LOG.info("processHandler.waitFor() returned false for session " + sessionId + ", continue waiting");
+                  }
+
+                  final int exitValue = processHandler.getProcess().exitValue();
+                  if (exitValue != 0) {
+                    final StringBuilder msg = new StringBuilder();
+                    msg.append("Abnormal build process termination: ");
+                    if (errorsOnLaunch != null && errorsOnLaunch.length() > 0) {
+                      msg.append("\n").append(errorsOnLaunch);
+                      if (StringUtil.contains(errorsOnLaunch, "java.lang.NoSuchMethodError")) {
+                        msg.append(
+                          "\nThe error may be caused by JARs in Java Extensions directory which conflicts with libraries used by the external build process.")
+                          .append(
+                            "\nTry adding -Djava.ext.dirs=\"\" argument to 'Build process VM options' in File | Settings | Build, Execution, Deployment | Compiler to fix the problem.");
+                      }
+                    }
+                    else {
+                      msg.append("unknown error");
+                    }
+                    handler.handleFailure(sessionId, CmdlineProtoUtil.createFailure(msg.toString(), null));
+                  }
+                }
+                catch (Throwable e) {
+                  execFailure = e;
+                }
+                finally {
+                  myBuildsInProgress.remove(projectPath);
+                  notifySessionTerminationIfNeeded(sessionId, execFailure);
+
+                  if (isProcessPreloadingEnabled(project)) {
+                    runCommand(new Runnable() {
+                      @Override
+                      public void run() {
+                        if (!myPreloadedBuilds.containsKey(projectPath)) {
+                          try {
+                            final Future<Pair<RequestFuture<PreloadedProcessMessageHandler>, OSProcessHandler>> preloadResult =
+                              launchPreloadedBuildProcess(project, projectTaskQueue);
+                            myPreloadedBuilds.put(projectPath, preloadResult);
+                          }
+                          catch (Throwable e) {
+                            LOG.info("Error pre-loading build process for project " + projectPath, e);
+                          }
+                        }
+                      }
+                    });
+                  }
+                }
               }
-            }
-          });
+            });
+            delegatesToWait = new TaskFuture[]{future, new TaskFutureAdapter<>(buildFuture)};
+          }
+          catch (Throwable e) {
+            handleProcessExecutionFailure(sessionId, e);
+          }
         }
-        catch (Throwable e) {
-          handleProcessExecutionFailure(sessionId, e);
-        }
+        boolean set = _future.setDelegates(delegatesToWait);
+        assert set;
       }
     });
 
@@ -835,7 +863,7 @@ public class BuildManager implements ApplicationComponent{
 
   private boolean isProcessPreloadingEnabled(Project project) {
     // automatically disable process preloading when debugging or testing
-    if (IS_UNIT_TEST_MODE || !Registry.is("compiler.process.preload") || Registry.intValue("compiler.process.debug.port") > 0) {
+    if (IS_UNIT_TEST_MODE || !Registry.is("compiler.process.preload") || myBuildProcessDebuggingEnabled) {
       return false;
     }
     if (project.isDisposed()) {
@@ -894,18 +922,59 @@ public class BuildManager implements ApplicationComponent{
   }
 
   @Override
-  public void initComponent() {
-  }
-
-  @Override
-  public void disposeComponent() {
+  public void dispose() {
     stopListening();
   }
 
   @NotNull
-  @Override
-  public String getComponentName() {
-    return "com.intellij.compiler.server.BuildManager";
+  public static Pair<Sdk, JavaSdkVersion> getBuildProcessRuntimeSdk(Project project) {
+    final Set<Sdk> candidates = new LinkedHashSet<Sdk>();
+    final Sdk defaultSdk = ProjectRootManager.getInstance(project).getProjectSdk();
+    if (defaultSdk != null && defaultSdk.getSdkType() instanceof JavaSdkType) {
+      candidates.add(defaultSdk);
+    }
+
+    for (Module module : ModuleManager.getInstance(project).getModules()) {
+      final Sdk sdk = ModuleRootManager.getInstance(module).getSdk();
+      if (sdk != null && sdk.getSdkType() instanceof JavaSdkType) {
+        candidates.add(sdk);
+      }
+    }
+
+    // now select the latest version from the sdks that are used in the project, but not older than the internal sdk version
+    final JavaSdk javaSdkType = JavaSdk.getInstance();
+    Sdk projectJdk = null;
+    int sdkMinorVersion = 0;
+    JavaSdkVersion sdkVersion = null;
+    for (Sdk candidate : candidates) {
+      final String vs = candidate.getVersionString();
+      if (vs != null) {
+        final JavaSdkVersion candidateVersion = javaSdkType.getVersion(vs);
+        if (candidateVersion != null) {
+          final int candidateMinorVersion = getMinorVersion(vs);
+          if (projectJdk == null) {
+            sdkVersion = candidateVersion;
+            sdkMinorVersion = candidateMinorVersion;
+            projectJdk = candidate;
+          }
+          else {
+            final int result = candidateVersion.compareTo(sdkVersion);
+            if (result > 0 || result == 0 && candidateMinorVersion > sdkMinorVersion) {
+              sdkVersion = candidateVersion;
+              sdkMinorVersion = candidateMinorVersion;
+              projectJdk = candidate;
+            }
+          }
+        }
+      }
+    }
+
+    final Sdk internalJdk = JavaAwareProjectJdkTableImpl.getInstanceEx().getInternalJdk();
+    if (projectJdk == null || sdkVersion == null || !sdkVersion.isAtLeast(JavaSdkVersion.JDK_1_6)) {
+      projectJdk = internalJdk;
+      sdkVersion = javaSdkType.getVersion(internalJdk);
+    }
+    return Pair.create(projectJdk, sdkVersion);
   }
 
   private Future<Pair<RequestFuture<PreloadedProcessMessageHandler>, OSProcessHandler>> launchPreloadedBuildProcess(final Project project, SequentialTaskExecutor projectTaskQueue) throws Exception {
@@ -913,6 +982,7 @@ public class BuildManager implements ApplicationComponent{
 
     // launching build process from projectTaskQueue ensures that no other build process for this project is currently running
     return projectTaskQueue.submit(new Callable<Pair<RequestFuture<PreloadedProcessMessageHandler>, OSProcessHandler>>() {
+      @Override
       public Pair<RequestFuture<PreloadedProcessMessageHandler>, OSProcessHandler> call() throws Exception {
         if (project.isDisposed()) {
           return null;
@@ -945,52 +1015,11 @@ public class BuildManager implements ApplicationComponent{
 
     if (StringUtil.isEmptyOrSpaces(forcedCompiledJdkHome)) {
       // choosing sdk with which the build process should be run
-      Sdk projectJdk = null;
-      int sdkMinorVersion = 0;
-
-      final Set<Sdk> candidates = new HashSet<Sdk>();
-      final Sdk defaultSdk = ProjectRootManager.getInstance(project).getProjectSdk();
-      if (defaultSdk != null && defaultSdk.getSdkType() instanceof JavaSdkType) {
-        candidates.add(defaultSdk);
-      }
-
-      for (Module module : ModuleManager.getInstance(project).getModules()) {
-        final Sdk sdk = ModuleRootManager.getInstance(module).getSdk();
-        if (sdk != null && sdk.getSdkType() instanceof JavaSdkType) {
-          candidates.add(sdk);
-        }
-      }
-
-      // now select the latest version from the sdks that are used in the project, but not older than the internal sdk version
-      final JavaSdk javaSdkType = JavaSdk.getInstance();
-      for (Sdk candidate : candidates) {
-        final String vs = candidate.getVersionString();
-        if (vs != null) {
-          final JavaSdkVersion candidateVersion = javaSdkType.getVersion(vs);
-          if (candidateVersion != null) {
-            final int candidateMinorVersion = getMinorVersion(vs);
-            if (projectJdk == null) {
-              sdkVersion = candidateVersion;
-              sdkMinorVersion = candidateMinorVersion;
-              projectJdk = candidate;
-            }
-            else {
-              final int result = candidateVersion.compareTo(sdkVersion);
-              if (result > 0 || (result == 0 && candidateMinorVersion > sdkMinorVersion)) {
-                sdkVersion = candidateVersion;
-                sdkMinorVersion = candidateMinorVersion;
-                projectJdk = candidate;
-              }
-            }
-          }
-        }
-      }
+      final Pair<Sdk, JavaSdkVersion> pair = getBuildProcessRuntimeSdk(project);
+      final Sdk projectJdk = pair.first;
+      sdkVersion = pair.second;
 
       final Sdk internalJdk = JavaAwareProjectJdkTableImpl.getInstanceEx().getInternalJdk();
-      if (projectJdk == null || sdkVersion == null || !sdkVersion.isAtLeast(JavaSdkVersion.JDK_1_6)) {
-        projectJdk = internalJdk;
-      }
-
       // validate tools.jar presence
       final JavaSdkType projectJdkType = (JavaSdkType)projectJdk.getSdkType();
       if (FileUtil.pathsEqual(projectJdk.getHomePath(), internalJdk.getHomePath())) {
@@ -1016,14 +1045,44 @@ public class BuildManager implements ApplicationComponent{
       vmExecutablePath = new File(forcedCompiledJdkHome, "bin/java").getAbsolutePath();
     }
 
+    final CompilerConfiguration projectConfig = CompilerConfiguration.getInstance(project);
     final CompilerWorkspaceConfiguration config = CompilerWorkspaceConfiguration.getInstance(project);
     final GeneralCommandLine cmdLine = new GeneralCommandLine();
     cmdLine.setExePath(vmExecutablePath);
     //cmdLine.addParameter("-XX:MaxPermSize=150m");
     //cmdLine.addParameter("-XX:ReservedCodeCacheSize=64m");
-    final int heapSize = config.getProcessHeapSize(JavacConfiguration.getOptions(project, JavacConfiguration.class).MAXIMUM_HEAP_SIZE);
 
-    cmdLine.addParameter("-Xmx" + heapSize + "m");
+    boolean isProfilingMode = false;
+    String userDefinedHeapSize = null;
+    final List<String> userAdditionalOptionsList = new SmartList<String>();
+    final String userAdditionalVMOptions = config.COMPILER_PROCESS_ADDITIONAL_VM_OPTIONS;
+    final boolean userLocalOptionsActive = !StringUtil.isEmptyOrSpaces(userAdditionalVMOptions);
+    final String additionalOptions = userLocalOptionsActive ? userAdditionalVMOptions : projectConfig.getBuildProcessVMOptions();
+    if (!StringUtil.isEmptyOrSpaces(additionalOptions)) {
+      final StringTokenizer tokenizer = new StringTokenizer(additionalOptions, " ", false);
+      while (tokenizer.hasMoreTokens()) {
+        final String option = tokenizer.nextToken();
+        if (StringUtil.startsWithIgnoreCase(option, "-Xmx")) {
+          if (userLocalOptionsActive) {
+            userDefinedHeapSize = option;
+          }
+        }
+        else {
+          if ("-Dprofiling.mode=true".equals(option)) {
+            isProfilingMode = true;
+          }
+          userAdditionalOptionsList.add(option);
+        }
+      }
+    }
+
+    if (userDefinedHeapSize != null) {
+      cmdLine.addParameter(userDefinedHeapSize);
+    }
+    else {
+      final int heapSize = projectConfig.getBuildProcessHeapSize(JavacConfiguration.getOptions(project, JavacConfiguration.class).MAXIMUM_HEAP_SIZE);
+      cmdLine.addParameter("-Xmx" + heapSize + "m");
+    }
 
     if (SystemInfo.isMac && sdkVersion != null && JavaSdkVersion.JDK_1_6.equals(sdkVersion) && Registry.is("compiler.process.32bit.vm.on.mac")) {
       // unfortunately -d32 is supported on jdk 1.6 only
@@ -1059,28 +1118,29 @@ public class BuildManager implements ApplicationComponent{
     // this will make netty initialization faster on some systems
     cmdLine.addParameter("-Dio.netty.initialSeedUniquifier=" + ThreadLocalRandom.getInitialSeedUniquifier());
 
-    boolean isProfilingMode = false;
-    final String additionalOptions = config.COMPILER_PROCESS_ADDITIONAL_VM_OPTIONS;
-    if (!StringUtil.isEmpty(additionalOptions)) {
-      final StringTokenizer tokenizer = new StringTokenizer(additionalOptions, " ", false);
-      while (tokenizer.hasMoreTokens()) {
-        final String option = tokenizer.nextToken();
-        if ("-Dprofiling.mode=true".equals(option)) {
-          isProfilingMode = true;
-        }
-        cmdLine.addParameter(option);
-      }
+    for (String option : userAdditionalOptionsList) {
+      cmdLine.addParameter(option);
     }
-
     if (isProfilingMode) {
       cmdLine.addParameter("-agentlib:yjpagent=disablealloc,delay=10000,sessionname=ExternalBuild");
     }
 
     // debugging
-    final int debugPort = Registry.intValue("compiler.process.debug.port");
-    if (debugPort > 0) {
-      cmdLine.addParameter("-XX:+HeapDumpOnOutOfMemoryError");
-      cmdLine.addParameter("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=" + debugPort);
+    int debugPort = -1;
+    if (myBuildProcessDebuggingEnabled) {
+      debugPort = Registry.intValue("compiler.process.debug.port");
+      if (debugPort <= 0) {
+        try {
+          debugPort = NetUtils.findAvailableSocketPort();
+        }
+        catch (IOException e) {
+          throw new ExecutionException("Cannot find free port to debug build process", e);
+        }
+      }
+      if (debugPort > 0) {
+        cmdLine.addParameter("-XX:+HeapDumpOnOutOfMemoryError");
+        cmdLine.addParameter("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=" + debugPort);
+      }
     }
 
     if (!Registry.is("compiler.process.use.memory.temp.cache")) {
@@ -1143,12 +1203,22 @@ public class BuildManager implements ApplicationComponent{
 
     cmdLine.setWorkDirectory(workDirectory);
 
-    final Process process = cmdLine.createProcess();
-
-    final OSProcessHandler processHandler = new OSProcessHandler(process, null, mySystemCharset) {
+    try {
+      ApplicationManager.getApplication().getMessageBus().syncPublisher(BuildManagerListener.TOPIC).beforeBuildProcessStarted(project, sessionId);
+    }
+    catch (Throwable e) {
+      LOG.error(e);
+    }
+    
+    final OSProcessHandler processHandler = new OSProcessHandler(cmdLine) {
       @Override
       protected boolean shouldDestroyProcessRecursively() {
         return true;
+      }
+
+      @Override
+      protected boolean useNonBlockingRead() {
+        return false;
       }
     };
     processHandler.addProcessListener(new ProcessAdapter() {
@@ -1161,6 +1231,9 @@ public class BuildManager implements ApplicationComponent{
         }
       }
     });
+    if (debugPort > 0) {
+      processHandler.putUserData(COMPILER_PROCESS_DEBUG_PORT, debugPort);
+    }
 
     return processHandler;
   }
@@ -1204,7 +1277,7 @@ public class BuildManager implements ApplicationComponent{
   }
 
   @Nullable
-  private Pair<Date, File> readUsageFile(File usageFile) {
+  private static Pair<Date, File> readUsageFile(File usageFile) {
     try {
       final List<String> lines = FileUtil.loadLines(usageFile, CharsetToolkit.UTF8_CHARSET.name());
       if (!lines.isEmpty()) {
@@ -1247,15 +1320,17 @@ public class BuildManager implements ApplicationComponent{
     return 0;
   }
 
-  public void stopListening() {
-    myChannelRegistrar.close();
+  @NotNull
+  public Future<?> stopListening() {
+    myListenPort = -1;
+    return myChannelRegistrar.close(true);
   }
 
   private int startListening() throws Exception {
-    final ServerBootstrap bootstrap = NettyUtil.nioServerBootstrap(new NioEventLoopGroup(1, PooledThreadExecutor.INSTANCE));
+    final ServerBootstrap bootstrap = NettyKt.serverBootstrap(new NioEventLoopGroup(1, ConcurrencyUtil.newNamedThreadFactory("External compiler")));
     bootstrap.childHandler(new ChannelInitializer() {
       @Override
-      protected void initChannel(Channel channel) throws Exception {
+      protected void initChannel(@NotNull Channel channel) throws Exception {
         channel.pipeline().addLast(myChannelRegistrar,
                                    new ProtobufVarint32FrameDecoder(),
                                    new ProtobufDecoder(CmdlineRemoteProto.Message.getDefaultInstance()),
@@ -1280,7 +1355,18 @@ public class BuildManager implements ApplicationComponent{
     return builder.toString();
   }
 
-  private static abstract class BuildManagerPeriodicTask implements Runnable {
+  public boolean isBuildProcessDebuggingEnabled() {
+    return myBuildProcessDebuggingEnabled;
+  }
+
+  public void setBuildProcessDebuggingEnabled(boolean buildProcessDebuggingEnabled) {
+    myBuildProcessDebuggingEnabled = buildProcessDebuggingEnabled;
+    if (myBuildProcessDebuggingEnabled) {
+      cancelAllPreloadedBuilds();
+    }
+  }
+
+  private abstract static class BuildManagerPeriodicTask implements Runnable {
     private final Alarm myAlarm = new Alarm(Alarm.ThreadToUse.SHARED_THREAD);
     private final AtomicBoolean myInProgress = new AtomicBoolean(false);
     private final Runnable myTaskRunnable = new Runnable() {
@@ -1329,7 +1415,7 @@ public class BuildManager implements ApplicationComponent{
   private static class NotifyingMessageHandler extends DelegatingMessageHandler {
     private final Project myProject;
     private final BuilderMessageHandler myDelegateHandler;
-    private boolean myIsAutomake;
+    private final boolean myIsAutomake;
 
     public NotifyingMessageHandler(@NotNull Project project, @NotNull BuilderMessageHandler delegateHandler, final boolean isAutomake) {
       myProject = project;
@@ -1372,8 +1458,8 @@ public class BuildManager implements ApplicationComponent{
 
   private static final class StdOutputCollector extends ProcessAdapter {
     private final Appendable myOutput;
-    private int myStoredLength = 0;
-    public StdOutputCollector(Appendable outputSink) {
+    private int myStoredLength;
+    StdOutputCollector(@NotNull Appendable outputSink) {
       myOutput = outputSink;
     }
 
@@ -1405,6 +1491,7 @@ public class BuildManager implements ApplicationComponent{
 
     @Override
     public void projectOpened(final Project project) {
+      if (ApplicationManager.getApplication().isUnitTestMode()) return;
       final MessageBusConnection conn = project.getMessageBus().connect();
       myConnections.put(project, conn);
       conn.subscribe(ProjectTopics.PROJECT_ROOTS, new ModuleRootAdapter() {
@@ -1424,22 +1511,50 @@ public class BuildManager implements ApplicationComponent{
       });
       conn.subscribe(CompilerTopics.COMPILATION_STATUS, new CompilationStatusListener() {
         private final Set<String> myRootsToRefresh = new THashSet<String>(FileUtil.PATH_HASHING_STRATEGY);
+
+        @Override
+        public void automakeCompilationFinished(int errors, int warnings, CompileContext compileContext) {
+          if (!compileContext.getProgressIndicator().isCanceled()) {
+            refreshSources(compileContext);
+          }
+        }
+
         @Override
         public void compilationFinished(boolean aborted, int errors, int warnings, CompileContext compileContext) {
-          final String[] roots;
+          refreshSources(compileContext);
+        }
+
+        private void refreshSources(CompileContext compileContext) {
+          if (project.isDisposed()) {
+            return;
+          }
+          final Set<String> candidates = new THashSet<String>(FileUtil.PATH_HASHING_STRATEGY);
           synchronized (myRootsToRefresh) {
-            roots = ArrayUtil.toStringArray(myRootsToRefresh);
+            candidates.addAll(myRootsToRefresh);
             myRootsToRefresh.clear();
           }
-          if (roots.length != 0) {
+          if (compileContext.isAnnotationProcessorsEnabled()) {
+            // annotation processors may have re-generated code
+            final CompilerConfiguration config = CompilerConfiguration.getInstance(project);
+            for (Module module : compileContext.getCompileScope().getAffectedModules()) {
+              if (config.getAnnotationProcessingConfiguration(module).isEnabled()) {
+                final String path = CompilerPaths.getAnnotationProcessorsGenerationPath(module);
+                if (path != null) {
+                  candidates.add(path);
+                }
+              }
+            }
+          }
+
+          if (!candidates.isEmpty()) {
             ApplicationManager.getApplication().executeOnPooledThread(new Runnable() {
               @Override
               public void run() {
                 if (project.isDisposed()) {
                   return;
                 }
-                final List<File> rootFiles = new ArrayList<File>(roots.length);
-                for (String root : roots) {
+                final List<File> rootFiles = new ArrayList<File>(candidates.size());
+                for (String root : candidates) {
                   rootFiles.add(new File(root));
                 }
                 // this will ensure that we'll be able to obtain VirtualFile for existing roots
@@ -1448,6 +1563,7 @@ public class BuildManager implements ApplicationComponent{
                 final LocalFileSystem lfs = LocalFileSystem.getInstance();
                 final Set<VirtualFile> filesToRefresh = new HashSet<VirtualFile>();
                 ApplicationManager.getApplication().runReadAction(new Runnable() {
+                  @Override
                   public void run() {
                     if (project.isDisposed()) {
                       return;
@@ -1530,7 +1646,7 @@ public class BuildManager implements ApplicationComponent{
     final SequentialTaskExecutor taskQueue;
     private final Set<InternedPath> myChanged = new THashSet<InternedPath>();
     private final Set<InternedPath> myDeleted = new THashSet<InternedPath>();
-    private long myNextEventOrdinal = 0L;
+    private long myNextEventOrdinal;
     private boolean myNeedRescan = true;
 
     private ProjectData(@NotNull SequentialTaskExecutor taskQueue) {
@@ -1589,7 +1705,7 @@ public class BuildManager implements ApplicationComponent{
     }
   }
 
-  private static abstract class InternedPath {
+  private abstract static class InternedPath {
     protected final int[] myPath;
 
     /**
@@ -1671,31 +1787,33 @@ public class BuildManager implements ApplicationComponent{
     }
   }
 
-  private static final class DelegateFuture<T> implements TaskFuture<T> {
+  private static final class DelegateFuture implements TaskFuture {
     @Nullable
-    private TaskFuture<? extends T> myDelegate;
-    private Boolean myRequestedCancelState = null;
+    private TaskFuture[] myDelegates;
+    private Boolean myRequestedCancelState;
 
     @NotNull
-    public synchronized TaskFuture<? extends T> getDelegate() {
-      TaskFuture<? extends T> delegate = myDelegate;
-      while (delegate == null) {
+    private synchronized TaskFuture[] getDelegates() {
+      TaskFuture[] delegates = myDelegates;
+      while (delegates == null) {
         try {
           wait();
         }
         catch (InterruptedException ignored) {
         }
-        delegate = myDelegate;
+        delegates = myDelegates;
       }
-      return delegate;
+      return delegates;
     }
 
-    public synchronized boolean setDelegate(@NotNull TaskFuture<? extends T> delegate) {
-      if (myDelegate == null) {
+    private synchronized boolean setDelegates(@NotNull TaskFuture... delegates) {
+      if (myDelegates == null) {
         try {
-          myDelegate = delegate;
+          myDelegates = delegates;
           if (myRequestedCancelState != null) {
-            myDelegate.cancel(myRequestedCancelState);
+            for (TaskFuture delegate : delegates) {
+              delegate.cancel(myRequestedCancelState);
+            }
           }
         }
         finally {
@@ -1706,51 +1824,66 @@ public class BuildManager implements ApplicationComponent{
       return false;
     }
 
+    @Override
     public synchronized boolean cancel(boolean mayInterruptIfRunning) {
-      final TaskFuture<? extends T> delegate = myDelegate;
-      if (delegate == null) {
+      Future[] delegates = myDelegates;
+      if (delegates == null) {
         myRequestedCancelState = mayInterruptIfRunning;
         return true;
       }
-      return delegate.cancel(mayInterruptIfRunning);
+      Stream.of(delegates).forEach(delegate -> delegate.cancel(mayInterruptIfRunning));
+      return isDone();
     }
 
+    @Override
     public void waitFor() {
-      getDelegate().waitFor();
+      Stream.of(getDelegates()).forEach(TaskFuture::waitFor);
     }
 
+    @Override
     public boolean waitFor(long timeout, TimeUnit unit) {
-      return getDelegate().waitFor(timeout, unit);
+      Stream.of(getDelegates()).forEach(delegate -> delegate.waitFor(timeout, unit));
+      return isDone();
     }
 
+    @Override
     public boolean isCancelled() {
-      final TaskFuture<? extends T> delegate;
+      final Future[] delegates;
       synchronized (this) {
-        delegate = myDelegate;
-        if (delegate == null) {
+        delegates = myDelegates;
+        if (delegates == null) {
           return myRequestedCancelState != null;
         }
       }
-      return delegate.isCancelled();
+      return Stream.of(delegates).anyMatch(Future::isCancelled);
     }
 
+    @Override
     public boolean isDone() {
-      final TaskFuture<? extends T> delegate;
+      final Future[] delegates;
       synchronized (this) {
-        delegate = myDelegate;
-        if (delegate == null) {
+        delegates = myDelegates;
+        if (delegates == null) {
           return false;
         }
       }
-      return delegate.isDone();
+      return Stream.of(delegates).allMatch(Future::isDone);
     }
 
-    public T get() throws InterruptedException, java.util.concurrent.ExecutionException {
-      return getDelegate().get();
+    @Override
+    public Object get() throws InterruptedException, java.util.concurrent.ExecutionException {
+      for (Future delegate : getDelegates()) {
+        delegate.get();
+      }
+      return null;
     }
 
-    public T get(long timeout, TimeUnit unit) throws InterruptedException, java.util.concurrent.ExecutionException, TimeoutException {
-      return getDelegate().get(timeout, unit);
+    @Override
+    public Object get(long timeout, @NotNull TimeUnit unit) throws InterruptedException, java.util.concurrent.ExecutionException, TimeoutException {
+      for (Future delegate : getDelegates()) {
+        delegate.get(timeout, unit);
+      }
+      return null;
     }
   }
 

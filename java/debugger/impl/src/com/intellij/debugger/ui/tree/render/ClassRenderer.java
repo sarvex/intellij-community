@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.intellij.debugger.engine.DebuggerUtils;
 import com.intellij.debugger.engine.evaluation.EvaluateException;
 import com.intellij.debugger.engine.evaluation.EvaluationContext;
 import com.intellij.debugger.engine.jdi.StackFrameProxy;
+import com.intellij.debugger.impl.DebuggerUtilsEx;
 import com.intellij.debugger.ui.impl.watch.FieldDescriptorImpl;
 import com.intellij.debugger.ui.impl.watch.MessageDescriptor;
 import com.intellij.debugger.ui.impl.watch.NodeManagerImpl;
@@ -33,10 +34,12 @@ import com.intellij.openapi.util.DefaultJDOMExternalizer;
 import com.intellij.openapi.util.InvalidDataException;
 import com.intellij.openapi.util.WriteExternalException;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.psi.CommonClassNames;
 import com.intellij.psi.JavaPsiFacade;
+import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiElementFactory;
-import com.intellij.psi.PsiExpression;
 import com.intellij.util.IncorrectOperationException;
+import com.intellij.util.containers.HashSet;
 import com.intellij.xdebugger.settings.XDebuggerSettingsManager;
 import com.sun.jdi.*;
 import org.jdom.Element;
@@ -47,6 +50,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 
 /**
  * User: lex
@@ -66,6 +70,8 @@ public class ClassRenderer extends NodeRendererImpl{
   public boolean SHOW_FQ_TYPE_NAMES = false;
   public boolean SHOW_DECLARED_TYPE = false;
   public boolean SHOW_OBJECT_ID = true;
+
+  public boolean SHOW_STRINGS_TYPE = false;
   
   public ClassRenderer() {
     myProperties.setEnabled(true);
@@ -75,6 +81,11 @@ public class ClassRenderer extends NodeRendererImpl{
     if (SHOW_FQ_TYPE_NAMES) {
       return typeName;
     }
+    String baseLambdaClassName = DebuggerUtilsEx.getLambdaBaseClassName(typeName);
+    if (baseLambdaClassName != null) {
+      return renderTypeName(baseLambdaClassName) + "$lambda";
+    }
+
     final int dotIndex = typeName.lastIndexOf('.');
     if (dotIndex > 0) {
       return typeName.substring(dotIndex + 1);
@@ -151,21 +162,32 @@ public class ClassRenderer extends NodeRendererImpl{
     final NodeManager nodeManager = builder.getNodeManager();
     final NodeDescriptorFactory nodeDescriptorFactory = builder.getDescriptorManager();
 
-    List<DebuggerTreeNode> children = new ArrayList<DebuggerTreeNode>();
+    List<DebuggerTreeNode> children = new ArrayList<>();
     if (value instanceof ObjectReference) {
       final ObjectReference objRef = (ObjectReference)value;
       final ReferenceType refType = objRef.referenceType();
       // default ObjectReference processing
-      final List<Field> fields = refType.allFields();
-      if (fields.size() > 0) {
-        for (final Field field : fields) {
-          if (!shouldDisplay(evaluationContext, objRef, field)) {
-            continue;
+      List<Field> fields = refType.allFields();
+      if (!fields.isEmpty()) {
+        Set<String> names = new HashSet<>();
+        for (Field field : fields) {
+          if (shouldDisplay(evaluationContext, objRef, field)) {
+            FieldDescriptor fieldDescriptor = createFieldDescriptor(parentDescriptor, nodeDescriptorFactory, objRef, field, evaluationContext);
+            String name = fieldDescriptor.getName();
+            if (names.contains(name)) {
+              fieldDescriptor.putUserData(FieldDescriptor.SHOW_DECLARING_TYPE, Boolean.TRUE);
+            }
+            else {
+              names.add(name);
+            }
+            children.add(nodeManager.createNode(fieldDescriptor, evaluationContext));
           }
-          children.add(nodeManager.createNode(createFieldDescriptor(parentDescriptor, nodeDescriptorFactory, objRef, field, evaluationContext), evaluationContext));
         }
 
-        if (XDebuggerSettingsManager.getInstance().getDataViewSettings().isSortValues()) {
+        if (children.isEmpty()) {
+          children.add(nodeManager.createMessageNode(DebuggerBundle.message("message.node.class.no.fields.to.display")));
+        }
+        else if (XDebuggerSettingsManager.getInstance().getDataViewSettings().isSortValues()) {
           Collections.sort(children, NodeManagerImpl.getNodeComparator());
         }
       }
@@ -227,7 +249,7 @@ public class ClassRenderer extends NodeRendererImpl{
   }
 
   @Override
-  public PsiExpression getChildValueExpression(DebuggerTreeNode node, DebuggerContext context) throws EvaluateException {
+  public PsiElement getChildValueExpression(DebuggerTreeNode node, DebuggerContext context) throws EvaluateException {
     FieldDescriptor fieldDescriptor = (FieldDescriptor)node.getDescriptor();
 
     PsiElementFactory elementFactory = JavaPsiFacade.getInstance(node.getProject()).getElementFactory();
@@ -280,7 +302,7 @@ public class ClassRenderer extends NodeRendererImpl{
   }
 
   @Nullable
-  public static String getEnumConstantName(final ObjectReference objRef, ClassType classType) {
+  public static String getEnumConstantName(@NotNull ObjectReference objRef, ClassType classType) {
     do {
       if (!classType.isPrepared()) {
         return null;
@@ -290,7 +312,7 @@ public class ClassRenderer extends NodeRendererImpl{
         return null;
       }
     }
-    while (!("java.lang.Enum".equals(classType.name())));
+    while (!(CommonClassNames.JAVA_LANG_ENUM.equals(classType.name())));
     //noinspection HardCodedStringLiteral
     final Field field = classType.fieldByName("name");
     if (field == null) {

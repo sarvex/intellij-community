@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.intellij.openapi.application.ex.PathManagerEx
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.ex.DocumentEx
+import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.FoldingModelEx
 import com.intellij.openapi.editor.impl.FoldingModelImpl
 import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider
@@ -36,7 +37,6 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.testFramework.EditorTestUtil
 import com.intellij.testFramework.LightProjectDescriptor
 import com.intellij.testFramework.fixtures.LightCodeInsightFixtureTestCase
-
 /**
  * @author Denis Zhdanov
  * @since 1/17/11 1:00 PM
@@ -82,7 +82,7 @@ class Foo { List a; Map b; }
 
     myFixture.type 'import '
     myFixture.doHighlighting()
-    assert !myFixture.editor.foldingModel.getCollapsedRegionAtOffset(10)
+    assert !myFixture.editor.foldingModel.getCollapsedRegionAtOffset(46)
   }
 
   public void testJavadocLikeClassHeader() {
@@ -1027,6 +1027,30 @@ class Foo {
     myFixture.performEditorAction(IdeActions.ACTION_EXPAND_ALL_TO_LEVEL_1)
     assertEquals 1, expandedFoldRegionsCount
   }
+  
+  public void "test expand recursively on expanded region containing collapsed regions"() {
+    def text = """
+class Foo {
+    public static void main() {
+        new Runnable(){
+            public void run() {
+            }
+        }.run();
+    }
+}
+"""
+    configure text
+    assertEquals 3, foldRegionsCount
+    myFixture.editor.caretModel.moveToOffset(text.indexOf("run"))
+    myFixture.performEditorAction(IdeActions.ACTION_COLLAPSE_REGION)
+    myFixture.editor.caretModel.moveToOffset(text.indexOf("new"))
+    myFixture.performEditorAction(IdeActions.ACTION_COLLAPSE_REGION)
+    assertEquals 1, expandedFoldRegionsCount
+    
+    myFixture.editor.caretModel.moveToOffset(text.indexOf("main"))
+    myFixture.performEditorAction(IdeActions.ACTION_EXPAND_REGION_RECURSIVELY)
+    assertEquals 3, expandedFoldRegionsCount
+  }
 
   public void "test single line closure unfolds when converted to multiline"() {
     boolean oldValue = Registry.is("editor.durable.folding.state")
@@ -1115,6 +1139,114 @@ class Foo {
 \t\t});
 \t}
 }""");
+  }
+  
+  public void testCollapseExistingButExpandedBlock() {
+    String text = '''class Foo {
+    void m {
+        if (true) {
+            System.out.println();
+        }
+    }
+}
+'''
+    configure text
+    
+    myFixture.editor.caretModel.moveToOffset(text.indexOf("System"))
+    myFixture.performEditorAction("CollapseBlock")
+    
+    myFixture.performEditorAction("ExpandAllRegions")
+
+    myFixture.editor.caretModel.moveToOffset(text.indexOf("System"))
+    myFixture.performEditorAction("CollapseBlock")
+
+    def topLevelRegions = ((FoldingModelEx)myFixture.editor.foldingModel).fetchTopLevel()
+    assert topLevelRegions.length == 1
+    assert topLevelRegions[0].startOffset == text.indexOf('{', text.indexOf("if"))
+    assert topLevelRegions[0].endOffset == text.indexOf('}', text.indexOf("if")) + 1
+  }
+  
+  public void "test editing near closure folding"() {
+    configure """\
+class Foo {
+  void m() {
+    SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                System.out.println();
+            }
+        });
+  }
+}
+"""
+    assertTopLevelFoldRegionsState "[FoldRegion +(56:143), placeholder='(Runnable) () → { ', FoldRegion +(164:188), placeholder=' }']"
+    myFixture.editor.caretModel.moveToOffset(myFixture.editor.document.text.indexOf("SwingUtilities"))
+    myFixture.type(' ')
+    myFixture.doHighlighting()
+    assertTopLevelFoldRegionsState "[FoldRegion +(57:144), placeholder='(Runnable) () → { ', FoldRegion +(165:189), placeholder=' }']"
+  }
+  
+  public void "test folding update after external change"() {
+    configure """\
+class Foo {
+  void m1() {
+    System.out.println(1);
+    System.out.println(2);
+  }
+  
+  void m2() {
+    System.out.println(3);
+    System.out.println(4);
+  }
+}
+"""
+    myFixture.performEditorAction(IdeActions.ACTION_COLLAPSE_ALL_REGIONS)
+    assertTopLevelFoldRegionsState "[FoldRegion +(24:83), placeholder='{...}', FoldRegion +(99:158), placeholder='{...}']"
+    
+    def virtualFile = ((EditorEx)myFixture.getEditor()).virtualFile
+    myFixture.saveText(virtualFile, """\
+class Foo {
+  void m1() {
+    System.out.println(1);
+    System.out.println(4);
+  }
+}
+""")
+    virtualFile.refresh(false, false)
+    
+    myFixture.doHighlighting()
+    assertTopLevelFoldRegionsState "[FoldRegion +(24:83), placeholder='{...}']"
+  }
+  
+  public void "test placeholder update on refactoring"() {
+    configure """\
+class Foo {
+  void method() {}
+  
+  Foo foo = new Foo() {
+    void method() {
+      System.out.println();
+    }
+  };
+}
+"""
+    assertTopLevelFoldRegionsState "[FoldRegion +(46:84), placeholder='method() → { ', FoldRegion +(105:115), placeholder=' }']"
+    
+    // emulate rename refactoring ('method' to 'otherMethod')
+    def document = myFixture.editor.document
+    WriteCommandAction.runWriteCommandAction myFixture.project, {
+      int pos;
+      while ((pos = document.getText().indexOf("method")) >= 0) {
+        document.replaceString(pos, pos + "method".length(), "otherMethod")
+      }
+    }    
+
+    myFixture.doHighlighting()
+    assertTopLevelFoldRegionsState "[FoldRegion +(51:94), placeholder='otherMethod() → { ', FoldRegion +(115:125), placeholder=' }']"
+  }
+
+  private void assertTopLevelFoldRegionsState(String expectedState) {
+    assertEquals(expectedState, myFixture.editor.foldingModel.toString())
   }
 
   private int getFoldRegionsCount() {

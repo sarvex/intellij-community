@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,28 +23,22 @@ import java.io.IOException
 
 import org.junit.Assert.assertEquals
 
-public class TestGraphBuilderTest : AbstractTestWithTwoTextFile("testParser") {
+class TestGraphBuilderTest : AbstractTestWithTwoTextFile("testParser") {
 
   override fun runTest(`in`: String, out: String) {
     val graph = LinearGraphParser.parse(`in`)
     assertEquals(out, graph.asString(false))
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun specialElements() {
+  @Test fun specialElements() {
     doTest("specialElements")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun manyNodes() {
+  @Test fun manyNodes() {
     doTest("manyNodes")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun notLoadNode() {
+  @Test fun notLoadNode() {
     doTest("notLoadNode")
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.fileEditor.impl.LoadTextUtil;
 import com.intellij.openapi.fileTypes.FileTypeRegistry;
 import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.FileIndexFacade;
 import com.intellij.openapi.util.text.StringUtil;
@@ -34,6 +35,8 @@ import com.intellij.util.Processor;
 import com.intellij.util.containers.Convertor;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.io.IOException;
 
 /**
  * @author Nikolai Matveev
@@ -131,7 +134,7 @@ public abstract class AbstractConvertLineSeparatorsAction extends AnAction {
       return false;
     }
     Module module = FileIndexFacade.getInstance(project).getModuleForFile(file);
-    return module == null || !file.equals(module.getModuleFile());
+    return module == null || !ModuleUtilCore.isModuleFile(module, file);
   }
 
   public static void changeLineSeparators(@NotNull final Project project,
@@ -157,7 +160,12 @@ public abstract class AbstractConvertLineSeparatorsAction extends AnAction {
     new WriteCommandAction(project, commandText) {
       @Override
       protected void run(@NotNull Result result) throws Throwable {
-        LoadTextUtil.changeLineSeparators(project, virtualFile, newSeparator, this);
+        try {
+          LoadTextUtil.changeLineSeparators(project, virtualFile, newSeparator, this);
+        }
+        catch (IOException e) {
+          LOG.info(e);
+        }
       }
     }.execute();
   }

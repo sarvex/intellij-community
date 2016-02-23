@@ -28,6 +28,7 @@ import com.intellij.openapi.util.EmptyRunnable;
 import com.intellij.openapi.wm.IdeFocusManager;
 import com.intellij.openapi.wm.WindowManager;
 import com.intellij.ui.FocusTrackback;
+import com.intellij.util.messages.Topic;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -64,6 +65,12 @@ public class ProgressWindow extends ProgressIndicatorBase implements BlockingPro
   private String myProcessId = "<unknown>";
   @Nullable private volatile Runnable myBackgroundHandler;
   private int myDelayInMillis = DEFAULT_PROGRESS_DIALOG_POSTPONE_TIME_MILLIS;
+
+  public interface Listener {
+    void progressWindowCreated(ProgressWindow pw);
+  }
+
+  public static final Topic<Listener> TOPIC = Topic.create("progress window", Listener.class);
 
   public ProgressWindow(boolean shouldShowCancel, Project project) {
     this(shouldShowCancel, false, project);
@@ -112,6 +119,7 @@ public class ProgressWindow extends ProgressIndicatorBase implements BlockingPro
         }
       }
     });
+    ApplicationManager.getApplication().getMessageBus().syncPublisher(TOPIC).progressWindowCreated(this);
   }
 
   @Override
@@ -238,6 +246,22 @@ public class ProgressWindow extends ProgressIndicatorBase implements BlockingPro
     myDialog.show();
     if (myDialog != null) {
       myDialog.myRepaintRunnable.run();
+    }
+  }
+
+  @Override
+  public void startNonCancelableSection() {
+    if (isCancelable()) {
+      enableCancel(false);
+    }
+    super.startNonCancelableSection();
+  }
+
+  @Override
+  public void finishNonCancelableSection() {
+    super.finishNonCancelableSection();
+    if (isCancelable()) {
+      enableCancel(true);
     }
   }
 
@@ -378,10 +402,17 @@ public class ProgressWindow extends ProgressIndicatorBase implements BlockingPro
 
   @Override
   public void dispose() {
+    stopSystemActivity();
   }
 
   @Override
   public boolean isPopupWasShown() {
     return myDialog != null && myDialog.myPopup != null && myDialog.myPopup.isShowing();
+  }
+
+  protected void enableCancel(boolean enable) {
+    if (myDialog != null) {
+      myDialog.enableCancelButtonIfNeeded(enable);
+    }
   }
 }

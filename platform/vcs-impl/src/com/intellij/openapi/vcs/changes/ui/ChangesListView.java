@@ -31,7 +31,6 @@ import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.PopupHandler;
 import com.intellij.ui.SmartExpander;
-import com.intellij.ui.TreeCopyProvider;
 import com.intellij.ui.TreeSpeedSearch;
 import com.intellij.ui.awt.RelativePoint;
 import com.intellij.ui.awt.RelativeRectangle;
@@ -43,6 +42,7 @@ import com.intellij.util.containers.Convertor;
 import com.intellij.util.containers.MultiMap;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.tree.TreeUtil;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -64,7 +64,6 @@ public class ChangesListView extends Tree implements TypeSafeDataProvider, Advan
   private DnDManager myDndManager;
   private ChangeListOwner myDragOwner;
   private final Project myProject;
-  private TreeState myTreeState;
   private boolean myShowFlatten = false;
   private final CopyProvider myCopyProvider;
 
@@ -87,10 +86,11 @@ public class ChangesListView extends Tree implements TypeSafeDataProvider, Advan
 
     setShowsRootHandles(true);
     setRootVisible(false);
+    setDragEnabled(true);
 
     new TreeSpeedSearch(this, new NodeToTextConvertor());
     SmartExpander.installOn(this);
-    myCopyProvider = new TreeCopyProvider(this);
+    myCopyProvider = new ChangesBrowserNodeCopyProvider(this);
     new TreeLinkMouseListener(new ChangesBrowserNodeRenderer(myProject, false, false)).installOn(this);
 
     myNodeRenderer = new ChangesBrowserNodeRenderer(project, false, true);
@@ -123,14 +123,6 @@ public class ChangesListView extends Tree implements TypeSafeDataProvider, Advan
     }
   }
 
-  private void storeState() {
-    myTreeState = TreeState.createOn(this, (ChangesBrowserNode)getModel().getRoot());
-  }
-
-  private void restoreState() {
-    myTreeState.applyTo(this, (ChangesBrowserNode)getModel().getRoot());
-  }
-
   public boolean isShowFlatten() {
     return myShowFlatten;
   }
@@ -150,13 +142,14 @@ public class ChangesListView extends Tree implements TypeSafeDataProvider, Advan
     final DefaultTreeModel model = builder.buildModel(changeLists, unversionedFiles, locallyDeletedFiles, modifiedWithoutEditing,
                                                       switchedFiles, switchedRoots, ignoredFiles, lockedFolders, logicallyLockedFiles);
 
-    storeState();
+    TreeState state = TreeState.createOn(this, (ChangesBrowserNode)getModel().getRoot());
+    state.setScrollToSelection(false);
     DefaultTreeModel oldModel = getModel();
     setModel(model);
     setCellRenderer(isShowFlatten() ? myShowFlattenNodeRenderer : myNodeRenderer);
     ChangesBrowserNode root = (ChangesBrowserNode)model.getRoot();
     expandPath(new TreePath(root.getPath()));
-    restoreState();
+    state.applyTo(this, (ChangesBrowserNode)getModel().getRoot());
     expandDefaultChangeList(oldModel, root);
   }
 
@@ -412,7 +405,7 @@ public class ChangesListView extends Tree implements TypeSafeDataProvider, Advan
           final VcsCurrentRevisionProxy before =
             VcsCurrentRevisionProxy.create(file, myProject, vcs.getKeyInstanceMethod());
           if (before != null) {
-            ContentRevision afterRevision = new CurrentContentRevision(new FilePathImpl(file));
+            ContentRevision afterRevision = new CurrentContentRevision(VcsUtil.getFilePath(file));
             changes.add(new Change(before, afterRevision, FileStatus.HIJACKED));
           }
         }

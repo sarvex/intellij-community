@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,12 @@ package com.jetbrains.python.formatter;
 
 import com.intellij.formatting.*;
 import com.intellij.lang.ASTNode;
-import com.intellij.lang.LanguageParserDefinitions;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.codeStyle.CodeStyleSettings;
 import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
 import com.intellij.psi.tree.IElementType;
-import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
 import com.jetbrains.python.PythonDialectsTokenSetProvider;
 import com.jetbrains.python.PythonLanguage;
@@ -40,19 +38,20 @@ import static com.jetbrains.python.PyTokenTypes.*;
 @SuppressWarnings("UseOfSystemOutOrSystemErr")
 public class PythonFormattingModelBuilder implements FormattingModelBuilderEx, CustomFormattingModelBuilder {
   private static final boolean DUMP_FORMATTING_AST = false;
+  public static final TokenSet STATEMENT_OR_DECLARATION = PythonDialectsTokenSetProvider.INSTANCE.getStatementTokens();
 
   @NotNull
   @Override
   public FormattingModel createModel(@NotNull PsiElement element,
                                      @NotNull CodeStyleSettings settings,
                                      @NotNull FormattingMode mode) {
-    final ASTNode fileNode = element.getContainingFile().getNode();
     if (DUMP_FORMATTING_AST) {
+      ASTNode fileNode = element.getContainingFile().getNode();
       System.out.println("AST tree for " + element.getContainingFile().getName() + ":");
       printAST(fileNode, 0);
     }
     final PyBlockContext context = new PyBlockContext(settings, createSpacingBuilder(settings), mode);
-    final PyBlock block = new PyBlock(null, fileNode, null, Indent.getNoneIndent(), null, context);
+    final PyBlock block = new PyBlock(null, element.getNode(), null, Indent.getNoneIndent(), null, context);
     if (DUMP_FORMATTING_AST) {
       FormattingModelDumper.dumpFormattingModel(block, 2, System.out);
     }
@@ -73,25 +72,22 @@ public class PythonFormattingModelBuilder implements FormattingModelBuilderEx, C
   }
 
   protected SpacingBuilder createSpacingBuilder(CodeStyleSettings settings) {
-    final IFileElementType file = LanguageParserDefinitions.INSTANCE.forLanguage(PythonLanguage.getInstance()).getFileNodeType();
     final PyCodeStyleSettings pySettings = settings.getCustomSettings(PyCodeStyleSettings.class);
-    final TokenSet STATEMENT_OR_DECLARATION =
-      TokenSet.orSet(PythonDialectsTokenSetProvider.INSTANCE.getStatementTokens(), CLASS_OR_FUNCTION);
 
     final CommonCodeStyleSettings commonSettings = settings.getCommonSettings(PythonLanguage.getInstance());
     return new SpacingBuilder(commonSettings)
-      .betweenInside(STATEMENT_OR_DECLARATION, CLASS_OR_FUNCTION, file).blankLines(pySettings.BLANK_LINES_AROUND_TOP_LEVEL_CLASSES_FUNCTIONS)
-      .betweenInside(CLASS_OR_FUNCTION, STATEMENT_OR_DECLARATION, file).blankLines(pySettings.BLANK_LINES_AROUND_TOP_LEVEL_CLASSES_FUNCTIONS)
-      .between(IMPORT_STATEMENTS, TokenSet.andNot(STATEMENT_OR_DECLARATION, IMPORT_STATEMENTS)).blankLines(commonSettings.BLANK_LINES_AFTER_IMPORTS)
-      .betweenInside(CLASS_OR_FUNCTION, CLASS_OR_FUNCTION, file).blankLines(pySettings.BLANK_LINES_AROUND_TOP_LEVEL_CLASSES_FUNCTIONS)
       .between(CLASS_DECLARATION, STATEMENT_OR_DECLARATION).blankLines(commonSettings.BLANK_LINES_AROUND_CLASS)
       .between(STATEMENT_OR_DECLARATION, CLASS_DECLARATION).blankLines(commonSettings.BLANK_LINES_AROUND_CLASS)
       .between(FUNCTION_DECLARATION, STATEMENT_OR_DECLARATION).blankLines(commonSettings.BLANK_LINES_AROUND_METHOD)
       .between(STATEMENT_OR_DECLARATION, FUNCTION_DECLARATION).blankLines(commonSettings.BLANK_LINES_AROUND_METHOD)
       .after(FUNCTION_DECLARATION).blankLines(commonSettings.BLANK_LINES_AROUND_METHOD)
       .after(CLASS_DECLARATION).blankLines(commonSettings.BLANK_LINES_AROUND_CLASS)
+      // Remove excess blank lines between imports (at most one is allowed). 
+      // Note that ImportOptimizer gets rid of them anyway.
+      // Empty lines between import groups are handles in PyBlock#getSpacing
+      .between(IMPORT_STATEMENTS, IMPORT_STATEMENTS).spacing(0, Integer.MAX_VALUE, 1, false, 1)
       .between(STATEMENT_OR_DECLARATION, STATEMENT_OR_DECLARATION).spacing(0, Integer.MAX_VALUE, 1, false, 1)
-      
+
       .between(COLON, STATEMENT_LIST).spacing(1, Integer.MAX_VALUE, 0, true, 0)
       .afterInside(COLON, TokenSet.create(KEY_VALUE_EXPRESSION, LAMBDA_EXPRESSION)).spaceIf(pySettings.SPACE_AFTER_PY_COLON)
 
@@ -99,8 +95,12 @@ public class PythonFormattingModelBuilder implements FormattingModelBuilderEx, C
       .betweenInside(MINUS, GT, ANNOTATION).none()
       .beforeInside(ANNOTATION, FUNCTION_DECLARATION).spaces(1)
       .beforeInside(ANNOTATION, NAMED_PARAMETER).none()
+      .afterInside(COLON, ANNOTATION).spaces(1)
+      .afterInside(RARROW, ANNOTATION).spaces(1)
 
       .between(allButLambda(), PARAMETER_LIST).spaceIf(commonSettings.SPACE_BEFORE_METHOD_PARENTHESES)
+      .afterInside(LBRACE, DICT_LITERAL_EXPRESSION).spaceIf(pySettings.SPACE_WITHIN_BRACES, pySettings.DICT_NEW_LINE_AFTER_LEFT_BRACE)
+      .beforeInside(RBRACE, DICT_LITERAL_EXPRESSION).spaceIf(pySettings.SPACE_WITHIN_BRACES, pySettings.DICT_NEW_LINE_BEFORE_RIGHT_BRACE)
 
       .before(COLON).spaceIf(pySettings.SPACE_BEFORE_PY_COLON)
       .after(COMMA).spaceIf(commonSettings.SPACE_AFTER_COMMA)
@@ -108,6 +108,7 @@ public class PythonFormattingModelBuilder implements FormattingModelBuilderEx, C
       .between(FROM_KEYWORD, DOT).spaces(1)
       .between(DOT, IMPORT_KEYWORD).spaces(1)
       .around(DOT).spaces(0)
+      .aroundInside(AT, DECORATOR_CALL).none()
       .before(SEMICOLON).spaceIf(commonSettings.SPACE_BEFORE_SEMICOLON)
       .withinPairInside(LPAR, RPAR, ARGUMENT_LIST).spaceIf(commonSettings.SPACE_WITHIN_METHOD_CALL_PARENTHESES)
       .withinPairInside(LPAR, RPAR, PARAMETER_LIST).spaceIf(commonSettings.SPACE_WITHIN_METHOD_PARENTHESES)
@@ -130,8 +131,9 @@ public class PythonFormattingModelBuilder implements FormattingModelBuilderEx, C
 
       .around(AUG_ASSIGN_OPERATIONS).spaceIf(commonSettings.SPACE_AROUND_ASSIGNMENT_OPERATORS)
       .aroundInside(ADDITIVE_OPERATIONS, BINARY_EXPRESSION).spaceIf(commonSettings.SPACE_AROUND_ADDITIVE_OPERATORS)
-      .aroundInside(MULTIPLICATIVE_OR_EXP, STAR_PARAMETERS).none()
-      .around(MULTIPLICATIVE_OR_EXP).spaceIf(commonSettings.SPACE_AROUND_MULTIPLICATIVE_OPERATORS)
+      .aroundInside(STAR_OPERATORS, STAR_PARAMETERS).none()
+      .around(MULTIPLICATIVE_OPERATIONS).spaceIf(commonSettings.SPACE_AROUND_MULTIPLICATIVE_OPERATORS)
+      .around(EXP).spaceIf(pySettings.SPACE_AROUND_POWER_OPERATOR)
       .around(SHIFT_OPERATIONS).spaceIf(commonSettings.SPACE_AROUND_SHIFT_OPERATORS)
       .around(BITWISE_OPERATIONS).spaceIf(commonSettings.SPACE_AROUND_BITWISE_OPERATORS)
       .around(EQUALITY_OPERATIONS).spaceIf(commonSettings.SPACE_AROUND_EQUALITY_OPERATORS)
@@ -150,7 +152,7 @@ public class PythonFormattingModelBuilder implements FormattingModelBuilderEx, C
     final PythonLanguage pythonLanguage = PythonLanguage.getInstance();
     return TokenSet.create(IElementType.enumerate(new IElementType.Predicate() {
       @Override
-      public boolean matches(IElementType type) {
+      public boolean matches(@NotNull IElementType type) {
         return type != LAMBDA_KEYWORD && type.getLanguage().isKindOf(pythonLanguage);
       }
     }));

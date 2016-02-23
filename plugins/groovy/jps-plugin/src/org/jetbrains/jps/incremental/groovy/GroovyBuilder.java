@@ -16,6 +16,7 @@
 package org.jetbrains.jps.incremental.groovy;
 
 
+import com.intellij.compiler.instrumentation.FailSafeClassReader;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Ref;
@@ -26,6 +27,7 @@ import com.intellij.util.containers.ContainerUtil;
 import gnu.trove.THashMap;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.groovy.compiler.rt.GroovyRtConstants;
 import org.jetbrains.jps.ModuleChunk;
 import org.jetbrains.jps.ProjectPaths;
 import org.jetbrains.jps.builders.BuildRootIndex;
@@ -70,7 +72,6 @@ public class GroovyBuilder extends ModuleLevelBuilder {
   private static final Key<Map<ModuleChunk, GroovycContinuation>> CONTINUATIONS = Key.create("CONTINUATIONS");
   private static final Key<Boolean> FILES_MARKED_DIRTY_FOR_NEXT_ROUND = Key.create("SRC_MARKED_DIRTY");
   private static final String GROOVY_EXTENSION = "groovy";
-  private static final String GPP_EXTENSION = "gpp";
   private final boolean myForStubs;
   private final String myBuilderName;
 
@@ -128,7 +129,7 @@ public class GroovyBuilder extends ModuleLevelBuilder {
         rememberStubSources(context, compiled);
       }
 
-      for (CompilerMessage message : parser.getCompilerMessages(chunk.representativeTarget().getModule().getName())) {
+      for (CompilerMessage message : parser.getCompilerMessages()) {
         context.processMessage(message);
       }
 
@@ -451,11 +452,14 @@ public class GroovyBuilder extends ModuleLevelBuilder {
           final File srcFile = new File(sourcePath);
           try {
             final byte[] bytes = FileUtil.loadFileBytes(outputFile);
+            if (Utils.IS_TEST_MODE || LOG.isDebugEnabled()) {
+              LOG.info("registerCompiledClass " + outputFile + " from " + srcFile);
+            }
             outputConsumer.registerCompiledClass(
               target,
               new CompiledClass(outputFile, srcFile, readClassName(bytes), new BinaryContent(bytes))
             );
-            callback.associate(outputPath, sourcePath, new ClassReader(bytes));
+            callback.associate(outputPath, sourcePath, new FailSafeClassReader(bytes));
           }
           catch (Throwable e) {
             // need this to make sure that unexpected errors in, for example, ASM will not ruin the compilation
@@ -485,7 +489,7 @@ public class GroovyBuilder extends ModuleLevelBuilder {
     final Set<String> cp = new LinkedHashSet<String>();
     //groovy_rt.jar
     // IMPORTANT! must be the first in classpath
-    cp.add(getGroovyRtRoot().getPath());
+    cp.addAll(getGroovyRtRoots());
 
     for (File file : ProjectPaths.getCompilationClasspathFiles(chunk, chunk.containsTests(), false, false)) {
       cp.add(FileUtil.toCanonicalPath(file.getPath()));
@@ -498,21 +502,20 @@ public class GroovyBuilder extends ModuleLevelBuilder {
     return cp;
   }
 
-  static File getGroovyRtRoot() {
-    File root = ClasspathBootstrap.getResourceFile(GroovyBuilder.class);
-    if (root.isFile()) {
-      return new File(root.getParentFile(), "groovy_rt.jar");
-    }
-    return new File(root.getParentFile(), "groovy_rt");
+  static List<String> getGroovyRtRoots() {
+    File rt = ClasspathBootstrap.getResourceFile(GroovyBuilder.class);
+    File constants = ClasspathBootstrap.getResourceFile(GroovyRtConstants.class);
+    return Arrays.asList(new File(rt.getParentFile(), rt.isFile() ? "groovy_rt.jar" : "groovy_rt").getPath(), 
+                         new File(constants.getParentFile(), constants.isFile() ? "groovy-rt-constants.jar" : "groovy-rt-constants").getPath());
   }
 
   public static boolean isGroovyFile(String path) {
-    return path.endsWith("." + GROOVY_EXTENSION) || path.endsWith("." + GPP_EXTENSION);
+    return path.endsWith("." + GROOVY_EXTENSION);
   }
 
   @Override
   public List<String> getCompilableFileExtensions() {
-    return Arrays.asList(GROOVY_EXTENSION, GPP_EXTENSION);
+    return Collections.singletonList(GROOVY_EXTENSION);
   }
 
   private static Map<String, String> buildClassToSourceMap(ModuleChunk chunk, CompileContext context, Set<String> toCompilePaths, Map<ModuleBuildTarget, String> finalOutputs) throws IOException {

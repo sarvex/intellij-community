@@ -1,77 +1,62 @@
 package org.jetbrains.ide
 
-import io.netty.channel.ChannelInitializer
-import io.netty.channel.Channel
-import org.jetbrains.io.Decoder
-import io.netty.channel.ChannelHandlerContext
+import com.intellij.testFramework.ProjectRule
+import com.intellij.util.concurrency.Semaphore
+import com.intellij.util.net.loopbackSocketAddress
 import io.netty.buffer.ByteBuf
-import com.intellij.util.Consumer
-import java.util.UUID
-import io.netty.channel.ChannelHandler
-import io.netty.util.CharsetUtil
-import org.jetbrains.io.ChannelExceptionHandler
-import org.jetbrains.io.NettyUtil
-import com.intellij.util.net.NetUtils
 import io.netty.buffer.Unpooled
+import io.netty.channel.ChannelHandler
+import io.netty.channel.ChannelHandlerContext
+import io.netty.util.CharsetUtil
 import junit.framework.TestCase
-import org.junit.rules.RuleChain
-import org.junit.Rule
-import org.junit.Test
-import org.jetbrains.io.MessageDecoder
 import org.jetbrains.concurrency.AsyncPromise
 import org.jetbrains.concurrency.Promise
-import com.intellij.util.concurrency.Semaphore
+import org.jetbrains.io.*
+import org.junit.ClassRule
+import org.junit.Test
+import java.util.*
+import java.util.concurrent.TimeUnit
 
 // we don't handle String in efficient way - because we want to test readContent/readChars also
-public class BinaryRequestHandlerTest {
-  private val fixtureManager = FixtureRule()
+internal class BinaryRequestHandlerTest {
+  companion object {
+    @JvmField
+    @ClassRule val projectRule = ProjectRule()
+  }
 
-  private val _chain = RuleChain
-      .outerRule(fixtureManager)
-
-  Rule
-  public fun getChain(): RuleChain = _chain
-
-  Test
-  public fun test() {
+  @Test fun test() {
     val text = "Hello!"
     val result = AsyncPromise<String>()
 
-    val bootstrap = NettyUtil.oioClientBootstrap().handler(object : ChannelInitializer<Channel>() {
-      override fun initChannel(channel: Channel) {
-        channel.pipeline().addLast(object : Decoder() {
-          override fun messageReceived(context: ChannelHandlerContext, input: ByteBuf) {
-            val requiredLength = 4 + text.length()
-            val response = readContent(input, context, requiredLength) {(buffer, context, isCumulateBuffer) -> buffer.toString(buffer.readerIndex(), requiredLength, CharsetUtil.UTF_8) }
-            if (response != null) {
-              result.setResult(response)
-            }
+    val bootstrap = oioClientBootstrap().handler {
+      it.pipeline().addLast(object : Decoder() {
+        override fun messageReceived(context: ChannelHandlerContext, input: ByteBuf) {
+          val requiredLength = 4 + text.length
+          val response = readContent(input, context, requiredLength) { buffer, context, isCumulateBuffer -> buffer.toString(buffer.readerIndex(), requiredLength, CharsetUtil.UTF_8) }
+          if (response != null) {
+            result.setResult(response)
           }
-        }, ChannelExceptionHandler.getInstance())
-      }
-    })
+        }
+      }, ChannelExceptionHandler.getInstance())
+    }
 
-    val port = BuiltInServerManager.getInstance().waitForStart().getPort()
-    val channel = bootstrap.connect(NetUtils.getLoopbackAddress(), port).syncUninterruptibly().channel()
+    val port = BuiltInServerManager.getInstance().waitForStart().port
+    val channel = bootstrap.connect(loopbackSocketAddress(port)).syncUninterruptibly().channel()
     val buffer = channel.alloc().buffer()
     buffer.writeByte('C'.toInt())
     buffer.writeByte('H'.toInt())
-    buffer.writeLong(MyBinaryRequestHandler.ID.getMostSignificantBits())
-    buffer.writeLong(MyBinaryRequestHandler.ID.getLeastSignificantBits())
+    buffer.writeLong(MyBinaryRequestHandler.ID.mostSignificantBits)
+    buffer.writeLong(MyBinaryRequestHandler.ID.leastSignificantBits)
 
     val message = Unpooled.copiedBuffer(text, CharsetUtil.UTF_8)
     buffer.writeShort(message.readableBytes())
     channel.write(buffer)
-    channel.writeAndFlush(message).syncUninterruptibly()
+    channel.writeAndFlush(message).await(5, TimeUnit.SECONDS)
 
     try {
-      result.rejected(object : Consumer<Throwable> {
-        override fun consume(error: Throwable) {
-          TestCase.fail(error.getMessage())
-        }
-      })
+      result.rejected { error -> TestCase.fail(error.message) }
 
-      if (result.getState() == Promise.State.PENDING) {
+      if (result.state == Promise.State.PENDING) {
         val semaphore = Semaphore()
         semaphore.down()
         result.processed { semaphore.up() }
@@ -89,7 +74,7 @@ public class BinaryRequestHandlerTest {
   }
 
   class MyBinaryRequestHandler : BinaryRequestHandler() {
-    class object {
+    companion object {
       val ID = UUID.fromString("E5068DD6-1DB7-437C-A3FC-3CA53B6E1AC9")
     }
 
@@ -105,7 +90,7 @@ public class BinaryRequestHandlerTest {
       private var state = State.HEADER
 
       private enum class State {
-        HEADER
+        HEADER,
         CONTENT
       }
 
@@ -113,20 +98,13 @@ public class BinaryRequestHandlerTest {
         while (true) {
           when (state) {
             State.HEADER -> {
-              val buffer = getBufferIfSufficient(input, 2, context)
-              if (buffer == null) {
-                return
-              }
-
+              val buffer = getBufferIfSufficient(input, 2, context) ?: return
               contentLength = buffer.readUnsignedShort()
               state = State.CONTENT
             }
 
             State.CONTENT -> {
-              val messageText = readChars(input)
-              if (messageText == null) {
-                return
-              }
+              val messageText = readChars(input) ?: return
 
               state = State.HEADER
               context.writeAndFlush(Unpooled.copiedBuffer("got-" + messageText, CharsetUtil.UTF_8))

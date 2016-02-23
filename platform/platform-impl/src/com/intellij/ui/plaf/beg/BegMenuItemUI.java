@@ -1,6 +1,6 @@
 
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
  */
 package com.intellij.ui.plaf.beg;
 
+import com.intellij.ide.ui.UISettings;
 import com.intellij.openapi.actionSystem.impl.ActionMenuItem;
 import com.intellij.openapi.keymap.KeymapUtil;
 import com.intellij.openapi.util.SystemInfo;
@@ -83,7 +84,7 @@ public class BegMenuItemUI extends BasicMenuItemUI {
   }
 
   public void paint(Graphics g, JComponent comp) {
-    UIUtil.applyRenderingHints(g);
+    UISettings.setupAntialiasing(g);
     JMenuItem jmenuitem = (JMenuItem)comp;
     ButtonModel buttonmodel = jmenuitem.getModel();
     int mnemonicIndex = jmenuitem.getDisplayedMnemonicIndex();
@@ -111,7 +112,7 @@ public class BegMenuItemUI extends BasicMenuItemUI {
     }
     String s1 = layoutMenuItem(fontmetrics, jmenuitem.getText(), fontmetrics1, keyStrokeText, icon1, icon2, arrowIcon, jmenuitem.getVerticalAlignment(), jmenuitem.getHorizontalAlignment(), jmenuitem.getVerticalTextPosition(), jmenuitem.getHorizontalTextPosition(), f, l, j, c, h, d, jmenuitem.getText() != null ? defaultTextIconGap : 0, defaultTextIconGap);
     Color color2 = g.getColor();
-    if (comp.isOpaque()){
+    if (comp.isOpaque() || (UIUtil.isUnderDarcula() || UIUtil.isUnderIntelliJLaF())){
       g.setColor(jmenuitem.getBackground());
       g.fillRect(0, 0, j1, k1);
       if (buttonmodel.isArmed() || (comp instanceof JMenu) && buttonmodel.isSelected()){
@@ -119,7 +120,7 @@ public class BegMenuItemUI extends BasicMenuItemUI {
           myAquaSelectedBackgroundPainter.paintBorder(comp, g, 0, 0, j1, k1);
         } else {
           g.setColor(selectionBackground);
-          if (icon2 != null){
+          if (icon2 != null && !(UIUtil.isUnderDarcula() || UIUtil.isUnderIntelliJLaF())){
             g.fillRect(k, 0, j1 - k, k1);
           }
           else{

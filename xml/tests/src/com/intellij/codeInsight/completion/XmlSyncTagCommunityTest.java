@@ -15,7 +15,15 @@
  */
 package com.intellij.codeInsight.completion;
 
+import com.intellij.ide.highlighter.XmlFileType;
 import com.intellij.openapi.actionSystem.IdeActions;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.EditorFactory;
+import com.intellij.openapi.editor.VisualPosition;
+import com.intellij.openapi.editor.ex.EditorSettingsExternalizable;
+import com.intellij.openapi.editor.impl.TrailingSpacesStripper;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
+import com.intellij.psi.PsiFile;
 
 /**
  * @author Dennis.Ushakov
@@ -62,6 +70,17 @@ public class XmlSyncTagCommunityTest extends XmlSyncTagTest {
            "<divv>\n" +
            "<divv></divv>\n" +
            "</divv>");
+  }
+
+  public void testMultiCaretAdding() {
+    doTest("<div<caret>></div>\n" +
+           "<div></div>\n", "\b\b\biii",
+           "<iii></iii>\n" +
+           "<div></div>\n");
+    myFixture.getEditor().getCaretModel().addCaret(new VisualPosition(1, 4));
+    type("\b");
+    myFixture.checkResult("<ii></ii>\n" +
+                          "<di></di>\n");
   }
 
   public void testAfterUndo() {
@@ -112,6 +131,16 @@ public class XmlSyncTagCommunityTest extends XmlSyncTagTest {
     assertNotNull(myFixture.getLookup());
   }
 
+  public void testSave() {
+    doTest("<div>     \n    \n</div><caret>", "\n", "<div>     \n    \n</div>\n");
+    final PsiFile file = myFixture.getFile();
+    myFixture.getEditor().getCaretModel().moveToOffset(myFixture.getDocument(file).getTextLength() - 2);
+    file.getVirtualFile().putUserData(TrailingSpacesStripper.OVERRIDE_STRIP_TRAILING_SPACES_KEY,
+                                                     EditorSettingsExternalizable.STRIP_TRAILING_SPACES_WHOLE);
+    FileDocumentManager.getInstance().saveDocument(myFixture.getDocument(file));
+    myFixture.checkResult("<div>\n\n</div>\n");
+  }
+
   public void testUndo() {
     doTest("<div<caret>></div>", "v", "<divv></divv>");
     myFixture.performEditorAction(IdeActions.ACTION_UNDO);
@@ -120,5 +149,21 @@ public class XmlSyncTagCommunityTest extends XmlSyncTagTest {
 
   public void testDeletingIncorrectTag() {
     doTest("<div>text</span><caret></div>", "\b\b\b\b\b\b\b", "<div>text</div>");
+  }
+
+  public void testEndTagEnd() {
+    doTest("<div></div><caret></div>", "\b\b\b\b\b\b", "<div></div>");
+  }
+
+  public void testDoubleColonError() {
+    doTest("<soap:some<caret>:some></soap:some:some>", "a", "<soap:somea:some></soap:somea:some>");
+  }
+
+  public void testMultipleEditors() {
+    myFixture.configureByText(XmlFileType.INSTANCE, "<div<caret>></div>");
+    final Editor editor = EditorFactory.getInstance().createEditor(myFixture.getEditor().getDocument());
+    EditorFactory.getInstance().releaseEditor(editor);
+    type("v");
+    myFixture.checkResult("<divv></divv>");
   }
 }

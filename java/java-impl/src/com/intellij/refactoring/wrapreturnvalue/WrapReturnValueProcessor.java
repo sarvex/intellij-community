@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ import java.util.Set;
 public class WrapReturnValueProcessor extends FixableUsagesRefactoringProcessor {
   private static final Logger LOG = Logger.getInstance("com.siyeh.rpp.wrapreturnvalue.WrapReturnValueProcessor");
 
-  private MoveDestination myMoveDestination;
+  private final MoveDestination myMoveDestination;
   private final PsiMethod myMethod;
   private final String myClassName;
   private final String myPackageName;
@@ -118,7 +118,7 @@ public class WrapReturnValueProcessor extends FixableUsagesRefactoringProcessor 
 
   @NotNull
   @Override
-  protected UsageViewDescriptor createUsageViewDescriptor(UsageInfo[] usageInfos) {
+  protected UsageViewDescriptor createUsageViewDescriptor(@NotNull UsageInfo[] usageInfos) {
     return new WrapReturnValueUsageViewDescriptor(myMethod, usageInfos);
   }
 
@@ -185,7 +185,7 @@ public class WrapReturnValueProcessor extends FixableUsagesRefactoringProcessor 
   }
 
   @Override
-  protected boolean preprocessUsages(final Ref<UsageInfo[]> refUsages) {
+  protected boolean preprocessUsages(@NotNull final Ref<UsageInfo[]> refUsages) {
     MultiMap<PsiElement, String> conflicts = new MultiMap<PsiElement, String>();
     final PsiClass existingClass = JavaPsiFacade.getInstance(myProject).findClass(myQualifiedName, GlobalSearchScope.allScope(myProject));
     if (myUseExistingClass) {
@@ -269,7 +269,7 @@ public class WrapReturnValueProcessor extends FixableUsagesRefactoringProcessor 
   }
 
   @Override
-  protected void performRefactoring(UsageInfo[] usageInfos) {
+  protected void performRefactoring(@NotNull UsageInfo[] usageInfos) {
     if (!myUseExistingClass && !buildClass()) return;
     super.performRefactoring(usageInfos);
   }

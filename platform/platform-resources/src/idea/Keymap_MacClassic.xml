@@ -56,11 +56,11 @@
       <keyboard-shortcut first-keystroke="control J"/>
       <mouse-shortcut keystroke="control button2"/>
     </action>
+    <action id="ExpressionTypeInfo">
+      <keyboard-shortcut first-keystroke="control shift P"/>
+    </action>
     <action id="SafeDelete">
       <keyboard-shortcut first-keystroke="meta DELETE"/>
-    </action>
-    <action id="RemoveFromFavorites">
-      <keyboard-shortcut first-keystroke="control DELETE"/>
     </action>
     <action id="EditorDeleteToWordStart">
       <keyboard-shortcut first-keystroke="alt BACK_SPACE"/>
@@ -151,7 +151,6 @@
     <action id="ToggleBookmark9">
       <keyboard-shortcut first-keystroke="control shift 9"/>
     </action>
-
     <action id="MethodUp">
       <keyboard-shortcut first-keystroke="control UP"/>
     </action>
@@ -215,7 +214,7 @@
     <action id="ActivateHierarchyToolWindow">
       <keyboard-shortcut first-keystroke="meta 8"/>
     </action>
-    <action id="ActivateChangesToolWindow">
+    <action id="ActivateVersionControlToolWindow">
       <keyboard-shortcut first-keystroke="meta 9"/>
       <keyboard-shortcut first-keystroke="meta shift 9"/>
     </action>
@@ -231,6 +230,7 @@
       <keyboard-shortcut first-keystroke="control ENTER"/>
     </action>
     <action id="EditorToggleColumnMode">
+      <keyboard-shortcut first-keystroke="shift meta 8" />
       <keyboard-shortcut first-keystroke="meta shift MULTIPLY"/>
     </action>
     <action id="EditorLineEndWithSelection">
@@ -320,6 +320,12 @@
     <action id="Switcher">
       <keyboard-shortcut first-keystroke="ctrl TAB"/>
       <keyboard-shortcut first-keystroke="ctrl shift TAB"/>
+    </action>
+    <action id="Diff.FocusOppositePane">
+      <keyboard-shortcut first-keystroke="control TAB"/>
+    </action>
+    <action id="Diff.FocusOppositePaneAndScroll">
+      <keyboard-shortcut first-keystroke="control shift TAB"/>
     </action>
     <action id="Vcs.QuickListPopupAction">
       <keyboard-shortcut first-keystroke="ctrl V" />

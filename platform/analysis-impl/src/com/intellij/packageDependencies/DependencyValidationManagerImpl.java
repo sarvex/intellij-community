@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,9 @@ package com.intellij.packageDependencies;
 
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.IdeBundle;
-import com.intellij.openapi.components.*;
+import com.intellij.openapi.components.MainConfigurationStateSplitter;
+import com.intellij.openapi.components.State;
+import com.intellij.openapi.components.Storage;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.NotNullLazyValue;
@@ -38,10 +40,7 @@ import java.util.*;
 
 @State(
   name = "DependencyValidationManager",
-  storages = {
-    @Storage(file = StoragePathMacros.PROJECT_FILE),
-    @Storage(file = StoragePathMacros.PROJECT_CONFIG_DIR + "/scopes/", scheme = StorageScheme.DIRECTORY_BASED,
-      stateSplitter = DependencyValidationManagerImpl.ScopesStateSplitter.class)}
+  storages = @Storage(value = "scopes", stateSplitter = DependencyValidationManagerImpl.ScopesStateSplitter.class)
 )
 public class DependencyValidationManagerImpl extends DependencyValidationManager {
   private static final NotNullLazyValue<Icon> ourSharedScopeIcon = new NotNullLazyValue<Icon>() {
@@ -344,7 +343,7 @@ public class DependencyValidationManagerImpl extends DependencyValidationManager
     }
   }
 
-  private final List<Pair<NamedScope, NamedScopesHolder>> myScopes = ContainerUtil.createLockFreeCopyOnWriteList();
+  private final List<Pair<NamedScope, NamedScopesHolder>> myScopePairs = ContainerUtil.createLockFreeCopyOnWriteList();
 
   private void reloadScopes() {
     UIUtil.invokeLaterIfNeeded(new Runnable() {
@@ -354,8 +353,8 @@ public class DependencyValidationManagerImpl extends DependencyValidationManager
         List<Pair<NamedScope, NamedScopesHolder>> scopeList = new ArrayList<Pair<NamedScope, NamedScopesHolder>>();
         addScopesToList(scopeList, DependencyValidationManagerImpl.this);
         addScopesToList(scopeList, myNamedScopeManager);
-        myScopes.clear();
-        myScopes.addAll(scopeList);
+        myScopePairs.clear();
+        myScopePairs.addAll(scopeList);
         reloadRules();
       }
     });
@@ -370,7 +369,7 @@ public class DependencyValidationManagerImpl extends DependencyValidationManager
 
   @NotNull
   public List<Pair<NamedScope, NamedScopesHolder>> getScopeBasedHighlightingCachedScopes() {
-    return myScopes;
+    return myScopePairs;
   }
 
   @Override

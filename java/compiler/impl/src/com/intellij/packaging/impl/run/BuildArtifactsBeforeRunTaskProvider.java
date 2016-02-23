@@ -169,7 +169,7 @@ public class BuildArtifactsBeforeRunTaskProvider extends BeforeRunTaskProvider<B
 
     final List<Artifact> artifacts = new ArrayList<Artifact>();
     new ReadAction() {
-      protected void run(final Result result) {
+      protected void run(@NotNull final Result result) {
         for (ArtifactPointer pointer : task.getArtifactPointers()) {
           ContainerUtil.addIfNotNull(pointer.getArtifact(), artifacts);
         }
@@ -185,10 +185,13 @@ public class BuildArtifactsBeforeRunTaskProvider extends BeforeRunTaskProvider<B
 
     ApplicationManager.getApplication().invokeAndWait(new Runnable() {
       public void run() {
+        if (myProject.isDisposed()) {
+          return;
+        }
         final CompilerManager manager = CompilerManager.getInstance(myProject);
-        finished.down();
         final CompileScope scope = ArtifactCompileScope.createArtifactsScope(myProject, artifacts);
         ExecutionManagerImpl.EXECUTION_SESSION_ID_KEY.set(scope, ExecutionManagerImpl.EXECUTION_SESSION_ID_KEY.get(env));
+        finished.down();
         manager.make(scope, CompilerFilter.ALL, callback);
       }
     }, ModalityState.NON_MODAL);

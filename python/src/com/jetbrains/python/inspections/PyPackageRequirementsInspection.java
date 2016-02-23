@@ -21,6 +21,7 @@ import com.intellij.codeInspection.ui.ListEditForm;
 import com.intellij.execution.ExecutionException;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.command.CommandProcessor;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
@@ -34,11 +35,9 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.profile.codeInspection.InspectionProfileManager;
 import com.intellij.profile.codeInspection.InspectionProjectProfileManager;
-import com.intellij.psi.PsiElement;
-import com.intellij.psi.PsiElementVisitor;
-import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiReference;
+import com.intellij.psi.*;
 import com.intellij.util.Function;
+import com.jetbrains.python.codeInsight.imports.AddImportHelper;
 import com.jetbrains.python.codeInsight.stdlib.PyStdlibUtil;
 import com.jetbrains.python.packaging.*;
 import com.jetbrains.python.packaging.ui.PyChooseRequirementsDialog;
@@ -56,6 +55,8 @@ import java.util.*;
  * @author vlan
  */
 public class PyPackageRequirementsInspection extends PyInspection {
+  private static final Logger LOG = Logger.getInstance(PyPackageRequirementsInspection.class);
+  
   public JDOMExternalizableStringList ignoredPackages = new JDOMExternalizableStringList();
 
   @NotNull
@@ -179,15 +180,17 @@ public class PyPackageRequirementsInspection extends PyInspection {
                   return;
                 }
               }
-              final PsiReference reference = packageReferenceExpression.getReference();
-              if (reference != null) {
-                final PsiElement element = reference.resolve();
-                if (element != null) {
-                  final PsiFile file = element.getContainingFile();
-                  if (file != null) {
-                    final VirtualFile virtualFile = file.getVirtualFile();
-                    if (ModuleUtilCore.moduleContainsFile(module, virtualFile, false)) {
-                      return;
+              if (!ApplicationManager.getApplication().isUnitTestMode()) {
+                final PsiReference reference = packageReferenceExpression.getReference();
+                if (reference != null) {
+                  final PsiElement element = reference.resolve();
+                  if (element != null) {
+                    final PsiFile file = element.getContainingFile();
+                    if (file != null) {
+                      final VirtualFile virtualFile = file.getVirtualFile();
+                      if (ModuleUtilCore.moduleContainsFile(module, virtualFile, false)) {
+                        return;
+                      }
                     }
                   }
                 }
@@ -208,6 +211,9 @@ public class PyPackageRequirementsInspection extends PyInspection {
   @Nullable
   private static Set<PyRequirement> getTransitiveRequirements(@NotNull Sdk sdk, @NotNull Collection<PyRequirement> requirements,
                                                               @NotNull Set<PyPackage> visited) {
+    if (requirements.isEmpty()) {
+      return Collections.emptySet();
+    }
     final Set<PyRequirement> results = new HashSet<PyRequirement>(requirements);
     final List<PyPackage> packages;
     try {
@@ -250,6 +256,7 @@ public class PyPackageRequirementsInspection extends PyInspection {
         packages = manager.getPackages(PySdkUtil.isRemote(sdk));
       }
       catch (ExecutionException e) {
+        LOG.error(e);
         return null;
       }
       if (packages == null) return null;
@@ -359,6 +366,63 @@ public class PyPackageRequirementsInspection extends PyInspection {
     private void installRequirements(Project project, List<PyRequirement> requirements) {
       final PyPackageManagerUI ui = new PyPackageManagerUI(project, mySdk, new UIListener(myModule));
       ui.install(requirements, Collections.<String>emptyList());
+    }
+  }
+
+  public static class InstallAndImportQuickFix implements LocalQuickFix {
+
+    private final Sdk mySdk;
+    private final Module myModule;
+    private String myPackageName;
+    @Nullable private final String myAsName;
+    @NotNull private final SmartPsiElementPointer<PyElement> myNode;
+
+    public InstallAndImportQuickFix(@NotNull final String packageName,
+                                    @Nullable final String asName,
+                                    @NotNull final PyElement node) {
+      myPackageName = packageName;
+      myAsName = asName;
+      myNode = SmartPointerManager.getInstance(node.getProject()).createSmartPsiElementPointer(node, node.getContainingFile());
+      myModule = ModuleUtilCore.findModuleForPsiElement(node);
+      mySdk = PythonSdkType.findPythonSdk(myModule);
+    }
+
+    @NotNull
+    public String getName() {
+      return "Install and import package " + myPackageName;
+    }
+
+    @NotNull
+    public String getFamilyName() {
+      return "Install and import package " + myPackageName;
+    }
+
+    public void applyFix(@NotNull final Project project, @NotNull final ProblemDescriptor descriptor) {
+      final PyPackageManagerUI ui = new PyPackageManagerUI(project, mySdk, new UIListener(myModule) {
+        @Override
+        public void finished(List<ExecutionException> exceptions) {
+          super.finished(exceptions);
+          if (exceptions.isEmpty()) {
+
+            final PyElement element = myNode.getElement();
+            if (element == null) return;
+
+            CommandProcessor.getInstance().executeCommand(project, new Runnable() {
+              @Override
+              public void run() {
+                ApplicationManager.getApplication().runWriteAction(new Runnable() {
+                  @Override
+                  public void run() {
+                    AddImportHelper.addImportStatement(element.getContainingFile(), myPackageName, myAsName,
+                                                       AddImportHelper.ImportPriority.THIRD_PARTY, element);
+                  }
+                });
+              }
+            }, "Add import", "Add import");
+          }
+        }
+      });
+      ui.install(Collections.singletonList(new PyRequirement(myPackageName)), Collections.<String>emptyList());
     }
   }
 

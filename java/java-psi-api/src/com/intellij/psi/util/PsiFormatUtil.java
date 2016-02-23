@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package com.intellij.psi.util;
 
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
+import com.intellij.util.VisibilityUtil;
 import org.intellij.lang.annotations.MagicConstant;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -25,12 +26,12 @@ import org.jetbrains.annotations.Nullable;
 public class PsiFormatUtil extends PsiFormatUtilBase {
   @MagicConstant(flags = {
     SHOW_MODIFIERS, SHOW_TYPE, TYPE_AFTER, SHOW_CONTAINING_CLASS, SHOW_FQ_NAME, SHOW_NAME, SHOW_MODIFIERS,
-    SHOW_INITIALIZER, SHOW_RAW_TYPE, SHOW_RAW_NON_TOP_TYPE, SHOW_FQ_CLASS_NAMES})
+    SHOW_INITIALIZER, SHOW_RAW_TYPE, SHOW_RAW_NON_TOP_TYPE, SHOW_FQ_CLASS_NAMES, USE_INTERNAL_CANONICAL_TEXT})
   public @interface FormatVariableOptions { }
 
   @MagicConstant(flags = {
     SHOW_MODIFIERS, MODIFIERS_AFTER, SHOW_TYPE, TYPE_AFTER, SHOW_CONTAINING_CLASS, SHOW_FQ_NAME, SHOW_NAME,
-    SHOW_PARAMETERS, SHOW_THROWS, SHOW_RAW_TYPE, SHOW_RAW_NON_TOP_TYPE, SHOW_FQ_CLASS_NAMES})
+    SHOW_PARAMETERS, SHOW_THROWS, SHOW_RAW_TYPE, SHOW_RAW_NON_TOP_TYPE, SHOW_FQ_CLASS_NAMES, USE_INTERNAL_CANONICAL_TEXT})
   public @interface FormatMethodOptions { }
 
   @MagicConstant(flags = {
@@ -38,13 +39,13 @@ public class PsiFormatUtil extends PsiFormatUtilBase {
     SHOW_EXTENDS_IMPLEMENTS, SHOW_REDUNDANT_MODIFIERS, JAVADOC_MODIFIERS_ONLY})
   public @interface FormatClassOptions { }
 
-  public static String formatVariable(PsiVariable variable, @FormatVariableOptions int options, PsiSubstitutor substitutor) {
+  public static String formatVariable(@NotNull PsiVariable variable, @FormatVariableOptions int options, PsiSubstitutor substitutor) {
     StringBuilder buffer = new StringBuilder();
     formatVariable(variable, options, substitutor, buffer);
     return buffer.toString();
   }
 
-  private static void formatVariable(PsiVariable variable,
+  private static void formatVariable(@NotNull PsiVariable variable,
                                      @FormatVariableOptions int options,
                                      PsiSubstitutor substitutor,
                                      @NotNull StringBuilder buffer) {
@@ -116,15 +117,15 @@ public class PsiFormatUtil extends PsiFormatUtilBase {
     }
   }
 
-  public static String formatMethod(PsiMethod method,
-                                    PsiSubstitutor substitutor,
+  public static String formatMethod(@NotNull PsiMethod method,
+                                    @NotNull PsiSubstitutor substitutor,
                                     @FormatMethodOptions int options,
                                     @FormatVariableOptions int parameterOptions) {
     return formatMethod(method, substitutor, options, parameterOptions, MAX_PARAMS_TO_SHOW);
   }
 
-  public static String formatMethod(PsiMethod method,
-                                    PsiSubstitutor substitutor,
+  public static String formatMethod(@NotNull PsiMethod method,
+                                    @NotNull PsiSubstitutor substitutor,
                                     @FormatMethodOptions int options,
                                     @FormatVariableOptions int parameterOptions,
                                     int maxParametersToShow) {
@@ -133,8 +134,8 @@ public class PsiFormatUtil extends PsiFormatUtilBase {
     return buffer.toString();
   }
 
-  private static void formatMethod(PsiMethod method,
-                                   PsiSubstitutor substitutor,
+  private static void formatMethod(@NotNull PsiMethod method,
+                                   @NotNull PsiSubstitutor substitutor,
                                    @FormatMethodOptions int options,
                                    @FormatVariableOptions int parameterOptions,
                                    int maxParametersToShow,
@@ -317,10 +318,10 @@ public class PsiFormatUtil extends PsiFormatUtilBase {
         ? list.hasExplicitModifier(PsiModifier.PACKAGE_LOCAL)
         : list.hasModifierProperty(PsiModifier.PACKAGE_LOCAL)) {
       if (element instanceof PsiClass && element.getParent() instanceof PsiDeclarationStatement) {// local class
-        appendModifier(buffer, PsiBundle.message("local.class.preposition"));
+        append(buffer, PsiBundle.message("local.class.preposition"));
       }
       else {
-        appendModifier(buffer, PsiBundle.visibilityPresentation(PsiModifier.PACKAGE_LOCAL));
+        appendModifier(buffer, PsiModifier.PACKAGE_LOCAL);
       }
     }
 
@@ -356,7 +357,11 @@ public class PsiFormatUtil extends PsiFormatUtilBase {
     }
   }
 
-  private static void appendModifier(final StringBuilder buffer, final String modifier) {
+  private static void appendModifier(final StringBuilder buffer, @PsiModifier.ModifierConstant @NotNull String modifier) {
+    append(buffer, VisibilityUtil.toPresentableText(modifier));
+  }
+
+  private static void append(StringBuilder buffer, String modifier) {
     appendSpaceIfNeeded(buffer);
     buffer.append(modifier);
   }
@@ -388,7 +393,9 @@ public class PsiFormatUtil extends PsiFormatUtilBase {
       }
     }
     if (type == null) return "null";
-    return (options & SHOW_FQ_CLASS_NAMES) == 0 ? type.getPresentableText() : type.getInternalCanonicalText();
+    return (options & SHOW_FQ_CLASS_NAMES) == 0 ? type.getPresentableText() :
+           (options & USE_INTERNAL_CANONICAL_TEXT) == 0 ? type.getCanonicalText(false) :
+           type.getInternalCanonicalText();
   }
 
   public static String formatReference(PsiJavaCodeReferenceElement ref, int options) {
@@ -443,40 +450,6 @@ public class PsiFormatUtil extends PsiFormatUtilBase {
       else {
         builder.append(psiMethod.getParameterList().getParameterIndex((PsiParameter)owner));
       }
-    }
-    else {
-      return null;
-    }
-    return builder.toString();
-  }
-
-  @Nullable
-  public static String getRawExternalName(PsiModifierListOwner owner) {
-    final StringBuilder builder = new StringBuilder();
-    final PsiClass psiClass = PsiTreeUtil.getParentOfType(owner, PsiClass.class, false);
-    if (psiClass == null) return null;
-    ClassUtil.formatClassName(psiClass, builder);
-    if (owner instanceof PsiMethod) {
-      builder.append(" ");
-      formatMethod((PsiMethod)owner, PsiSubstitutor.EMPTY,
-                   SHOW_NAME | SHOW_FQ_NAME | SHOW_TYPE | SHOW_RAW_TYPE | SHOW_PARAMETERS | SHOW_FQ_CLASS_NAMES,
-                   SHOW_TYPE | SHOW_RAW_TYPE | SHOW_FQ_CLASS_NAMES,
-                   Integer.MAX_VALUE, builder);
-    }
-    else if (owner instanceof PsiParameter) {
-      final PsiElement declarationScope = ((PsiParameter)owner).getDeclarationScope();
-      if (!(declarationScope instanceof PsiMethod)) {
-        return null;
-      }
-      final PsiMethod psiMethod = (PsiMethod)declarationScope;
-
-      builder.append(" ");
-      formatMethod(psiMethod, PsiSubstitutor.EMPTY,
-                   SHOW_NAME | SHOW_FQ_NAME | SHOW_TYPE | SHOW_RAW_TYPE | SHOW_PARAMETERS | SHOW_FQ_CLASS_NAMES,
-                   SHOW_TYPE | SHOW_RAW_TYPE | SHOW_FQ_CLASS_NAMES,
-                   Integer.MAX_VALUE, builder);
-      builder.append(" ");
-      builder.append(psiMethod.getParameterList().getParameterIndex((PsiParameter)owner));
     }
     else {
       return null;

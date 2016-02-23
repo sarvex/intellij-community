@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.intellij.openapi.components;
 
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.util.xmlb.annotations.Attribute;
 
 public class ServiceDescriptor {
@@ -25,14 +26,20 @@ public class ServiceDescriptor {
   @Attribute("serviceImplementation")
   public String serviceImplementation;
 
+  @Attribute("testServiceImplementation")
+  public String testServiceImplementation;
+
   @Attribute("overrides")
-  public boolean overrides = false;
+  public boolean overrides;
+
+  @Attribute("os")
+  public String os;
 
   public String getInterface() {
     return serviceInterface != null ? serviceInterface : getImplementation();
   }
 
   public String getImplementation() {
-    return serviceImplementation;
+    return testServiceImplementation != null && ApplicationManager.getApplication().isUnitTestMode() ? testServiceImplementation : serviceImplementation;
   }
 }

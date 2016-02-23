@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,13 +39,6 @@ import javax.swing.*;
  */
 public class SwitchTaskCombo extends ComboBoxAction implements DumbAware {
 
-  @Override
-  public void actionPerformed(AnActionEvent e) {
-    ComboBoxButton button = (ComboBoxButton)e.getPresentation().getClientProperty(CUSTOM_COMPONENT_PROPERTY);
-    if (button == null || !button.isShowing()) return;
-    button.showPopup();
-  }
-
   public JComponent createCustomComponent(final Presentation presentation) {
     ComboBoxButton button = new ComboBoxButton(presentation) {
       @Override
@@ -68,7 +61,7 @@ public class SwitchTaskCombo extends ComboBoxAction implements DumbAware {
     Presentation presentation = e.getPresentation();
     Project project = e.getData(CommonDataKeys.PROJECT);
     ComboBoxButton button = (ComboBoxButton)presentation.getClientProperty(CUSTOM_COMPONENT_PROPERTY);
-    if (project == null || project.isDisposed() || button == null) {
+    if (project == null || project.isDefault() || project.isDisposed() || button == null) {
       presentation.setEnabled(false);
       presentation.setText("");
       presentation.setIcon(null);

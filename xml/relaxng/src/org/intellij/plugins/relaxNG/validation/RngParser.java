@@ -16,22 +16,21 @@
 
 package org.intellij.plugins.relaxNG.validation;
 
+import com.intellij.javaee.UriUtil;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.util.AtomicNotNullLazyValue;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.NotNullLazyValue;
-import com.intellij.openapi.util.SystemInfo;
-import com.intellij.openapi.vfs.VfsUtil;
+import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.search.PsiElementProcessor;
 import com.intellij.psi.util.CachedValue;
 import com.intellij.psi.util.CachedValueProvider;
 import com.intellij.psi.util.CachedValuesManager;
 import com.intellij.psi.xml.XmlFile;
-import com.intellij.xml.util.XmlUtil;
+import com.intellij.util.containers.ContainerUtil;
 import com.thaiopensource.datatype.xsd.DatatypeLibraryFactoryImpl;
 import com.thaiopensource.relaxng.impl.SchemaReaderImpl;
 import com.thaiopensource.util.PropertyMap;
@@ -68,6 +67,7 @@ import org.xml.sax.SAXParseException;
 import org.xml.sax.helpers.DefaultHandler;
 
 import java.io.StringReader;
+import java.util.concurrent.ConcurrentMap;
 
 /*
 * Created by IntelliJ IDEA.
@@ -91,6 +91,8 @@ public class RngParser {
     }
   };
 
+  private static final ConcurrentMap<String, DPattern> ourCache = ContainerUtil.createConcurrentSoftMap();
+
   private static DatatypeLibraryFactory createXsdDatatypeFactory() {
     try {
       return new DatatypeLibraryFactoryImpl();
@@ -101,7 +103,6 @@ public class RngParser {
   }
 
   static final Key<CachedValue<Schema>> SCHEMA_KEY = Key.create("SCHEMA");
-  static final Key<CachedValue<DPattern>> PATTERN_KEY = Key.create("PATTERN");
 
   public static final DefaultHandler DEFAULT_HANDLER = new DefaultHandler() {
     @Override
@@ -114,14 +115,23 @@ public class RngParser {
   static final PropertyMap EMPTY_PROPS = new PropertyMapBuilder().toPropertyMap();
 
   public static DPattern getCachedPattern(final PsiFile descriptorFile, final ErrorHandler eh) {
-    final CachedValuesManager mgr = CachedValuesManager.getManager(descriptorFile.getProject());
+    final VirtualFile file = descriptorFile.getVirtualFile();
 
-    return mgr.getCachedValue(descriptorFile, PATTERN_KEY, new CachedValueProvider<DPattern>() {
-      @Override
-      public Result<DPattern> compute() {
-        return Result.create(parsePattern(descriptorFile, eh, false), descriptorFile);
+    if (file == null) {
+      return parsePattern(descriptorFile, eh, false);
+    }
+    String url = file.getUrl();
+    DPattern pattern = ourCache.get(url);
+    if (pattern == null) {
+      pattern = parsePattern(descriptorFile, eh, false);
+    }
+    if (pattern != null) {
+      DPattern oldPattern = ourCache.putIfAbsent(url, pattern);
+      if (oldPattern != null) {
+        return oldPattern;
       }
-    }, false);
+    }
+    return pattern;
   }
 
   public static DPattern parsePattern(final PsiFile file, final ErrorHandler eh, boolean checking) {
@@ -149,6 +159,7 @@ public class RngParser {
 
   private static Parseable createParsable(final PsiFile file, final ErrorHandler eh) {
     final InputSource source = makeInputSource(file);
+    final VirtualFile virtualFile = file.getVirtualFile();
 
     if (file.getFileType() == RncFileType.getInstance()) {
       return new CompactParseable(source, eh) {
@@ -156,7 +167,8 @@ public class RngParser {
         public ParsedPattern parseInclude(String uri, SchemaBuilder schemaBuilder, IncludedGrammar g, String inheritedNs)
                 throws BuildException, IllegalSchemaException
         {
-          return super.parseInclude(resolveURI(file, uri), schemaBuilder, g, inheritedNs);
+          ProgressManager.checkCanceled();
+          return super.parseInclude(resolveURI(virtualFile, uri), schemaBuilder, g, inheritedNs);
         }
       };
     } else {
@@ -165,41 +177,17 @@ public class RngParser {
         public ParsedPattern parseInclude(String uri, SchemaBuilder schemaBuilder, IncludedGrammar g, String inheritedNs)
                 throws BuildException, IllegalSchemaException
         {
-          return super.parseInclude(resolveURI(file, uri), schemaBuilder, g, inheritedNs);
+          ProgressManager.checkCanceled();
+          return super.parseInclude(resolveURI(virtualFile, uri), schemaBuilder, g, inheritedNs);
         }
       };
     }
   }
 
-  public static String resolveURI(PsiFile descriptorFile, String s) {
-    final PsiFile file = XmlUtil.findXmlFile(descriptorFile, s);
-
+  private static String resolveURI(VirtualFile descriptorFile, String s) {
+    final VirtualFile file = UriUtil.findRelativeFile(s, descriptorFile);
     if (file != null) {
-      final VirtualFile virtualFile = file.getVirtualFile();
-      if (virtualFile != null) {
-        final PsiDocumentManager dm = PsiDocumentManager.getInstance(file.getProject());
-        final Document d = dm.getCachedDocument(file);
-        if (d != null) {
-          // TODO: fix. write action + saving -> deadlock
-//          dm.commitDocument(d);
-//          FileDocumentManager.getInstance().saveDocument(d);
-        }
-        s = reallyFixIDEAUrl(virtualFile.getUrl());
-      }
-    }
-    return s;
-  }
-
-  public static String reallyFixIDEAUrl(String url) {
-    String s = VfsUtil.fixIDEAUrl(url);
-    if (!SystemInfo.isWindows) {
-      // Linux:
-      //    "file://tmp/foo.bar"  (produced by com.intellij.openapi.vfs.VfsUtil.fixIDEAUrl) doesn't work: "java.net.UnknownHostException: tmp"
-      //    "file:/tmp/foo.bar"   (produced by File.toURL()) works fine
-      s = s.replaceFirst("file:/+", "file:/");
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Fixed URL: " + url + " -> " + s);
-      }
+      s = VfsUtilCore.fixIDEAUrl(file.getUrl());
     }
     return s;
   }
@@ -239,7 +227,7 @@ public class RngParser {
     final InputSource inputSource = new InputSource(new StringReader(descriptorFile.getText()));
     final VirtualFile file = descriptorFile.getVirtualFile();
     if (file != null) {
-      inputSource.setSystemId(reallyFixIDEAUrl(file.getUrl()));
+      inputSource.setSystemId(VfsUtilCore.fixIDEAUrl(file.getUrl()));
     }
     return inputSource;
   }

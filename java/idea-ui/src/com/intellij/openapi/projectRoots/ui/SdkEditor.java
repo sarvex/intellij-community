@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,6 @@ import com.intellij.openapi.util.ActionCallback;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.io.FileUtil;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.TabbedPaneWrapper;
 import com.intellij.ui.navigation.History;
@@ -152,8 +151,8 @@ public class SdkEditor implements Configurable, Place.Navigator {
     myHomeComponent.getTextField().setEditable(false);
 
     myHomeFieldLabel = new JLabel(getHomeFieldLabelValue());
-    final int leftInset = Registry.is("ide.new.project.settings") ? 10 : 0;
-    final int rightInset = Registry.is("ide.new.project.settings") ? 10 : 0;
+    final int leftInset = 10;
+    final int rightInset = 10;
     myMainPanel.add(myHomeFieldLabel, new GridBagConstraints(0, GridBagConstraints.RELATIVE, 1, 1, 0.0, 0.0, GridBagConstraints.WEST, GridBagConstraints.NONE, new Insets(2, leftInset, 2, 2), 0, 0));
     myMainPanel.add(myHomeComponent, new GridBagConstraints(1, GridBagConstraints.RELATIVE, 1, 1, 1.0, 0.0, GridBagConstraints.CENTER, GridBagConstraints.HORIZONTAL, new Insets(2, 2, 2, rightInset), 0, 0));
 
@@ -172,7 +171,7 @@ public class SdkEditor implements Configurable, Place.Navigator {
     });
   }
 
-  protected boolean showTabForType(OrderRootType type) {
+  protected boolean showTabForType(@NotNull OrderRootType type) {
     return ((SdkType) mySdk.getSdkType()).isRootTypeApplicable(type);
   }
 
@@ -331,7 +330,9 @@ public class SdkEditor implements Configurable, Place.Navigator {
       }
       sdkModificator = dummySdk.getSdkModificator();
       for (OrderRootType type : myPathEditors.keySet()) {
-        myPathEditors.get(type).addPaths(sdkModificator.getRoots(type));
+        SdkPathEditor pathEditor = myPathEditors.get(type);
+        pathEditor.setAddBaseDir(dummySdk.getHomeDirectory());
+        pathEditor.addPaths(sdkModificator.getRoots(type));
       }
       mySdkModel.getMulticaster().sdkHomeSelected(dummySdk, homePath);
     }
@@ -475,9 +476,9 @@ public class SdkEditor implements Configurable, Place.Navigator {
 
   @Override
   public ActionCallback navigateTo(@Nullable final Place place, final boolean requestFocus) {
-    if (place == null) return new ActionCallback.Done();
+    if (place == null) return ActionCallback.DONE;
     myTabbedPane.setSelectedTitle((String)place.getPath(SDK_TAB));
-    return new ActionCallback.Done();
+    return ActionCallback.DONE;
   }
 
   @Override

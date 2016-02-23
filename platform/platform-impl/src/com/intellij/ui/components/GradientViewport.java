@@ -17,6 +17,7 @@ package com.intellij.ui.components;
 
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.ui.ColorUtil;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
@@ -24,12 +25,12 @@ import java.awt.*;
 /**
  * @author Sergey.Malenkov
  */
-public class GradientViewport extends JViewport {
+public class GradientViewport extends JBViewport {
   private final Insets myInsets;
   private final boolean myAlways;
 
-  public GradientViewport(Component view, int top, int left, int bottom, int right, boolean forScrollBars) {
-    myInsets = new Insets(top, left, bottom, right);
+  public GradientViewport(Component view, Insets insets, boolean forScrollBars) {
+    myInsets = new Insets(insets.top, insets.left, insets.bottom, insets.right);
     myAlways = forScrollBars;
     setView(view);
   }
@@ -38,13 +39,22 @@ public class GradientViewport extends JViewport {
     return null;
   }
 
+  @Nullable
+  protected Color getViewColor() {
+    Component view = getView();
+    return view == null ? null : view.getBackground();
+  }
+
   @Override
   public void paint(Graphics g) {
     super.paint(g);
+    paintGradient(g);
+  }
+
+  protected void paintGradient(Graphics g) {
     g = g.create();
     try {
-      Component view = getView();
-      Color background = view == null ? null : view.getBackground();
+      Color background = getViewColor();
       Component header = getHeader();
       if (header != null) {
         header.setBounds(0, 0, getWidth(), header.getPreferredSize().height);

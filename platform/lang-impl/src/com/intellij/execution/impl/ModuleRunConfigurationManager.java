@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,6 @@ import com.intellij.execution.configurations.ModuleBasedConfiguration;
 import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.State;
-import com.intellij.openapi.components.Storage;
-import com.intellij.openapi.components.StoragePathMacros;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleComponent;
@@ -44,10 +42,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
-@State(
-  name = ModuleRunConfigurationManager.COMPONENT_NAME,
-  storages = @Storage(file = StoragePathMacros.MODULE_FILE)
-)
+@State(name = ModuleRunConfigurationManager.COMPONENT_NAME)
 public final class ModuleRunConfigurationManager extends ModuleAdapter implements ModuleComponent, PersistentStateComponent<Element> {
   private static final Logger LOG = Logger.getInstance(ModuleRunConfigurationManager.class);
   @NonNls static final String COMPONENT_NAME = "ModuleRunConfigurationManager";
@@ -177,7 +172,7 @@ public final class ModuleRunConfigurationManager extends ModuleAdapter implement
   }
 
   @Override
-  public void beforeModuleRemoved(Project project, Module module) {
+  public void beforeModuleRemoved(@NotNull Project project, @NotNull Module module) {
     if (myModule.equals(module)) {
       LOG.debug("time to remove something from project (" + project + ")");
       for (final RunnerAndConfigurationSettings settings : getModuleRunConfigurationSettings()) {

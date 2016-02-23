@@ -182,6 +182,7 @@ public class CodeCompletionHandlerBase {
     };
     if (autopopup) {
       CommandProcessor.getInstance().runUndoTransparentAction(initCmd);
+      CompletionAssertions.checkEditorValid(editor);
       if (!restarted && shouldSkipAutoPopup(editor, initializationContext[0].getFile())) {
         CompletionServiceImpl.setCompletionPhase(CompletionPhase.NoCompletion);
         return;
@@ -457,6 +458,8 @@ public class CodeCompletionHandlerBase {
   private void insertDummyIdentifier(final CompletionInitializationContext initContext,
                                      final boolean hasModifiers,
                                      final int invocationCount) {
+    CompletionAssertions.checkEditorValid(initContext.getEditor());
+
     final PsiFile originalFile = initContext.getFile();
     InjectedLanguageManager manager = InjectedLanguageManager.getInstance(originalFile.getProject());
     final PsiFile hostFile = manager.getTopLevelFile(originalFile);
@@ -606,6 +609,7 @@ public class CodeCompletionHandlerBase {
       final Editor hostEditor = InjectedLanguageUtil.getTopLevelEditor(editor);
       final PsiFile originalFile = indicator.getParameters().getOriginalFile();
       final PsiFile hostFile = InjectedLanguageUtil.getTopLevelFile(originalFile);
+      assert hostFile != null;
       final OffsetMap hostMap = translateOffsetMapToHost(originalFile, hostFile, hostEditor, indicator.getOffsetMap());
       hostEditor.getCaretModel().runForEachCaret(new CaretAction() {
         @Override
@@ -615,9 +619,13 @@ public class CodeCompletionHandlerBase {
           Editor targetEditor = InjectedLanguageUtil.getInjectedEditorForInjectedFile(hostEditor, targetFile);
           int targetCaretOffset = targetEditor.getCaretModel().getOffset();
           OffsetMap injectedMap = translateOffsetMapToInjected(hostMap, targetEditor.getDocument());
+          int idEnd = targetCaretOffset + idEndOffsetDelta;
+          if (idEnd > targetEditor.getDocument().getTextLength()) {
+            idEnd = targetCaretOffset; // no replacement by Tab when offsets gone wrong for some reason
+          }
           CompletionAssertions.WatchingInsertionContext currentContext = insertItem(indicator, item, completionChar, items, update,
                                                                                     targetEditor, targetFile == null ? hostFile : targetFile,
-                                                                                    targetCaretOffset, targetCaretOffset + idEndOffsetDelta,
+                                                                                    targetCaretOffset, idEnd,
                                                                                     injectedMap);
           contexts.add(currentContext);
         }
@@ -688,15 +696,16 @@ public class CodeCompletionHandlerBase {
     ApplicationManager.getApplication().runWriteAction(new Runnable() {
       @Override
       public void run() {
-        if (caretOffset != idEndOffset && completionChar == Lookup.REPLACE_SELECT_CHAR) {
+        if (caretOffset < idEndOffset && completionChar == Lookup.REPLACE_SELECT_CHAR) {
           editor.getDocument().deleteString(caretOffset, idEndOffset);
         }
 
         assert context.getStartOffset() >= 0 : "stale startOffset: was " + initialStartOffset + "; selEnd=" + caretOffset + "; idEnd=" + idEndOffset + "; file=" + context.getFile();
         assert context.getTailOffset() >= 0 : "stale tail: was " + initialStartOffset + "; selEnd=" + caretOffset + "; idEnd=" + idEndOffset + "; file=" + context.getFile();
 
-        item.handleInsert(context);
         Project project = indicator.getProject();
+        PsiDocumentManager.getInstance(project).commitAllDocuments();
+        item.handleInsert(context);
         PostprocessReformattingAspect.getInstance(project).doPostponedFormatting();
 
         if (context.shouldAddCompletionChar()) {
@@ -774,7 +783,7 @@ public class CodeCompletionHandlerBase {
         Document originalDocument = file.getViewProvider().getDocument();
         assert originalDocument != null;
         assert originalDocument.getTextLength() == file.getTextLength() : originalDocument;
-        document.setText(originalDocument.getImmutableCharSequence());
+        document.replaceString(0, document.getTextLength(), originalDocument.getImmutableCharSequence());
         return copy;
       }
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,9 +26,14 @@ import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.util.EventDispatcher;
+import com.intellij.util.SystemProperties;
+import com.intellij.util.containers.ContainerUtil;
+import com.intellij.vcs.VcsLocaleHelper;
+import com.intellij.vcsUtil.VcsFileUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.idea.svn.properties.PropertyValue;
 import org.tmatesoft.svn.core.SVNCancelException;
 
 import java.io.ByteArrayOutputStream;
@@ -36,7 +41,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -51,13 +55,12 @@ public class CommandExecutor {
   private final AtomicReference<Integer> myExitCodeReference;
 
   @Nullable private String myMessage;
-  @Nullable private File myMessageFile;
   private boolean myIsDestroyed;
   private boolean myNeedsDestroy;
   private volatile String myDestroyReason;
   private volatile boolean myWasCancelled;
+  @NotNull private final List<File> myTempFiles;
   @NotNull protected final GeneralCommandLine myCommandLine;
-  @NotNull protected final String myLocale;
   protected Process myProcess;
   protected SvnProcessHandler myHandler;
   private OutputStreamWriter myProcessWriter;
@@ -72,7 +75,7 @@ public class CommandExecutor {
   @Nullable private final LineCommandListener myResultBuilder;
   @NotNull private final Command myCommand;
 
-  public CommandExecutor(@NotNull @NonNls String exePath, @NotNull String locale, @NotNull Command command) {
+  public CommandExecutor(@NotNull @NonNls String exePath, @NotNull Command command) {
     myCommand = command;
     myResultBuilder = command.getResultBuilder();
     if (myResultBuilder != null) {
@@ -81,6 +84,7 @@ public class CommandExecutor {
       myListeners.addListener(new CommandCancelTracker());
     }
     myLock = new Object();
+    myTempFiles = ContainerUtil.newArrayList();
     myCommandLine = createCommandLine();
     myCommandLine.setExePath(exePath);
     myCommandLine.setWorkDirectory(command.getWorkingDirectory());
@@ -89,7 +93,6 @@ public class CommandExecutor {
     }
     myCommandLine.addParameter(command.getName().getName());
     myCommandLine.addParameters(prepareParameters(command));
-    myLocale = locale;
     myExitCodeReference = new AtomicReference<Integer>();
   }
 
@@ -149,40 +152,76 @@ public class CommandExecutor {
   }
 
   protected void cleanup() {
-    cleanupMessageFile();
+    deleteTempFiles();
   }
 
   protected void beforeCreateProcess() throws SvnBindException {
-    EncodingEnvironmentUtil.fixDefaultEncodingIfMac(myCommandLine, null);
+    EncodingEnvironmentUtil.setLocaleEnvironmentIfMac(myCommandLine);
     setupLocale();
     ensureMessageFile();
+    ensureTargetsAdded();
+    ensurePropertyValueAdded();
   }
 
   private void setupLocale() {
-    if (!StringUtil.isEmpty(myLocale)) {
-      Map<String, String> environment = myCommandLine.getEnvironment();
+    myCommandLine.withEnvironment(VcsLocaleHelper.getDefaultLocaleEnvironmentVars("svn"));
+  }
 
-      environment.put("LANGUAGE", "");
-      environment.put("LC_ALL", myLocale);
+  @NotNull
+  private File ensureCommandFile(@NotNull String prefix,
+                                 @NotNull String extension,
+                                 @NotNull String data,
+                                 @NotNull String parameterName) throws SvnBindException {
+    File result = createTempFile(prefix, extension);
+    myTempFiles.add(result);
+
+    try {
+      FileUtil.writeToFile(result, data);
     }
+    catch (IOException e) {
+      throw new SvnBindException(e);
+    }
+
+    myCommandLine.addParameters(parameterName, result.getAbsolutePath());
+
+    return result;
   }
 
   private void ensureMessageFile() throws SvnBindException {
     if (myMessage != null) {
-      myMessageFile = createTempFile("commit-message", ".txt");
-      try {
-        FileUtil.writeToFile(myMessageFile, myMessage);
-      }
-      catch (IOException e) {
-        throw new SvnBindException(e);
-      }
-      myCommandLine.addParameters("-F", myMessageFile.getAbsolutePath());
+      ensureCommandFile("commit-message", ".txt", myMessage, "-F");
+
       myCommandLine.addParameters("--config-option", "config:miscellany:log-encoding=" + CharsetToolkit.UTF8);
     }
   }
 
-  private void cleanupMessageFile() {
-    deleteTempFile(myMessageFile);
+  private void ensureTargetsAdded() throws SvnBindException {
+    List<String> targetsPaths = myCommand.getTargetsPaths();
+
+    if (!ContainerUtil.isEmpty(targetsPaths)) {
+      String targetsValue = StringUtil.join(targetsPaths, SystemProperties.getLineSeparator());
+
+      if (myCommandLine.getCommandLineString().length() + targetsValue.length() > VcsFileUtil.FILE_PATH_LIMIT) {
+        ensureCommandFile("command-targets", ".txt", targetsValue, "--targets");
+      }
+      else {
+        myCommandLine.addParameters(targetsPaths);
+      }
+    }
+  }
+
+  private void ensurePropertyValueAdded() throws SvnBindException {
+    PropertyValue propertyValue = myCommand.getPropertyValue();
+
+    if (propertyValue != null) {
+      ensureCommandFile("property-value", ".txt", PropertyValue.toString(propertyValue), "-F");
+    }
+  }
+
+  private void deleteTempFiles() {
+    for (File file : myTempFiles) {
+      deleteTempFile(file);
+    }
   }
 
   @NotNull

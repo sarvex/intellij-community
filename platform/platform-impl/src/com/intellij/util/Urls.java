@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.intellij.util;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.SystemInfoRt;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.StandardFileSystems;
 import com.intellij.openapi.vfs.VfsUtilCore;
@@ -46,12 +47,12 @@ public final class Urls {
 
   @NotNull
   public static Url newLocalFileUrl(@NotNull String path) {
-    return new LocalFileUrl(path);
+    return new LocalFileUrl(FileUtilRt.toSystemIndependentName(path));
   }
 
   @NotNull
   public static Url newLocalFileUrl(@NotNull VirtualFile file) {
-    return newLocalFileUrl(file.getPath());
+    return new LocalFileUrl(file.getPath());
   }
 
   @NotNull
@@ -80,7 +81,7 @@ public final class Urls {
   /**
    * Url will not be normalized (see {@link VfsUtilCore#toIdeaUrl(String)}), parsed as is
    */
-  public static Url newFromIdea(@NotNull String url) {
+  public static Url newFromIdea(@NotNull CharSequence url) {
     Url result = parseFromIdea(url);
     LOG.assertTrue(result != null, url);
     return result;
@@ -88,8 +89,18 @@ public final class Urls {
 
   // java.net.URI.create cannot parse "file:///Test Stuff" - but you don't need to worry about it - this method is aware
   @Nullable
-  public static Url parseFromIdea(@NotNull String url) {
-    return URLUtil.containsScheme(url) ? parseUrl(url) : newLocalFileUrl(url);
+  public static Url parseFromIdea(@NotNull CharSequence url) {
+    for (int i = 0, n = url.length(); i < n; i++) {
+      char c = url.charAt(i);
+      if (c == ':') {
+        // file:// or dart:core/foo
+        return parseUrl(url);
+      }
+      else if (c == '/' || c == '\\') {
+        return newLocalFileUrl(url.toString());
+      }
+    }
+    return newLocalFileUrl(url.toString());
   }
 
   @Nullable
@@ -122,10 +133,10 @@ public final class Urls {
   }
 
   @Nullable
-  private static Url parseUrl(@NotNull String url) {
-    String urlToParse;
-    if (url.startsWith("jar:file://")) {
-      urlToParse = url.substring("jar:".length());
+  private static Url parseUrl(@NotNull CharSequence url) {
+    CharSequence urlToParse;
+    if (StringUtil.startsWith(url, "jar:file://")) {
+      urlToParse = url.subSequence("jar:".length(), url.length());
     }
     else {
       urlToParse = url;
@@ -141,15 +152,21 @@ public final class Urls {
     }
 
     String authority = StringUtil.nullize(matcher.group(3));
-
     String path = StringUtil.nullize(matcher.group(4));
-    if (path != null) {
-      path = FileUtil.toCanonicalUriPath(path);
+    boolean hasUrlSeparator = !StringUtil.isEmpty(matcher.group(2));
+    if (authority == null) {
+      if (hasUrlSeparator) {
+        authority = "";
+      }
+    }
+    else if (StandardFileSystems.FILE_PROTOCOL.equals(scheme) || !hasUrlSeparator) {
+      path = path == null ? authority : (authority + path);
+      authority = hasUrlSeparator ? "" : null;
     }
 
-    if (authority != null && (StandardFileSystems.FILE_PROTOCOL.equals(scheme) || StringUtil.isEmpty(matcher.group(2)))) {
-      path = path == null ? authority : (authority + path);
-      authority = null;
+    // canonicalize only if authority is not empty or file url - we should not canonicalize URL with unknown scheme (webpack:///./modules/flux-orion-plugin/fluxPlugin.ts)
+    if (path != null && (!StringUtil.isEmpty(authority) || StandardFileSystems.FILE_PROTOCOL.equals(scheme))) {
+      path = FileUtil.toCanonicalUriPath(path);
     }
     return new UrlImpl(scheme, authority, path, matcher.group(5));
   }

@@ -20,6 +20,7 @@ import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.InheritanceUtil;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.TypeConversionUtil;
 import org.jetbrains.annotations.NotNull;
@@ -48,27 +49,29 @@ public class JavaGenericsUtil {
       }
       PsiType[] parameters = classType.getParameters();
 
-      for (PsiType parameter : parameters) {
-        if (parameter instanceof PsiWildcardType && ((PsiWildcardType)parameter).getBound() == null) {
-          return true;
-        }
-      }
-      final PsiClass resolved = ((PsiClassType)PsiUtil.convertAnonymousToBaseType(classType)).resolve();
-      if (resolved instanceof PsiTypeParameter) {
-        return false;
-      }
-      if (parameters.length == 0) {
-        if (resolved != null && !resolved.hasModifierProperty(PsiModifier.STATIC)) {
-          final PsiClass containingClass = resolved.getContainingClass();
-          if (containingClass != null) {
-            final PsiTypeParameter[] containingClassTypeParameters = containingClass.getTypeParameters();
-            if (containingClassTypeParameters.length > 0) {
-              return false;
-            }
+      if (parameters.length > 0) {
+        for (PsiType parameter : parameters) {
+          if (!(parameter instanceof PsiWildcardType && ((PsiWildcardType)parameter).getBound() == null)) {
+            return false;
           }
         }
         return true;
       }
+
+      assert parameters.length == 0;
+      final PsiClassType.ClassResolveResult resolved = ((PsiClassType)PsiUtil.convertAnonymousToBaseType(classType)).resolveGenerics();
+      final PsiClass aClass = resolved.getElement();
+      if (aClass instanceof PsiTypeParameter) {
+        return false;
+      }
+
+      if (aClass != null && !aClass.hasModifierProperty(PsiModifier.STATIC)) {
+        PsiClass containingClass = PsiTreeUtil.getParentOfType(aClass, PsiClass.class, true);
+        if (containingClass != null) {
+          return isReifiableType(JavaPsiFacade.getElementFactory(aClass.getProject()).createType(containingClass, resolved.getSubstitutor()));
+        }
+      }
+      return true;
     }
 
     return false;
@@ -293,6 +296,9 @@ public class JavaGenericsUtil {
           return itemType;
         }
       }
+    }
+    if (type instanceof PsiCapturedWildcardType) {
+      return getCollectionItemType(((PsiCapturedWildcardType)type).getUpperBound(), scope);
     }
     return null;
   }

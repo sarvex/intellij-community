@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,10 @@ import java.awt.*;
 import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphVector;
 
+/**
+ * Encapsulates logic related to font metrics. Mock instance can be used in tests to make them independent on font properties on particular
+ * platform.
+ */
 public abstract class FontLayoutService {
   private static final FontLayoutService DEFAULT_INSTANCE = new DefaultFontLayoutService();
   private static FontLayoutService INSTANCE = DEFAULT_INSTANCE;
@@ -39,7 +43,7 @@ public abstract class FontLayoutService {
   
   public abstract int getHeight(@NotNull FontMetrics fontMetrics);
   
-  public abstract int getDescent(@NotNull FontMetrics fontMetrics);
+  public abstract int getAscent(@NotNull FontMetrics fontMetrics);
   
   @TestOnly
   public static void setInstance(@Nullable FontLayoutService fontLayoutService) {
@@ -65,8 +69,8 @@ public abstract class FontLayoutService {
     }
 
     @Override
-    public int getDescent(@NotNull FontMetrics fontMetrics) {
-      return fontMetrics.getDescent();
+    public int getAscent(@NotNull FontMetrics fontMetrics) {
+      return fontMetrics.getAscent();
     }
   }
 }

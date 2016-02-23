@@ -15,25 +15,39 @@
  */
 package git4idea.rebase;
 
+import com.intellij.dvcs.repo.Repository;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.vcs.VcsNotifier;
 import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.util.containers.ContainerUtil;
 import git4idea.GitRevisionNumber;
 import git4idea.GitUtil;
+import git4idea.branch.GitRebaseParams;
+import git4idea.repo.GitRepository;
 import git4idea.repo.GitRepositoryFiles;
+import git4idea.stash.GitChangesSaver;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * The utilities related to rebase functionality
  */
 public class GitRebaseUtils {
+  public static final String CONTINUE_PROGRESS_TITLE = "Continue Rebase Process...";
   /**
    * The logger instance
    */
@@ -43,6 +57,120 @@ public class GitRebaseUtils {
    * A private constructor for utility class
    */
   private GitRebaseUtils() {
+  }
+
+  public static void rebase(@NotNull final Project project,
+                            @NotNull final List<GitRepository> repositories,
+                            @NotNull final GitRebaseParams params,
+                            @NotNull final ProgressIndicator indicator) {
+    if (!isRebaseAllowed(project, repositories)) return;  // TODO maybe move to the outside
+    new GitRebaseProcess(project, GitRebaseSpec.forNewRebase(project, params, repositories, indicator), null).rebase();
+  }
+
+  public static void continueRebase(@NotNull Project project) {
+    GitRebaseSpec spec = GitUtil.getRepositoryManager(project).getOngoingRebaseSpec();
+    if (spec != null) {
+      new GitRebaseProcess(project, spec, GitRebaseResumeMode.CONTINUE).rebase();
+    }
+    else {
+      LOG.warn("Refusing to continue: no rebase spec");
+      VcsNotifier.getInstance(project).notifyError("Can't Continue Rebase", "No rebase in progress");
+    }
+  }
+
+  public static void continueRebase(@NotNull Project project, @NotNull GitRepository repository, @NotNull ProgressIndicator indicator) {
+    GitRebaseSpec spec = GitRebaseSpec.forResumeInSingleRepository(project, repository, indicator);
+    if (spec != null) {
+      new GitRebaseProcess(project, spec, GitRebaseResumeMode.CONTINUE).rebase();
+    }
+    else {
+      LOG.warn("Refusing to continue: no rebase spec");
+      VcsNotifier.getInstance(project).notifyError("Can't Continue Rebase", "No rebase in progress");
+    }
+  }
+
+  public static void skipRebase(@NotNull Project project) {
+    GitRebaseSpec spec = GitUtil.getRepositoryManager(project).getOngoingRebaseSpec();
+    if (spec != null) {
+      new GitRebaseProcess(project, spec, GitRebaseResumeMode.SKIP).rebase();
+    }
+    else {
+      LOG.warn("Refusing to skip: no rebase spec");
+      VcsNotifier.getInstance(project).notifyError("Can't Continue Rebase", "No rebase in progress");
+    }
+  }
+
+  public static void skipRebase(@NotNull Project project, @NotNull GitRepository repository, @NotNull ProgressIndicator indicator) {
+    GitRebaseSpec spec = GitRebaseSpec.forResumeInSingleRepository(project, repository, indicator);
+    if (spec != null) {
+      new GitRebaseProcess(project, spec, GitRebaseResumeMode.SKIP).rebase();
+    }
+    else {
+      LOG.warn("Refusing to skip: no rebase spec");
+      VcsNotifier.getInstance(project).notifyError("Can't Continue Rebase", "No rebase in progress");
+    }
+  }
+
+  /**
+   * Automatically detects the ongoing rebase process in the project and abort it.
+   * Optionally rollbacks repositories which were already rebased during that detected multi-root rebase process.
+   * <p/>
+   * Does nothing if no information about ongoing rebase is available, or if this information has become obsolete.
+   */
+  public static void abort(@NotNull Project project, @NotNull ProgressIndicator indicator) {
+    GitRebaseSpec spec = GitUtil.getRepositoryManager(project).getOngoingRebaseSpec();
+    if (spec != null) {
+      new GitAbortRebaseProcess(project, spec.getOngoingRebase(), spec.getHeadPositionsToRollback(), spec.getInitialBranchNames(),
+                                indicator, spec.getSaver()).abortWithConfirmation();
+    }
+    else {
+      LOG.warn("Refusing to abort: no rebase spec");
+      VcsNotifier.getInstance(project).notifyError("Can't Abort Rebase", "No rebase in progress");
+    }
+  }
+
+  /**
+   * Abort the ongoing rebase process in the given repository.
+   */
+  public static void abort(@NotNull final Project project, @Nullable final GitRepository repository, @NotNull ProgressIndicator indicator) {
+    new GitAbortRebaseProcess(project, repository, Collections.<GitRepository, String>emptyMap(),
+                              Collections.<GitRepository, String>emptyMap(), indicator, null).abortWithConfirmation();
+  }
+
+  private static boolean isRebaseAllowed(@NotNull Project project, @NotNull Collection<GitRepository> repositories) {
+    // TODO links to 'rebase', 'resolve conflicts', etc.
+    for (GitRepository repository : repositories) {
+      Repository.State state = repository.getState();
+      String in = GitUtil.mention(repository);
+      String message = null;
+      switch (state) {
+        case NORMAL:
+          if (repository.isFresh()) {
+            message = "Repository" + in + " is empty.";
+          }
+          break;
+        case MERGING:
+          message = "There is an unfinished merge process" + in + ".<br/>You should complete the merge before starting a rebase";
+          break;
+        case REBASING:
+          message = "There is an unfinished rebase process" + in + ".<br/>You should complete it before starting another rebase";
+          break;
+        case GRAFTING:
+          message = "There is an unfinished cherry-pick process" + in + ".<br/>You should finish it before starting a rebase.";
+          break;
+        case DETACHED:
+          message = "You are in the detached HEAD state" + in + ".<br/>Rebase is not possible.";
+          break;
+        default:
+          LOG.error("Unknown state [" + state.name() + "]");
+          message = "Rebase is not possible" + in;
+      }
+      if (message != null) {
+        VcsNotifier.getInstance(project).notifyError("Rebase not Allowed", message);
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -63,7 +191,7 @@ public class GitRebaseUtils {
    * @return the rebase directory or null if it does not exist.
    */
   @Nullable
-  private static File getRebaseDir(VirtualFile root) {
+  private static File getRebaseDir(@NotNull VirtualFile root) {
     File gitDir = new File(VfsUtilCore.virtualToIoFile(root), GitUtil.DOT_GIT);
     File f = new File(gitDir, GitRepositoryFiles.REBASE_APPLY);
     if (f.exists()) {
@@ -83,12 +211,10 @@ public class GitRebaseUtils {
    * @return the commit information or null if no commit information could be detected
    */
   @Nullable
-  public static CommitInfo getCurrentRebaseCommit(VirtualFile root) {
+  public static CommitInfo getCurrentRebaseCommit(@NotNull VirtualFile root) {
     File rebaseDir = getRebaseDir(root);
     if (rebaseDir == null) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("No rebase dir found for " + root.getPath());
-      }
+      LOG.warn("No rebase dir found for " + root.getPath());
       return null;
     }
     File nextFile = new File(rebaseDir, "next");
@@ -97,9 +223,7 @@ public class GitRebaseUtils {
       next = Integer.parseInt(FileUtil.loadFile(nextFile, CharsetToolkit.UTF8_CHARSET).trim());
     }
     catch (Exception e) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Failed to load next commit number from file " + nextFile.getPath(), e);
-      }
+      LOG.warn("Failed to load next commit number from file " + nextFile.getPath(), e);
       return null;
     }
     File commitFile = new File(rebaseDir, String.format("%04d", next));
@@ -126,18 +250,36 @@ public class GitRebaseUtils {
       }
     }
     catch (Exception e) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Failed to load next commit number from file " + commitFile, e);
-      }
+      LOG.warn("Failed to load next commit number from file " + commitFile, e);
       return null;
     }
     if (subject == null || hash == null) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Unable to extract information from " + commitFile + " " + hash + ": " + subject);
-      }
+      LOG.info("Unable to extract information from " + commitFile + " " + hash + ": " + subject);
       return null;
     }
     return new CommitInfo(new GitRevisionNumber(hash), subject);
+  }
+
+  @NotNull
+  static String mentionLocalChangesRemainingInStash(@Nullable GitChangesSaver saver) {
+    return saver != null && saver.wereChangesSaved() ?
+           "<br/>Note that some local changes were <a href='stash'>" + toPast(saver.getOperationName()) + "</a> before rebase." :
+           "";
+  }
+
+  @NotNull
+  private static String toPast(@NotNull String word) {
+    return word.endsWith("e") ? word + "d" : word + "ed";
+  }
+
+  @NotNull
+  public static Collection<GitRepository> getRebasingRepositories(@NotNull Project project) {
+    return ContainerUtil.filter(GitUtil.getRepositories(project), new Condition<GitRepository>() {
+      @Override
+      public boolean value(@NotNull GitRepository repository) {
+        return repository.getState() == Repository.State.REBASING;
+      }
+    });
   }
 
   /**

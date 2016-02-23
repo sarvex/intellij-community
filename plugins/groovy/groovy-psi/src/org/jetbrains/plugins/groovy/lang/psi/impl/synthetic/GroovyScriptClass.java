@@ -18,7 +18,6 @@ package org.jetbrains.plugins.groovy.lang.psi.impl.synthetic;
 import com.intellij.navigation.ItemPresentation;
 import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.io.FileUtilRt;
-import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.*;
 import com.intellij.psi.impl.light.LightElement;
@@ -115,8 +114,6 @@ public class GroovyScriptClass extends LightElement implements PsiClass, Synthet
   @Nullable
   public String getQualifiedName() {
     final String name = getName();
-    if (name == null) return null;
-
     final String packName = myFile.getPackageName();
     if (packName.isEmpty()) {
       return name;
@@ -180,7 +177,7 @@ public class GroovyScriptClass extends LightElement implements PsiClass, Synthet
       return new PsiClassType[]{type};
     }
 
-    final PsiClassType superClassFromDSL = GroovyDslFileIndex.pocessScriptSuperClasses(myFile);
+    final PsiClassType superClassFromDSL = GroovyDslFileIndex.processScriptSuperClasses(myFile);
     if (superClassFromDSL != null) {
       return new PsiClassType[]{superClassFromDSL};
     }
@@ -194,7 +191,7 @@ public class GroovyScriptClass extends LightElement implements PsiClass, Synthet
     return RecursionManager.doPreventingRecursion(this, false, new Computable<PsiClassType>() {
       @Override
       public PsiClassType compute() {
-        return CachedValuesManager.getCachedValue(myFile, new CachedValueProvider<PsiClassType>() {
+        return CachedValuesManager.getCachedValue(GroovyScriptClass.this, new CachedValueProvider<PsiClassType>() {
           @Nullable
           @Override
           public Result<PsiClassType> compute() {
@@ -479,16 +476,9 @@ public class GroovyScriptClass extends LightElement implements PsiClass, Synthet
   }
 
   @Override
-  @Nullable
+  @NotNull
   public String getName() {
-    String fileName = myFile.getName();
-    final String name = FileUtilRt.getNameWithoutExtension(fileName);
-    if (StringUtil.isJavaIdentifier(name)) {
-      return name;
-    }
-    else {
-      return null;
-    }
+    return FileUtilRt.getNameWithoutExtension(myFile.getName());
   }
 
   @Override
@@ -537,8 +527,7 @@ public class GroovyScriptClass extends LightElement implements PsiClass, Synthet
     return new ItemPresentation() {
       @Override
       public String getPresentableText() {
-        final String name = getName();
-        return name != null ? name : "<unnamed>";
+        return getName();
       }
 
       @Override

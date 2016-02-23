@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,10 @@ import com.intellij.debugger.engine.events.SuspendContextCommandImpl;
 import com.intellij.debugger.impl.DebuggerContextImpl;
 import com.intellij.debugger.impl.DebuggerSession;
 import com.intellij.debugger.impl.DebuggerUtilsEx;
-import com.intellij.debugger.jdi.*;
+import com.intellij.debugger.jdi.LocalVariableProxyImpl;
+import com.intellij.debugger.jdi.StackFrameProxyImpl;
+import com.intellij.debugger.jdi.ThreadGroupReferenceProxyImpl;
+import com.intellij.debugger.jdi.ThreadReferenceProxyImpl;
 import com.intellij.debugger.settings.NodeRendererSettings;
 import com.intellij.debugger.settings.ThreadsViewSettings;
 import com.intellij.debugger.ui.breakpoints.Breakpoint;
@@ -327,7 +330,7 @@ public abstract class DebuggerTree extends DebuggerTreeBase implements DataProvi
   protected final void buildWhenPaused(DebuggerContextImpl context, RefreshDebuggerTreeCommand command) {
     DebuggerSession session = context.getDebuggerSession();
 
-    if (ApplicationManager.getApplication().isUnitTestMode() || (session != null && session.getState() == DebuggerSession.STATE_PAUSED)) {
+    if (ApplicationManager.getApplication().isUnitTestMode() || (session != null && session.getState() == DebuggerSession.State.PAUSED)) {
       showMessage(MessageDescriptor.EVALUATING);
       context.getDebugProcess().getManagerThread().schedule(command);
     }
@@ -407,10 +410,14 @@ public abstract class DebuggerTree extends DebuggerTreeBase implements DataProvi
   public abstract class BuildNodeCommand extends DebuggerContextCommandImpl {
     private final DebuggerTreeNodeImpl myNode;
 
-    protected final List<DebuggerTreeNodeImpl> myChildren = new LinkedList<DebuggerTreeNodeImpl>();
+    protected final List<DebuggerTreeNodeImpl> myChildren = new LinkedList<>();
 
     protected BuildNodeCommand(DebuggerTreeNodeImpl node) {
-      super(DebuggerTree.this.getDebuggerContext());
+      this(node, null);
+    }
+
+    protected BuildNodeCommand(DebuggerTreeNodeImpl node, ThreadReferenceProxyImpl thread) {
+      super(DebuggerTree.this.getDebuggerContext(), thread);
       myNode = node;
     }
 
@@ -630,7 +637,7 @@ public abstract class DebuggerTree extends DebuggerTreeBase implements DataProvi
 
   private class BuildThreadCommand extends BuildNodeCommand {
     public BuildThreadCommand(DebuggerTreeNodeImpl threadNode) {
-      super(threadNode);
+      super(threadNode, ((ThreadDescriptorImpl)threadNode.getDescriptor()).getThreadReference());
     }
 
     @Override
@@ -672,7 +679,7 @@ public abstract class DebuggerTree extends DebuggerTreeBase implements DataProvi
 
   private class BuildThreadGroupCommand extends DebuggerCommandImpl {
     private final DebuggerTreeNodeImpl myNode;
-    protected final List<DebuggerTreeNodeImpl> myChildren = new LinkedList<DebuggerTreeNodeImpl>();
+    protected final List<DebuggerTreeNodeImpl> myChildren = new LinkedList<>();
 
     public BuildThreadGroupCommand(DebuggerTreeNodeImpl node) {
       myNode = node;
@@ -683,7 +690,7 @@ public abstract class DebuggerTree extends DebuggerTreeBase implements DataProvi
       ThreadGroupDescriptorImpl groupDescriptor = (ThreadGroupDescriptorImpl)myNode.getDescriptor();
       ThreadGroupReferenceProxyImpl threadGroup = groupDescriptor.getThreadGroupReference();
 
-      List<ThreadReferenceProxyImpl> threads = new ArrayList<ThreadReferenceProxyImpl>(threadGroup.threads());
+      List<ThreadReferenceProxyImpl> threads = new ArrayList<>(threadGroup.threads());
       Collections.sort(threads, ThreadReferenceProxyImpl.ourComparator);
 
       final DebuggerContextImpl debuggerContext = getDebuggerContext();
@@ -706,7 +713,7 @@ public abstract class DebuggerTree extends DebuggerTreeBase implements DataProvi
         }
       }
 
-      ArrayList<DebuggerTreeNodeImpl> threadNodes = new ArrayList<DebuggerTreeNodeImpl>();
+      ArrayList<DebuggerTreeNodeImpl> threadNodes = new ArrayList<>();
 
       for (ThreadReferenceProxyImpl thread : threads) {
         if (thread != null) {

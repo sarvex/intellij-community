@@ -17,9 +17,11 @@ package com.intellij.openapi.externalSystem.test;
 
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.compiler.ex.CompilerPathsEx;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.externalSystem.importing.ImportSpecBuilder;
 import com.intellij.openapi.externalSystem.model.DataNode;
+import com.intellij.openapi.externalSystem.model.ExternalProjectInfo;
 import com.intellij.openapi.externalSystem.model.ProjectSystemId;
 import com.intellij.openapi.externalSystem.model.project.ProjectData;
 import com.intellij.openapi.externalSystem.service.execution.ProgressExecutionMode;
@@ -27,7 +29,6 @@ import com.intellij.openapi.externalSystem.service.project.ExternalProjectRefres
 import com.intellij.openapi.externalSystem.service.project.manage.ProjectDataManager;
 import com.intellij.openapi.externalSystem.settings.AbstractExternalSystemSettings;
 import com.intellij.openapi.externalSystem.settings.ExternalProjectSettings;
-import com.intellij.openapi.externalSystem.util.DisposeAwareProjectChange;
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil;
 import com.intellij.openapi.module.Module;
@@ -35,7 +36,6 @@ import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.projectRoots.impl.JavaAwareProjectJdkTableImpl;
 import com.intellij.openapi.roots.*;
-import com.intellij.openapi.roots.ex.ProjectRootManagerEx;
 import com.intellij.openapi.roots.impl.libraries.ProjectLibraryTable;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.ui.Messages;
@@ -46,7 +46,12 @@ import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VfsUtilCore;
+import com.intellij.openapi.vfs.VirtualFileManager;
+import com.intellij.packaging.artifacts.Artifact;
+import com.intellij.packaging.artifacts.ArtifactManager;
 import com.intellij.testFramework.IdeaTestUtil;
+import com.intellij.util.BooleanFunction;
+import com.intellij.util.Consumer;
 import com.intellij.util.Function;
 import com.intellij.util.PathUtil;
 import com.intellij.util.containers.ContainerUtil;
@@ -111,18 +116,15 @@ public abstract class ExternalSystemImportingTestCase extends ExternalSystemTest
   }
 
   private void assertGeneratedSources(String moduleName, JavaSourceRootType type, String... expectedSources) {
-    ContentEntry contentRoot = getContentRoot(moduleName);
-    List<ContentFolder> folders = new ArrayList<ContentFolder>();
-    for (SourceFolder folder : contentRoot.getSourceFolders(type)) {
+    final ContentEntry[] contentRoots = getContentRoots(moduleName);
+    final String rootUrl = contentRoots.length > 1 ? ExternalSystemApiUtil.getExternalProjectPath(getModule(moduleName)) : null;
+    List<SourceFolder> folders = doAssertContentFolders(rootUrl, contentRoots, type, expectedSources);
+    for (SourceFolder folder : folders) {
       JavaSourceRootProperties properties = folder.getJpsElement().getProperties(type);
       assertNotNull(properties);
-      if (properties.isForGeneratedSources()) {
-        folders.add(folder);
-      }
+      assertTrue("Not a generated folder: " + folder, properties.isForGeneratedSources());
     }
-    doAssertContentFolders(contentRoot, folders, expectedSources);
   }
-
 
   protected void assertResources(String moduleName, String... expectedSources) {
     doAssertContentFolders(moduleName, JavaResourceRootType.RESOURCE, expectedSources);
@@ -147,8 +149,33 @@ public abstract class ExternalSystemImportingTestCase extends ExternalSystemTest
   }
 
   private void doAssertContentFolders(String moduleName, @NotNull JpsModuleSourceRootType<?> rootType, String... expected) {
-    ContentEntry contentRoot = getContentRoot(moduleName);
-    doAssertContentFolders(contentRoot, contentRoot.getSourceFolders(rootType), expected);
+    final ContentEntry[] contentRoots = getContentRoots(moduleName);
+    final String rootUrl = contentRoots.length > 1 ? ExternalSystemApiUtil.getExternalProjectPath(getModule(moduleName)) : null;
+    doAssertContentFolders(rootUrl, contentRoots, rootType, expected);
+  }
+
+  private static List<SourceFolder> doAssertContentFolders(@Nullable String rootUrl,
+                                                           ContentEntry[] contentRoots,
+                                                           @NotNull JpsModuleSourceRootType<?> rootType,
+                                                           String... expected) {
+    List<SourceFolder> result = new ArrayList<SourceFolder>();
+    List<String> actual = new ArrayList<String>();
+    for (ContentEntry contentRoot : contentRoots) {
+      for (SourceFolder f : contentRoot.getSourceFolders(rootType)) {
+        rootUrl = rootUrl == null ? VirtualFileManager.extractPath(contentRoot.getUrl()) : VirtualFileManager.extractPath(rootUrl);
+        String folderUrl = VirtualFileManager.extractPath(f.getUrl());
+        if (folderUrl.startsWith(rootUrl)) {
+          int length = rootUrl.length() + 1;
+          folderUrl = folderUrl.substring(Math.min(length, folderUrl.length()));
+        }
+
+        actual.add(folderUrl);
+        result.add(f);
+      }
+    }
+
+    assertOrderedElementsAreEqual(actual, Arrays.asList(expected));
+    return result;
   }
 
   private static void doAssertContentFolders(ContentEntry e, final List<? extends ContentFolder> folders, String... expected) {
@@ -166,6 +193,17 @@ public abstract class ExternalSystemImportingTestCase extends ExternalSystemTest
     }
 
     assertOrderedElementsAreEqual(actual, Arrays.asList(expected));
+  }
+
+  protected void assertModuleOutputs(String moduleName, String... outputs) {
+    String[] outputPaths = ContainerUtil.map2Array(CompilerPathsEx.getOutputPaths(new Module[]{getModule(moduleName)}), String.class,
+                                                   new Function<String, String>() {
+                                                     @Override
+                                                     public String fun(String s) {
+                                                       return getAbsolutePath(s);
+                                                     }
+                                                   });
+    assertUnorderedElementsAreEqual(outputPaths, outputs);
   }
 
   protected void assertModuleOutput(String moduleName, String output, String testOutput) {
@@ -224,6 +262,7 @@ public abstract class ExternalSystemImportingTestCase extends ExternalSystemTest
   }
 
   private static void assertModuleLibDepPath(LibraryOrderEntry lib, OrderRootType type, List<String> paths) {
+    assertNotNull(lib);
     if (paths == null) return;
     assertUnorderedPathsAreEqual(Arrays.asList(lib.getRootUrls(type)), paths);
     // also check the library because it may contain slight different set of urls (e.g. with duplicates)
@@ -242,7 +281,7 @@ public abstract class ExternalSystemImportingTestCase extends ExternalSystemTest
     }), scopes);
   }
 
-  private List<LibraryOrderEntry> getModuleLibDeps(String moduleName, String depName) {
+  protected List<LibraryOrderEntry> getModuleLibDeps(String moduleName, String depName) {
     return getModuleDep(moduleName, depName, LibraryOrderEntry.class);
   }
 
@@ -338,6 +377,18 @@ public abstract class ExternalSystemImportingTestCase extends ExternalSystemTest
     }
   }
 
+  protected void assertArtifacts(String... expectedNames) {
+    final List<String> actualNames = ContainerUtil.map(
+      ArtifactManager.getInstance(myProject).getAllArtifactsIncludingInvalid(), new Function<Artifact, String>() {
+        @Override
+        public String fun(Artifact artifact) {
+          return artifact.getName();
+        }
+      });
+
+    assertUnorderedElementsAreEqual(actualNames, expectedNames);
+  }
+
   protected Module getModule(final String name) {
     AccessToken accessToken = ApplicationManager.getApplication().acquireReadActionLock();
     try {
@@ -378,6 +429,26 @@ public abstract class ExternalSystemImportingTestCase extends ExternalSystemTest
     return ModuleRootManager.getInstance(getModule(module));
   }
 
+  protected void ignoreData(BooleanFunction<DataNode<?>> booleanFunction, final boolean ignored) {
+    final ExternalProjectInfo externalProjectInfo = ProjectDataManager.getInstance().getExternalProjectData(
+      myProject, getExternalSystemId(), getCurrentExternalProjectSettings().getExternalProjectPath());
+    assertNotNull(externalProjectInfo);
+
+    final DataNode<ProjectData> projectDataNode = externalProjectInfo.getExternalProjectStructure();
+    assertNotNull(projectDataNode);
+
+    final Collection<DataNode<?>> nodes = ExternalSystemApiUtil.findAllRecursively(projectDataNode, booleanFunction);
+    for (DataNode<?> node : nodes) {
+      ExternalSystemApiUtil.visit(node, new Consumer<DataNode<?>>() {
+        @Override
+        public void consume(DataNode dataNode) {
+          dataNode.setIgnored(ignored);
+        }
+      });
+    }
+    ServiceManager.getService(ProjectDataManager.class).importData(projectDataNode, myProject, true);
+  }
+
   protected void importProject(@NonNls String config) throws IOException {
     createProjectConfig(config);
     importProject();
@@ -407,18 +478,7 @@ public abstract class ExternalSystemImportingTestCase extends ExternalSystemTest
               System.err.println("Got null External project after import");
               return;
             }
-            ExternalSystemApiUtil.executeProjectChangeAction(true, new DisposeAwareProjectChange(myProject) {
-              @Override
-              public void execute() {
-                ProjectRootManagerEx.getInstanceEx(myProject).mergeRootsChangesDuring(new Runnable() {
-                  @Override
-                  public void run() {
-                    ServiceManager.getService(ProjectDataManager.class).importData(
-                      externalProject.getKey(), Collections.singleton(externalProject), myProject, true);
-                  }
-                });
-              }
-            });
+            ServiceManager.getService(ProjectDataManager.class).importData(externalProject, myProject, true);
             System.out.println("External project was successfully imported");
           }
 

@@ -1,6 +1,6 @@
 package org.editorconfig.plugincomponents;
 
-import com.intellij.openapi.components.ApplicationComponent;
+import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
@@ -16,12 +16,11 @@ import org.editorconfig.Utils;
 import org.editorconfig.core.EditorConfig;
 import org.editorconfig.core.EditorConfig.OutPair;
 import org.editorconfig.core.EditorConfigException;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
-public class SettingsProviderComponent implements ApplicationComponent {
+public class SettingsProviderComponent {
   private EditorConfig editorConfig;
 
   public SettingsProviderComponent() {
@@ -33,6 +32,8 @@ public class SettingsProviderComponent implements ApplicationComponent {
   }
 
   public List<OutPair> getOutPairs(Project project, String filePath) {
+    if (filePath == null) return Collections.emptyList();
+
     final List<OutPair> outPairs;
     try {
       final Set<String> rootDirs = getRootDirs(project);
@@ -66,19 +67,9 @@ public class SettingsProviderComponent implements ApplicationComponent {
             }
           }
         }
+        dirs.add(PathManager.getConfigPath());
         return new Result<Set<String>>(dirs, ProjectRootModificationTracker.getInstance(project));
       }
     });
-  }
-
-  public void initComponent() {
-  }
-
-  public void disposeComponent() {
-  }
-
-  @NotNull
-  public String getComponentName() {
-    return "SettingsProviderComponent";
   }
 }

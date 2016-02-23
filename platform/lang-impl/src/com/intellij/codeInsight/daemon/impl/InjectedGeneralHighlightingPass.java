@@ -48,9 +48,7 @@ import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.awt.*;
 import java.util.*;
-import java.util.List;
 
 public class InjectedGeneralHighlightingPass extends GeneralHighlightingPass implements DumbAware {
   private static final String PRESENTABLE_NAME = "Injected fragments";
@@ -84,7 +82,7 @@ public class InjectedGeneralHighlightingPass extends GeneralHighlightingPass imp
     List<ProperTextRange> outsideRanges = new ArrayList<ProperTextRange>();
     //TODO: this thing is just called TWICE with same arguments eating CPU on huge files :(
     Divider.divideInsideAndOutside(myFile, myRestrictRange.getStartOffset(), myRestrictRange.getEndOffset(), myPriorityRange, inside, insideRanges, outside,
-                                   outsideRanges, false, SHOULD_HIGHIGHT_FILTER);
+                                   outsideRanges, false, SHOULD_HIGHLIGHT_FILTER);
 
 
     // all infos for the "injected fragment for the host which is inside" are indeed inside
@@ -421,9 +419,8 @@ public class InjectedGeneralHighlightingPass extends GeneralHighlightingPass imp
           TextAttributes.ERASE_MARKER).createUnconditionally();
         holder.add(info);
 
-        Color back = attributes.getBackgroundColor() == null ? myGlobalScheme.getDefaultBackground() : attributes.getBackgroundColor();
-        Color fore = attributes.getForegroundColor() == null ? myGlobalScheme.getDefaultForeground() : attributes.getForegroundColor();
-        forcedAttributes = new TextAttributes(fore, back, attributes.getEffectColor(), attributes.getEffectType(), attributes.getFontType());
+        forcedAttributes = new TextAttributes(attributes.getForegroundColor(), attributes.getBackgroundColor(), 
+                                              attributes.getEffectColor(), attributes.getEffectType(), attributes.getFontType());
       }
 
       HighlightInfo info =

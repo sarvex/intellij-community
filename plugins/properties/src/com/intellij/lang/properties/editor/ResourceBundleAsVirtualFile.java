@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,25 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-/**
- * @author Alexey
- */
 package com.intellij.lang.properties.editor;
 
 import com.intellij.ide.presentation.Presentation;
-import com.intellij.lang.properties.PropertiesImplUtil;
-import com.intellij.lang.properties.PropertiesUtil;
 import com.intellij.lang.properties.ResourceBundle;
+import com.intellij.lang.properties.ResourceBundleImpl;
+import com.intellij.lang.properties.psi.PropertiesFile;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileSystem;
+import com.intellij.openapi.vfs.newvfs.RefreshQueue;
+import com.intellij.util.Function;
+import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.List;
 
+/**
+ * @author Alexey
+ */
 @Presentation(icon = "AllIcons.Nodes.ResourceBundle")
 public class ResourceBundleAsVirtualFile extends VirtualFile {
   private final ResourceBundle myResourceBundle;
@@ -95,6 +98,15 @@ public class ResourceBundleAsVirtualFile extends VirtualFile {
 
   @Override
   public boolean isValid() {
+    if (myResourceBundle instanceof ResourceBundleImpl && !((ResourceBundleImpl)myResourceBundle).isValid()) {
+      return false;
+    }
+    for (PropertiesFile propertiesFile : myResourceBundle.getPropertiesFiles()) {
+      final VirtualFile virtualFile = propertiesFile.getVirtualFile();
+      if (virtualFile == null || !virtualFile.isValid()) {
+        return false;
+      }
+    }
     return true;
   }
 
@@ -144,7 +156,8 @@ public class ResourceBundleAsVirtualFile extends VirtualFile {
   @Override
   @NotNull
   public byte[] contentsToByteArray() throws IOException {
-    throw new UnsupportedOperationException();
+    //TODO compare files action uses this method
+    return new byte[0];
   }
 
   @Override
@@ -164,6 +177,14 @@ public class ResourceBundleAsVirtualFile extends VirtualFile {
 
   @Override
   public void refresh(boolean asynchronous, boolean recursive, Runnable postRunnable) {
-
+    List<VirtualFile> files = ContainerUtil.mapNotNull(myResourceBundle.getPropertiesFiles(), new Function<PropertiesFile, VirtualFile>() {
+      @Override
+      public VirtualFile fun(PropertiesFile file) {
+        return file.getVirtualFile();
+      }
+    });
+    if (!files.isEmpty()) {
+      RefreshQueue.getInstance().refresh(false, false, postRunnable, files);
+    }
   }
 }

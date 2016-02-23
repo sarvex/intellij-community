@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -81,10 +81,12 @@ public class XBreakpointPanelProvider extends BreakpointPanelProvider<XBreakpoin
     }
   }
 
+  @Override
   public int getPriority() {
     return 0;
   }
 
+  @Override
   @Nullable
   public XBreakpoint<?> findBreakpoint(@NotNull final Project project, @NotNull final Document document, final int offset) {
     XBreakpointManager breakpointManager = XDebuggerManager.getInstance(project).getBreakpointManager();
@@ -108,12 +110,13 @@ public class XBreakpointPanelProvider extends BreakpointPanelProvider<XBreakpoin
     if (breakpoint instanceof XLineBreakpointImpl) {
       RangeHighlighter highlighter = ((XLineBreakpointImpl)breakpoint).getHighlighter();
       if (highlighter != null) {
-        return (GutterIconRenderer)highlighter.getGutterIconRenderer();
+        return highlighter.getGutterIconRenderer();
       }
     }
     return null;
   }
 
+  @Override
   public void onDialogClosed(final Project project) {
   }
 
@@ -131,8 +134,8 @@ public class XBreakpointPanelProvider extends BreakpointPanelProvider<XBreakpoin
   }
 
   private static class MyXBreakpointListener implements XBreakpointListener<XBreakpoint<?>> {
-    public BreakpointsListener myListener;
-    public XBreakpointManager myBreakpointManager;
+    public final BreakpointsListener myListener;
+    public final XBreakpointManager myBreakpointManager;
 
     public MyXBreakpointListener(BreakpointsListener listener, XBreakpointManager breakpointManager) {
       myListener = listener;

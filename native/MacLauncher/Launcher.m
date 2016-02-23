@@ -231,7 +231,31 @@ NSBundle *findMatchingVm() {
             return jdkBundle;
         }
     }
-
+    
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    
+    NSString *pathForFile = [NSString stringWithFormat:@"%@/%@.jdk", getPreferencesFolderPath(), getExecutable()];
+    
+    if (!pathForFile.isAbsolutePath) {
+        // Handle relative paths
+        pathForFile = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:pathForFile];
+    }
+    
+    if ([fileManager fileExistsAtPath:pathForFile]){
+        NSString* fileContents = [NSString stringWithContentsOfFile:pathForFile encoding:NSUTF8StringEncoding error:nil];
+        NSArray* allLinedStrings = [fileContents componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+        if (allLinedStrings.count > 0) {
+            NSString* jdkFromProfile = allLinedStrings[0];
+            NSBundle *jdkBundle = [NSBundle bundleWithPath:jdkFromProfile];
+            if (jdkBundle != nil && ![jvmVersion(jdkBundle) isEqualToString:@"0"]) {
+                // If the user chooses a VM, use it even if it doesn't satisfy Info.pList
+                debugLog(@"User VM from IDE profile:");
+                debugLog([jdkBundle bundlePath]);
+                return jdkBundle;
+            }
+        }
+    }
+    
     NSArray *vmBundles = [allVms() sortedArrayUsingFunction:compareVMVersions context:NULL];
 
     if (isDebugEnabled()) {
@@ -356,23 +380,28 @@ NSString *getOverrideVMOptionsPath() {
 }
 
 NSArray *parseVMOptions() {
-    NSArray *files = @[getApplicationVMOptionsPath(),
-                       getUserVMOptionsPath(),
-                       getOverrideVMOptionsPath()];
+    NSString *vmOptionsFile = getApplicationVMOptionsPath();
+    NSString *userVMOptiosFile = getUserVMOptionsPath();
+    NSString *envVarVMOptiosFile = getOverrideVMOptionsPath();
+
+    if ([[NSFileManager defaultManager] fileExistsAtPath:userVMOptiosFile]) {
+      vmOptionsFile = userVMOptiosFile;
+    }
+    if ([[NSFileManager defaultManager] fileExistsAtPath:envVarVMOptiosFile]) {
+      vmOptionsFile = envVarVMOptiosFile;
+    }
 
     NSMutableArray *options = [NSMutableArray array];
     NSMutableArray *used = [NSMutableArray array];
 
-    for (NSString *file in files) {
-        NSLog(@"Processing VMOptions file at %@", file);
-        NSArray *contents = [VMOptionsReader readFile:file];
-        if (contents != nil) {
-            NSLog(@"Done");
-            [used addObject:file];
-            [options addObjectsFromArray:contents];
-        } else {
-            NSLog(@"No content found");
-        }
+    NSLog(@"Processing VMOptions file at %@", vmOptionsFile);
+    NSArray *contents = [VMOptionsReader readFile:vmOptionsFile];
+    if (contents != nil) {
+      NSLog(@"Done");
+      [used addObject:vmOptionsFile];
+      [options addObjectsFromArray:contents];
+    } else {
+      NSLog(@"No content found at %@ ", vmOptionsFile);
     }
     [options addObject:[NSString stringWithFormat:@"-Djb.vmOptionsFile=%@", [used componentsJoinedByString:@","]]];
 

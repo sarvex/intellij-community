@@ -20,12 +20,12 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vcs.FilePath;
 import org.jetbrains.annotations.NotNull;
 
-class StandardDiffFromHistoryHandler implements DiffFromHistoryHandler {
+public class StandardDiffFromHistoryHandler implements DiffFromHistoryHandler {
 
   @Override
   public void showDiffForOne(@NotNull AnActionEvent e, @NotNull Project project, @NotNull FilePath filePath,
                              @NotNull VcsFileRevision previousRevision, @NotNull VcsFileRevision revision) {
-    VcsHistoryUtil.showDifferencesInBackground(project, filePath, previousRevision, revision, true);
+    VcsHistoryUtil.showDifferencesInBackground(project, filePath, previousRevision, revision);
   }
 
   @Override
@@ -33,6 +33,6 @@ class StandardDiffFromHistoryHandler implements DiffFromHistoryHandler {
                              @NotNull FilePath filePath,
                              @NotNull VcsFileRevision revision1,
                              @NotNull VcsFileRevision revision2) {
-    VcsHistoryUtil.showDifferencesInBackground(project, filePath, revision1, revision2, true);
+    VcsHistoryUtil.showDifferencesInBackground(project, filePath, revision1, revision2);
   }
 }

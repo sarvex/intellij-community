@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Pair;
-import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.io.FileFilters;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.SystemProperties;
@@ -59,12 +59,14 @@ import org.jetbrains.jps.model.module.JpsModuleType;
 import org.jetbrains.jps.model.serialization.JpsModelSerializationDataService;
 import org.jetbrains.jps.model.serialization.PathMacroUtil;
 import org.jetbrains.jps.service.JpsServiceManager;
+import org.jetbrains.jps.service.SharedThreadPool;
 
 import javax.tools.*;
 import java.io.*;
 import java.net.ServerSocket;
 import java.util.*;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -75,31 +77,19 @@ public class JavaBuilder extends ModuleLevelBuilder {
   private static final Logger LOG = Logger.getInstance("#org.jetbrains.jps.incremental.java.JavaBuilder");
   public static final String BUILDER_NAME = "java";
   private static final String JAVA_EXTENSION = "java";
-  private static final String DOT_JAVA_EXTENSION = "." + JAVA_EXTENSION;
   private static final Key<Integer> JAVA_COMPILER_VERSION_KEY = Key.create("_java_compiler_version_");
   public static final Key<Boolean> IS_ENABLED = Key.create("_java_compiler_enabled_");
   private static final Key<JavaCompilingTool> COMPILING_TOOL = Key.create("_java_compiling_tool_");
   private static final Key<AtomicReference<String>> COMPILER_VERSION_INFO = Key.create("_java_compiler_version_info_");
 
-  private static final Set<String> FILTERED_OPTIONS = new HashSet<String>(Arrays.<String>asList(
+  private static final Set<String> FILTERED_OPTIONS = new HashSet<String>(Collections.<String>singletonList(
     "-target"
   ));
   private static final Set<String> FILTERED_SINGLE_OPTIONS = new HashSet<String>(Arrays.<String>asList(
     "-g", "-deprecation", "-nowarn", "-verbose", "-proc:none", "-proc:only", "-proceedOnError"
   ));
 
-  public static final FileFilter JAVA_SOURCES_FILTER =
-    SystemInfo.isFileSystemCaseSensitive?
-    new FileFilter() {
-      public boolean accept(File file) {
-        return file.getPath().endsWith(DOT_JAVA_EXTENSION);
-      }
-    } :
-    new FileFilter() {
-      public boolean accept(File file) {
-        return StringUtil.endsWithIgnoreCase(file.getPath(), DOT_JAVA_EXTENSION);
-      }
-    };
+  public static final FileFilter JAVA_SOURCES_FILTER = FileFilters.withExtension(JAVA_EXTENSION);
   private static final String RT_JAR_PATH_SUFFIX = File.separator + "rt.jar";
 
   private final Executor myTaskRunner;
@@ -141,6 +131,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
     //add here class processors in the sequence they should be executed
   }
 
+  @Override
   @NotNull
   public String getPresentableName() {
     return BUILDER_NAME;
@@ -165,6 +156,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
     return Collections.singletonList(JAVA_EXTENSION);
   }
 
+  @Override
   public ExitCode build(@NotNull CompileContext context,
                         @NotNull ModuleChunk chunk,
                         @NotNull DirtyFilesHolder<JavaSourceRootDescriptor, ModuleBuildTarget> dirtyFilesHolder,
@@ -184,6 +176,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
       final Set<File> filesToCompile = new THashSet<File>(FileUtil.FILE_HASHING_STRATEGY);
 
       dirtyFilesHolder.processDirtyFiles(new FileProcessor<JavaSourceRootDescriptor, ModuleBuildTarget>() {
+        @Override
         public boolean apply(ModuleBuildTarget target, File file, JavaSourceRootDescriptor descriptor) throws IOException {
           if (JAVA_SOURCES_FILTER.accept(file) && ourCompilableModuleTypes.contains(target.getModule().getModuleType())) {
             filesToCompile.add(file);
@@ -195,7 +188,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
       if (JavaBuilderUtil.isCompileJavaIncrementally(context)) {
         final ProjectBuilderLogger logger = context.getLoggingManager().getProjectBuilderLogger();
         if (logger.isEnabled()) {
-          if (filesToCompile.size() > 0) {
+          if (!filesToCompile.isEmpty()) {
             logger.logCompiledFiles(filesToCompile, BUILDER_NAME, "Compiling files:");
           }
         }
@@ -224,7 +217,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
         finally {
           stream.close();
         }
-        message = "Internal error: \n" + out.toString();
+        message = "Internal error: \n" + out;
       }
       context.processMessage(new CompilerMessage(BUILDER_NAME, BuildMessage.Kind.ERROR, message));
       throw new StopBuildException();
@@ -367,7 +360,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
     try {
       final int chunkSdkVersion = getChunkSdkVersion(chunk);
       
-      final Collection<File> _platformCp = calcEffectivePlatformCp(platformCp, chunkSdkVersion, options, compilingTool);
+      Collection<File> _platformCp = calcEffectivePlatformCp(platformCp, options, compilingTool);
       if (_platformCp == null) {
         context.processMessage(
           new CompilerMessage(
@@ -377,6 +370,19 @@ public class JavaBuilder extends ModuleLevelBuilder {
         );
         return true;
       }
+
+      if (chunkSdkVersion >= 9 && !_platformCp.isEmpty()) {
+        // if chunk's SDK is 9 or higher, there is no way to specify full platform classpath
+        // because platform classes are stored in jimage binary files with unknown format.
+        // Because of this we are clearing platform classpath so that javac will resolve against its own bootclasspath
+        // and prepending additional jars from the JDK configuration to compilation classpath
+        final Collection<File> joined = new ArrayList<File>(_platformCp.size() + classpath.size());
+        joined.addAll(_platformCp);
+        joined.addAll(classpath);
+        classpath = joined;
+        _platformCp = Collections.emptyList();
+      }
+
       final boolean rc;
       if (!shouldForkCompilerProcess(context, chunkSdkVersion)) {
         rc = JavacMain.compile(
@@ -392,9 +398,9 @@ public class JavaBuilder extends ModuleLevelBuilder {
         }
 
         final List<String> vmOptions = getCompilationVMOptions(context, compilingTool);
-        final ExternalJavacServer server = ensureJavacServerStarted(context);
+        final ExternalJavacManager server = ensureJavacServerStarted(context);
         rc = server.forkJavac(
-          context, options, vmOptions, files, classpath, _platformCp, sourcePath, outs, diagnosticSink, classesConsumer, sdkHome, compilingTool
+          sdkHome, getExternalJavacHeapSize(context), vmOptions, options, _platformCp, classpath, sourcePath, files, outs, diagnosticSink, classesConsumer, compilingTool, context.getCancelStatus()
         );
       }
       return rc;
@@ -404,6 +410,12 @@ public class JavaBuilder extends ModuleLevelBuilder {
     }
   }
 
+  private static int getExternalJavacHeapSize(CompileContext context) {
+    final JpsProject project = context.getProjectDescriptor().getProject();
+    final JpsJavaCompilerConfiguration config = JpsJavaExtensionService.getInstance().getOrCreateCompilerConfiguration(project);
+    final JpsJavaCompilerOptions options = config.getCurrentCompilerOptions();
+    return options.MAXIMUM_HEAP_SIZE;
+  }
   @Nullable
   public static String validateCycle(ModuleChunk chunk,
                                      JpsJavaExtensionService javaExt,
@@ -458,14 +470,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
   // If platformCp of the build process is the same as the target plafform, do not specify platformCp explicitly
   // this will allow javac to resolve against ct.sym file, which is required for the "compilation profiles" feature
   @Nullable
-  private static Collection<File> calcEffectivePlatformCp(Collection<File> platformCp, final int chunkSdkVersion, List<String> options, JavaCompilingTool compilingTool) {
-    if (chunkSdkVersion >= 9) {
-      // if chunk's SDK is 9 or higher, there is no way to specify full classpath 
-      // because platform classes are stored in jimage binary files with unknown format
-      // returning empty path so that javac will resolve against its own bootclasspath 
-      return Collections.emptyList();
-    }
-    
+  private static Collection<File> calcEffectivePlatformCp(Collection<File> platformCp, List<String> options, JavaCompilingTool compilingTool) {
     if (ourDefaultRtJar == null || !(compilingTool instanceof JavacCompilerTool)) {
       return platformCp;
     }
@@ -503,6 +508,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
 
     counter.incTaskCount();
     myTaskRunner.execute(new Runnable() {
+      @Override
       public void run() {
         try {
           taskRunnable.run();
@@ -517,15 +523,26 @@ public class JavaBuilder extends ModuleLevelBuilder {
     });
   }
 
-  private static synchronized ExternalJavacServer ensureJavacServerStarted(@NotNull CompileContext context) throws Exception {
-    ExternalJavacServer server = ExternalJavacServer.KEY.get(context);
+  private static synchronized ExternalJavacManager ensureJavacServerStarted(@NotNull CompileContext context) throws Exception {
+    ExternalJavacManager server = ExternalJavacManager.KEY.get(context);
     if (server != null) {
       return server;
     }
     final int listenPort = findFreePort();
-    server = new ExternalJavacServer();
+    server = new ExternalJavacManager(Utils.getSystemRoot()) {
+      @Override
+      protected ExternalJavacProcessHandler createProcessHandler(@NotNull Process process, @NotNull String commandLine) {
+        return new ExternalJavacProcessHandler(process, commandLine) {
+          @Override
+          @NotNull
+          protected Future<?> executeOnPooledThread(@NotNull Runnable task) {
+            return SharedThreadPool.getInstance().executeOnPooledThread(task);
+          }
+        };
+      }
+    };
     server.start(listenPort);
-    ExternalJavacServer.KEY.set(context, server);
+    ExternalJavacManager.KEY.set(context, server);
     return server;
   }
 
@@ -533,9 +550,9 @@ public class JavaBuilder extends ModuleLevelBuilder {
     if (ver == null) {
       return 0;
     }
-    final int quoteBegin = ver.indexOf("\"");
+    final int quoteBegin = ver.indexOf('\"');
     if (quoteBegin >= 0) {
-      final int quoteEnd = ver.indexOf("\"", quoteBegin + 1);
+      final int quoteEnd = ver.indexOf('\"', quoteBegin + 1);
       if (quoteEnd > quoteBegin) {
         ver = ver.substring(quoteBegin + 1, quoteEnd);
       }
@@ -547,16 +564,15 @@ public class JavaBuilder extends ModuleLevelBuilder {
     final String prefix = "1.";
     final int parseBegin = ver.startsWith(prefix)? prefix.length() : 0;
 
-    final int parseEnd = ver.indexOf(".", parseBegin);
-    if (parseEnd > 0) {
-      ver = ver.substring(parseBegin, parseEnd);
+    int parseEnd = parseBegin;
+    while (parseEnd < ver.length()) {
+      if (!Character.isDigit(ver.charAt(parseEnd))) {
+        break;
+      }
+      parseEnd++;
     }
-    else {
-      ver = ver.substring(parseBegin);
-    }
-
     try {
-      return Integer.parseInt(ver);
+      return Integer.parseInt(ver.substring(parseBegin, parseEnd));
     }
     catch (NumberFormatException ignored) {
     }
@@ -584,7 +600,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
     }
     catch (IOException e) {
       e.printStackTrace(System.err);
-      return ExternalJavacServer.DEFAULT_SERVER_PORT;
+      return ExternalJavacManager.DEFAULT_SERVER_PORT;
     }
   }
 
@@ -676,9 +692,15 @@ public class JavaBuilder extends ModuleLevelBuilder {
     }
     
     if (bytecodeTarget == null) {
-      // last resort and backward compatibility: 
-      // check if user explicitly defined bytecode target in additional compiler options
-      bytecodeTarget = USER_DEFINED_BYTECODE_TARGET.get(context);
+      if (!StringUtil.isEmpty(langLevel)) {
+        // according to IDEA rule: if not specified explicitly, set target to be the same as source language level
+        bytecodeTarget = langLevel;
+      }
+      else {
+        // last resort and backward compatibility: 
+        // check if user explicitly defined bytecode target in additional compiler options
+        bytecodeTarget = USER_DEFINED_BYTECODE_TARGET.get(context);
+      }
     }
 
     final int compilerSdkVersion = getCompilerSdkVersion(context);
@@ -714,7 +736,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
       if (!profile.isObtainProcessorsFromClasspath()) {
         final String processorsPath = profile.getProcessorPath();
         options.add("-processorpath");
-        options.add(processorsPath == null? "" : FileUtil.toSystemDependentName(processorsPath.trim()));
+        options.add(FileUtil.toSystemDependentName(processorsPath.trim()));
       }
 
       final Set<String> processors = profile.getProcessors();
@@ -743,18 +765,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
 
   private static String getLanguageLevel(JpsModule module) {
     final LanguageLevel level = JpsJavaExtensionService.getInstance().getLanguageLevel(module);
-    if (level != null) {
-      switch (level) {
-        case JDK_1_3: return "1.3";
-        case JDK_1_4: return "1.4";
-        case JDK_1_5: return "1.5";
-        case JDK_1_6: return "1.6";
-        case JDK_1_7: return "1.7";
-        case JDK_1_8: return "8";
-        case JDK_1_9: return "9";
-      }
-    }
-    return null;
+    return level != null ? level.getComplianceOption() : null;
   }
 
   private static boolean isEncodingSet(List<String> options) {
@@ -883,11 +894,11 @@ public class JavaBuilder extends ModuleLevelBuilder {
 
   private static class DiagnosticSink implements DiagnosticOutputConsumer {
     private final CompileContext myContext;
-    private volatile int myErrorCount = 0;
-    private volatile int myWarningCount = 0;
+    private volatile int myErrorCount;
+    private volatile int myWarningCount;
     private final Set<File> myFilesWithErrors = new HashSet<File>();
 
-    public DiagnosticSink(CompileContext context) {
+    private DiagnosticSink(CompileContext context) {
       myContext = context;
     }
 
@@ -895,6 +906,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
     public void javaFileLoaded(File file) {
     }
 
+    @Override
     public void registerImports(final String className, final Collection<String> imports, final Collection<String> staticImports) {
       //submitAsyncTask(myContext, new Runnable() {
       //  public void run() {
@@ -906,9 +918,18 @@ public class JavaBuilder extends ModuleLevelBuilder {
       //});
     }
 
+    @Override
     public void outputLineAvailable(String line) {
       if (!StringUtil.isEmpty(line)) {
-        if (line.contains("java.lang.OutOfMemoryError")) {
+        if (line.startsWith(ExternalJavacManager.STDOUT_LINE_PREFIX)) {
+          //noinspection UseOfSystemOutOrSystemErr
+          System.out.println(line);
+        }
+        else if (line.startsWith(ExternalJavacManager.STDERR_LINE_PREFIX)) {
+          //noinspection UseOfSystemOutOrSystemErr
+          System.err.println(line);
+        }
+        else if (line.contains("java.lang.OutOfMemoryError")) {
           myContext.processMessage(new CompilerMessage(BUILDER_NAME, BuildMessage.Kind.ERROR, "OutOfMemoryError: insufficient memory"));
           myErrorCount++;
         }
@@ -933,6 +954,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
       return BuildMessage.Kind.INFO;
     }
 
+    @Override
     public void report(Diagnostic<? extends JavaFileObject> diagnostic) {
       final CompilerMessage.Kind kind;
       switch (diagnostic.getKind()) {
@@ -995,15 +1017,17 @@ public class JavaBuilder extends ModuleLevelBuilder {
     private final CompileContext myContext;
     private final OutputFileConsumer myDelegateOutputFileSink;
 
-    public ClassProcessingConsumer(CompileContext context, OutputFileConsumer sink) {
+    private ClassProcessingConsumer(CompileContext context, OutputFileConsumer sink) {
       myContext = context;
       myDelegateOutputFileSink = sink != null ? sink : new OutputFileConsumer() {
+        @Override
         public void save(@NotNull OutputFileObject fileObject) {
           throw new RuntimeException("Output sink for compiler was not specified");
         }
       };
     }
 
+    @Override
     public void save(@NotNull final OutputFileObject fileObject) {
       // generated files must be saved synchronously, because some compilers (e.g. eclipse)
       // may want to read them for further compilation
@@ -1022,6 +1046,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
       }
 
       submitAsyncTask(myContext, new Runnable() {
+        @Override
         public void run() {
           try {
             for (ClassPostProcessor processor : ourClassProcessors) {
@@ -1040,13 +1065,13 @@ public class JavaBuilder extends ModuleLevelBuilder {
   private static final Key<TasksCounter> COUNTER_KEY = Key.create("_async_task_counter_");
 
   private static final class TasksCounter {
-    private int myCounter = 0;
+    private int myCounter;
 
-    public synchronized void incTaskCount() {
+    private synchronized void incTaskCount() {
       myCounter++;
     }
 
-    public synchronized void decTaskCounter() {
+    private synchronized void decTaskCounter() {
       myCounter = Math.max(0, myCounter - 1);
       if (myCounter == 0) {
         notifyAll();
@@ -1058,7 +1083,7 @@ public class JavaBuilder extends ModuleLevelBuilder {
         try {
           wait();
         }
-        catch (InterruptedException e) {
+        catch (InterruptedException ignored) {
         }
       }
     }

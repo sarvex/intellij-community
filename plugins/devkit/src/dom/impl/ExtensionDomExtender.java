@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,13 @@ package org.jetbrains.idea.devkit.dom.impl;
 
 import com.intellij.ide.plugins.PluginManagerCore;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
-import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PropertyUtil;
 import com.intellij.psi.util.PsiTypesUtil;
+import com.intellij.psi.util.TypeConversionUtil;
 import com.intellij.psi.xml.XmlElement;
 import com.intellij.psi.xml.XmlFile;
 import com.intellij.util.containers.ContainerUtil;
@@ -56,22 +57,25 @@ public class ExtensionDomExtender extends DomExtender<Extensions> {
       assert extensionPoint != null;
 
       final String interfaceName = extensionPoint.getInterface().getStringValue();
-      final Project project = extensionPoint.getManager().getProject();
-
       if (interfaceName != null) {
-        registrar.registerGenericAttributeValueChildExtension(new XmlName("implementation"), PsiClass.class)
-          .setConverter(CLASS_CONVERTER)
-          .addCustomAnnotation(new MyExtendClass(interfaceName))
-          .addCustomAnnotation(new MyRequired());
-        registerXmlb(registrar, JavaPsiFacade.getInstance(project).findClass(interfaceName, GlobalSearchScope.allScope(project)),
-                     Collections.<With>emptyList());
+        final DomExtension implementationAttribute =
+          registrar.registerGenericAttributeValueChildExtension(new XmlName("implementation"), PsiClass.class)
+            .setConverter(CLASS_CONVERTER)
+            .addCustomAnnotation(new MyExtendClass(interfaceName))
+            .addCustomAnnotation(new MyRequired());
+
+        final PsiClass interfaceClass = extensionPoint.getInterface().getValue();
+        if (interfaceClass != null) {
+          implementationAttribute.setDeclaringElement(interfaceClass);
+        } else {
+          implementationAttribute.setDeclaringElement(extensionPoint);
+        }
+
+        registerXmlb(registrar, interfaceClass, Collections.<With>emptyList());
       }
       else {
-        final String beanClassName = extensionPoint.getBeanClass().getStringValue();
-        if (beanClassName != null) {
-          registerXmlb(registrar, JavaPsiFacade.getInstance(project).findClass(beanClassName, GlobalSearchScope.allScope(project)),
-                       extensionPoint.getWithElements());
-        }
+        final PsiClass beanClass = extensionPoint.getBeanClass().getValue();
+        registerXmlb(registrar, beanClass, extensionPoint.getWithElements());
       }
     }
   };
@@ -131,7 +135,7 @@ public class ExtensionDomExtender extends DomExtender<Extensions> {
   @Nullable
   public static With findWithElement(List<With> elements, PsiField field) {
     for (With element : elements) {
-      if (field.getName().equals(element.getAttribute().getStringValue())) {
+      if (Comparing.equal(field.getName(), element.getAttribute().getStringValue())) {
         return element;
       }
     }
@@ -154,7 +158,7 @@ public class ExtensionDomExtender extends DomExtender<Extensions> {
         Class clazz = String.class;
         if (withElement != null || isClassField(fieldName)) {
           clazz = PsiClass.class;
-        } else if (field.getType() == PsiType.BOOLEAN) {
+        } else if (PsiType.BOOLEAN.equals(field.getType())) {
           clazz = Boolean.class;
         }
         final DomExtension extension =
@@ -214,7 +218,10 @@ public class ExtensionDomExtender extends DomExtender<Extensions> {
   }
 
   public static boolean isClassField(String fieldName) {
-    return (fieldName.endsWith("Class") && !fieldName.equals("forClass")) || fieldName.equals("implementation");
+    return (fieldName.endsWith("Class") && !fieldName.equals("forClass")) || 
+           fieldName.equals("implementation") || 
+           fieldName.equals("serviceInterface") || 
+           fieldName.equals("serviceImplementation");
   }
 
   @Nullable
@@ -241,29 +248,36 @@ public class ExtensionDomExtender extends DomExtender<Extensions> {
     if (surroundWithTag) return; // todo Set, List, Array
     final String tagName = getStringAttribute(anno, "elementTag", evalHelper);
     final String attrName = getStringAttribute(anno, "elementValueAttribute", evalHelper);
-    final PsiClass psiClass = getElementType(type);
-    if (tagName != null && attrName == null) {
-      registrar.registerCollectionChildrenExtension(new XmlName(tagName), SimpleTagValue.class);
-    }
-    else if (tagName != null) {
-      registrar.registerCollectionChildrenExtension(new XmlName(tagName), DomElement.class).addExtender(new DomExtender() {
-        @Override
-        public void registerExtensions(@NotNull DomElement domElement, @NotNull DomExtensionsRegistrar registrar) {
-          registrar.registerGenericAttributeValueChildExtension(new XmlName(attrName), String.class);
-        }
-      });
-    }
-    else if (psiClass != null) {
-      final PsiModifierList modifierList = psiClass.getModifierList();
-      final PsiAnnotation tagAnno = modifierList == null? null : modifierList.findAnnotation(Tag.class.getName());
-      final String classTagName = tagAnno == null? psiClass.getName() : getStringAttribute(tagAnno, "value", evalHelper);
-      if (classTagName != null) {
-        registrar.registerCollectionChildrenExtension(new XmlName(classTagName), DomElement.class).addExtender(new DomExtender() {
+    final PsiType elementType = getElementType(type);
+    if (elementType == null || TypeConversionUtil.isPrimitiveAndNotNullOrWrapper(elementType)
+        || CommonClassNames.JAVA_LANG_STRING.equals(elementType.getCanonicalText())
+        || TypeConversionUtil.isEnumType(elementType)) {
+      if (tagName != null && attrName == null) {
+        registrar.registerCollectionChildrenExtension(new XmlName(tagName), SimpleTagValue.class);
+      }
+      else if (tagName != null) {
+        registrar.registerCollectionChildrenExtension(new XmlName(tagName), DomElement.class).addExtender(new DomExtender() {
           @Override
           public void registerExtensions(@NotNull DomElement domElement, @NotNull DomExtensionsRegistrar registrar) {
-            registerXmlb(registrar, psiClass, Collections.<With>emptyList());
+            registrar.registerGenericAttributeValueChildExtension(new XmlName(attrName), String.class);
           }
         });
+      }
+    }
+    else {
+      final PsiClass psiClass = PsiTypesUtil.getPsiClass(elementType);
+      if (psiClass != null) {
+        final PsiModifierList modifierList = psiClass.getModifierList();
+        final PsiAnnotation tagAnno = modifierList == null? null : modifierList.findAnnotation(Tag.class.getName());
+        final String classTagName = tagAnno == null? psiClass.getName() : getStringAttribute(tagAnno, "value", evalHelper);
+        if (classTagName != null) {
+          registrar.registerCollectionChildrenExtension(new XmlName(classTagName), DomElement.class).addExtender(new DomExtender() {
+            @Override
+            public void registerExtensions(@NotNull DomElement domElement, @NotNull DomExtensionsRegistrar registrar) {
+              registerXmlb(registrar, psiClass, Collections.<With>emptyList());
+            }
+          });
+        }
       }
     }
   }
@@ -298,15 +312,17 @@ public class ExtensionDomExtender extends DomExtender<Extensions> {
   }
 
   @Nullable
-  public static PsiClass getElementType(final PsiType psiType) {
-    final PsiType elementType;
-    if (psiType instanceof PsiArrayType) elementType = ((PsiArrayType)psiType).getComponentType();
+  public static PsiType getElementType(final PsiType psiType) {
+    if (psiType instanceof PsiArrayType) {
+      return ((PsiArrayType)psiType).getComponentType();
+    }
     else if (psiType instanceof PsiClassType) {
       final PsiType[] types = ((PsiClassType)psiType).getParameters();
-      elementType = types.length == 1? types[0] : null;
+      return types.length == 1? types[0] : null;
     }
-    else elementType = null;
-    return PsiTypesUtil.getPsiClass(elementType);
+    else {
+      return null;
+    }
   }
 
   public static Collection<String> getDependencies(IdeaPlugin ideaPlugin) {
@@ -375,6 +391,7 @@ public class ExtensionDomExtender extends DomExtender<Extensions> {
     String getTagValue();
   }
 
+  @SuppressWarnings("ClassExplicitlyAnnotation")
   private static class MyRequired implements Required {
     @Override
     public boolean value() {

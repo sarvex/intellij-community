@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package com.intellij.refactoring;
 
-import com.intellij.codeInsight.TargetElementUtilBase;
+import com.intellij.codeInsight.TargetElementUtil;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.psi.*;
 import com.intellij.psi.search.GlobalSearchScope;
@@ -26,6 +26,7 @@ import com.intellij.refactoring.util.classMembers.MemberInfoStorage;
 import com.intellij.testFramework.IdeaTestUtil;
 import com.intellij.usageView.UsageInfo;
 import com.intellij.util.containers.MultiMap;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -62,6 +63,12 @@ public class PushDownTest extends LightRefactoringTestCase {
 
   public void testInterfaceConstants() { doTest();}
 
+  public void testReferenceForMovedInnerClass() { doTest();}
+  
+  public void testInsertOverrideWhenKeepAbstract() throws Exception {
+    doTestImplements(true);
+  }
+
   private void doTest() {
     doTest(false);
   }
@@ -69,7 +76,7 @@ public class PushDownTest extends LightRefactoringTestCase {
   private void doTest(final boolean failure) {
     configureByFile(BASE_PATH + getTestName(false) + ".java");
 
-    final PsiElement targetElement = TargetElementUtilBase.findTargetElement(getEditor(), TargetElementUtilBase.ELEMENT_NAME_ACCEPTED);
+    final PsiElement targetElement = TargetElementUtil.findTargetElement(getEditor(), TargetElementUtil.ELEMENT_NAME_ACCEPTED);
     assertTrue("<caret> is not on member name", targetElement instanceof PsiMember);
 
     final PsiMember psiMember = (PsiMember)targetElement;
@@ -78,11 +85,18 @@ public class PushDownTest extends LightRefactoringTestCase {
 
     assert currentClass != null;
 
-    final List<MemberInfo> membersToMove = new ArrayList<MemberInfo>();
+    final List<MemberInfo> membersToMove = new ArrayList<>();
 
     final PsiField fieldByName = currentClass.findFieldByName("fieldToMove", false);
     if (fieldByName != null) {
       final MemberInfo memberInfo = new MemberInfo(fieldByName);
+      memberInfo.setChecked(true);
+      membersToMove.add(memberInfo);
+    }
+
+    final PsiClass classByName = currentClass.findInnerClassByName("ClassToMove", false);
+    if (classByName != null) {
+      final MemberInfo memberInfo = new MemberInfo(classByName);
       memberInfo.setChecked(true);
       membersToMove.add(memberInfo);
     }
@@ -94,7 +108,7 @@ public class PushDownTest extends LightRefactoringTestCase {
     new PushDownProcessor(getProject(), membersToMove.toArray(new MemberInfo[membersToMove.size()]), currentClass,
                           new DocCommentPolicy(DocCommentPolicy.ASIS)) {
       @Override
-      protected boolean showConflicts(MultiMap<PsiElement, String> conflicts, UsageInfo[] usages) {
+      protected boolean showConflicts(@NotNull MultiMap<PsiElement, String> conflicts, UsageInfo[] usages) {
         if (failure ? conflicts.isEmpty() : !conflicts.isEmpty()) {
           fail(failure ? "Conflict was not detected" : "False conflict was detected");
         }
@@ -106,24 +120,26 @@ public class PushDownTest extends LightRefactoringTestCase {
   }
 
   private void doTestImplements() {
+    doTestImplements(false);
+  }
+
+  private void doTestImplements(boolean toAbstract) {
     configureByFile(BASE_PATH + getTestName(false) + ".java");
 
     PsiClass currentClass = JavaPsiFacade.getInstance(getProject()).findClass("Test", GlobalSearchScope.projectScope(getProject()));
-    MemberInfoStorage memberInfoStorage = new MemberInfoStorage(currentClass, new MemberInfo.Filter<PsiMember>() {
-      @Override
-      public boolean includeMember(PsiMember element) {
-        return true;
-      }
-    });
+    MemberInfoStorage memberInfoStorage = new MemberInfoStorage(currentClass, element -> true);
     List<MemberInfo> members = memberInfoStorage.getClassMemberInfos(currentClass);
     for (MemberInfo member : members) {
       member.setChecked(true);
+      if (toAbstract) {
+        member.setToAbstract(toAbstract);
+      }
     }
 
     new PushDownProcessor(getProject(), members.toArray(new MemberInfo[members.size()]), currentClass,
                           new DocCommentPolicy(DocCommentPolicy.ASIS)) {
       @Override
-      protected boolean showConflicts(MultiMap<PsiElement, String> conflicts, UsageInfo[] usages) {
+      protected boolean showConflicts(@NotNull MultiMap<PsiElement, String> conflicts, UsageInfo[] usages) {
         return true;
       }
     }.run();

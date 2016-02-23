@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,9 @@ import com.intellij.icons.AllIcons;
 import com.intellij.ide.DataManager;
 import com.intellij.navigation.ItemPresentation;
 import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
@@ -35,18 +37,21 @@ import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.util.ProgressWrapper;
 import com.intellij.openapi.progress.util.TooManyUsagesStatus;
-import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.DumbServiceImpl;
 import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.LibraryOrderEntry;
+import com.intellij.openapi.roots.OrderEntry;
+import com.intellij.openapi.roots.OrderRootType;
+import com.intellij.openapi.roots.ProjectFileIndex;
+import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.util.Computable;
-import com.intellij.openapi.util.Factory;
+import com.intellij.openapi.util.Condition;
+import com.intellij.openapi.util.Conditions;
 import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.openapi.vfs.LocalFileProvider;
-import com.intellij.openapi.vfs.LocalFileSystem;
-import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.openapi.vfs.VirtualFileManager;
+import com.intellij.openapi.vfs.*;
 import com.intellij.openapi.vfs.ex.VirtualFileManagerEx;
 import com.intellij.psi.*;
 import com.intellij.psi.search.*;
@@ -60,13 +65,15 @@ import com.intellij.usages.UsageViewPresentation;
 import com.intellij.util.Function;
 import com.intellij.util.PatternUtil;
 import com.intellij.util.Processor;
+import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.io.File;
-import java.util.List;
+import java.util.*;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 public class FindInProjectUtil {
   private static final int USAGES_PER_READ_ACTION = 100;
@@ -117,14 +124,22 @@ public class FindInProjectUtil {
     }
   }
 
+  /**
+   * @deprecated to remove in IDEA 16
+   */
   @Nullable
   public static PsiDirectory getPsiDirectory(@NotNull final FindModel findModel, @NotNull Project project) {
+    VirtualFile directory = getDirectory(findModel);
+    return directory == null ? null : PsiManager.getInstance(project).findDirectory(directory);
+  }
+
+  @Nullable
+  public static VirtualFile getDirectory(@NotNull final FindModel findModel) {
     String directoryName = findModel.getDirectoryName();
     if (findModel.isProjectScope() || StringUtil.isEmpty(directoryName)) {
       return null;
     }
 
-    final PsiManager psiManager = PsiManager.getInstance(project);
     String path = directoryName.replace(File.separatorChar, '/');
     VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByPath(path);
     if (virtualFile == null || !virtualFile.isDirectory()) {
@@ -137,15 +152,51 @@ public class FindInProjectUtil {
             break;
           }
           if(virtualFile == null){
-             virtualFile = file;
+            virtualFile = file;
           }
         }
       }
     }
-    return virtualFile == null ? null : psiManager.findDirectory(virtualFile);
+    return virtualFile;
+
   }
 
+  /* filter can have form "*.js, !*_min.js", latter means except matched by *_min.js */
+  @NotNull
+  public static Condition<String> createFileMaskCondition(@Nullable String filter) throws PatternSyntaxException {
+    if (filter == null) {
+      return Conditions.alwaysTrue();
+    }
 
+    String pattern = "";
+    String negativePattern = "";
+    final List<String> masks = StringUtil.split(filter, ",");
+
+    for(String mask:masks) {
+      mask = mask.trim();
+      if (StringUtil.startsWith(mask, "!")) {
+        negativePattern += (negativePattern.isEmpty() ? "" : "|") + "(" + PatternUtil.convertToRegex(mask.substring(1)) + ")";
+      } else {
+        pattern += (pattern.isEmpty() ? "" : "|") + "(" + PatternUtil.convertToRegex(mask) + ")";
+      }
+    }
+
+    final String finalPattern = pattern;
+    final String finalNegativePattern = negativePattern;
+
+    return new Condition<String>() {
+      final Pattern regExp = Pattern.compile(finalPattern, Pattern.CASE_INSENSITIVE);
+      final Pattern negativeRegExp = StringUtil.isEmpty(finalNegativePattern) ? null : Pattern.compile(finalNegativePattern, Pattern.CASE_INSENSITIVE);
+      @Override
+      public boolean value(String input) {
+        return regExp.matcher(input).matches() && (negativeRegExp == null || !negativeRegExp.matcher(input).matches());
+      }
+    };
+  }
+
+  /**
+   * @deprecated to be removed in IDEA 16
+   */
   @Nullable
   public static Pattern createFileMaskRegExp(@Nullable String filter) {
     if (filter == null) {
@@ -157,35 +208,43 @@ public class FindInProjectUtil {
       pattern = PatternUtil.convertToRegex(filter.trim());
     }
     else {
-      pattern = StringUtil.join(strings, new Function<String, String>() {
-        @NotNull
-        @Override
-        public String fun(@NotNull String s) {
-          return "(" + PatternUtil.convertToRegex(s.trim()) + ")";
-        }
-      }, "|");
+      pattern = StringUtil.join(strings, s -> "(" + PatternUtil.convertToRegex(s.trim()) + ")", "|");
     }
     return Pattern.compile(pattern, Pattern.CASE_INSENSITIVE);
   }
 
+  /**
+   * @deprecated to remove in IDEA 16
+   */
   public static void findUsages(@NotNull FindModel findModel,
-                                final PsiDirectory psiDirectory,
+                                @Nullable final PsiDirectory psiDirectory,
                                 @NotNull final Project project,
                                 @NotNull final Processor<UsageInfo> consumer,
                                 @NotNull FindUsagesProcessPresentation processPresentation) {
-    new FindInProjectTask(findModel, project, psiDirectory).findUsages(consumer, processPresentation);
+    findUsages(findModel, project, consumer, processPresentation);
   }
 
+  public static void findUsages(@NotNull FindModel findModel,
+                                @NotNull final Project project,
+                                @NotNull final Processor<UsageInfo> consumer,
+                                @NotNull FindUsagesProcessPresentation processPresentation) {
+    findUsages(findModel, project, consumer, processPresentation, Collections.emptySet());
+  }
+
+  public static void findUsages(@NotNull FindModel findModel,
+                                @NotNull final Project project,
+                                @NotNull final Processor<UsageInfo> consumer,
+                                @NotNull FindUsagesProcessPresentation processPresentation,
+                                @NotNull Set<VirtualFile> filesToStart) {
+    new FindInProjectTask(findModel, project, filesToStart).findUsages(consumer, processPresentation);
+  }
+
+  // returns number of hits
   static int processUsagesInFile(@NotNull final PsiFile psiFile,
-                                         @NotNull final FindModel findModel,
-                                         @NotNull final Processor<UsageInfo> consumer) {
+                                 @NotNull final FindModel findModel,
+                                 @NotNull final Processor<UsageInfo> consumer) {
     if (findModel.getStringToFind().isEmpty()) {
-      if (!ApplicationManager.getApplication().runReadAction(new Computable<Boolean>() {
-              @Override
-              public Boolean compute() {
-                return consumer.process(new UsageInfo(psiFile,0,0,true));
-              }
-            })) {
+      if (!ApplicationManager.getApplication().runReadAction((Computable<Boolean>)() -> consumer.process(new UsageInfo(psiFile)))) {
         throw new ProcessCanceledException();
       }
       return 1;
@@ -193,12 +252,8 @@ public class FindInProjectUtil {
     final VirtualFile virtualFile = psiFile.getVirtualFile();
     if (virtualFile == null) return 0;
     if (virtualFile.getFileType().isBinary()) return 0; // do not decompile .class files
-    final Document document = ApplicationManager.getApplication().runReadAction(new Computable<Document>() {
-      @Override
-      public Document compute() {
-        return virtualFile.isValid() ? FileDocumentManager.getInstance().getDocument(virtualFile) : null;
-      }
-    });
+    final Document document = ApplicationManager.getApplication().runReadAction(
+      (Computable<Document>)() -> virtualFile.isValid() ? FileDocumentManager.getInstance().getDocument(virtualFile) : null);
     if (document == null) return 0;
     final int[] offset = {0};
     int count = 0;
@@ -207,13 +262,9 @@ public class FindInProjectUtil {
     TooManyUsagesStatus tooManyUsagesStatus = TooManyUsagesStatus.getFrom(indicator);
     do {
       tooManyUsagesStatus.pauseProcessingIfTooManyUsages(); // wait for user out of read action
-      found = DumbService.getInstance(psiFile.getProject()).runReadActionInSmartMode(new Computable<Integer>() {
-        @Override
-        @NotNull
-        public Integer compute() {
-          if (!psiFile.isValid()) return 0;
-          return addToUsages(document, consumer, findModel, psiFile, offset, USAGES_PER_READ_ACTION);
-        }
+      found = ApplicationManager.getApplication().runReadAction((Computable<Integer>)() -> {
+        if (!psiFile.isValid()) return 0;
+        return addToUsages(document, consumer, findModel, psiFile, offset, USAGES_PER_READ_ACTION);
       });
       count += found;
     }
@@ -298,11 +349,17 @@ public class FindInProjectUtil {
       presentation.setUsagesString("files");
     }
     else {
-      presentation.setTabText(FindBundle.message("find.usage.view.tab.text", stringToFind));
-      presentation.setToolwindowTitle(FindBundle.message("find.usage.view.toolwindow.title", stringToFind, scope));
+      FindModel.SearchContext searchContext = findModel.getSearchContext();
+      String contextText = "";
+      if (searchContext != FindModel.SearchContext.ANY) {
+        contextText = FindBundle.message("find.context.presentation.scope.label", FindDialog.getPresentableName(searchContext));
+      }
+      presentation.setTabText(FindBundle.message("find.usage.view.tab.text", stringToFind, contextText));
+      presentation.setToolwindowTitle(FindBundle.message("find.usage.view.toolwindow.title", stringToFind, scope, contextText));
       presentation.setUsagesString(FindBundle.message("find.usage.view.usages.text", stringToFind));
       presentation.setUsagesWord(FindBundle.message("occurrence"));
       presentation.setCodeUsagesString(FindBundle.message("found.occurrences"));
+      presentation.setContextText(contextText);
     }
     presentation.setOpenInNewTab(toOpenInNewTab);
     presentation.setCodeUsages(false);
@@ -319,15 +376,53 @@ public class FindInProjectUtil {
     processPresentation.setShowNotFoundMessage(true);
     processPresentation.setShowPanelIfOnlyOneUsage(showPanelIfOnlyOneUsage);
     processPresentation.setProgressIndicatorFactory(
-      new Factory<ProgressIndicator>() {
-        @NotNull
-        @Override
-        public ProgressIndicator create() {
-          return new FindProgressIndicator(project, presentation.getScopeText());
-        }
-      }
+      () -> new FindProgressIndicator(project, presentation.getScopeText())
     );
     return processPresentation;
+  }
+
+  private static List<PsiElement> getTopLevelRegExpChars(String regExpText, Project project) {
+    @SuppressWarnings("deprecation") PsiFile file = PsiFileFactory.getInstance(project).createFileFromText("A.regexp", regExpText);
+    List<PsiElement> result = null;
+    final PsiElement[] children = file.getChildren();
+
+    for (PsiElement child:children) {
+      PsiElement[] grandChildren = child.getChildren();
+      if (grandChildren.length != 1) return Collections.emptyList(); // a | b, more than one branch, can not predict in current way
+
+      for(PsiElement grandGrandChild:grandChildren[0].getChildren()) {
+        if (result == null) result = new ArrayList<>();
+        result.add(grandGrandChild);
+      }
+    }
+    return result != null ? result : Collections.<PsiElement>emptyList();
+  }
+
+  @NotNull
+  public static String buildStringToFindForIndicesFromRegExp(@NotNull String stringToFind, @NotNull Project project) {
+    if (!Registry.is("idea.regexp.search.uses.indices")) return "";
+
+    final AccessToken accessToken = ReadAction.start();
+    try {
+      final List<PsiElement> topLevelRegExpChars = getTopLevelRegExpChars("a", project);
+      if (topLevelRegExpChars.size() != 1) return "";
+
+      // leave only top level regExpChars
+      return StringUtil.join(getTopLevelRegExpChars(stringToFind, project), new Function<PsiElement, String>() {
+        final Class regExpCharPsiClass = topLevelRegExpChars.get(0).getClass();
+
+        @Override
+        public String fun(PsiElement element) {
+          if(regExpCharPsiClass.isInstance(element)) {
+            String text = element.getText();
+            if (!text.startsWith("\\")) return text;
+          }
+          return " ";
+        }
+      }, "");
+    } finally {
+      accessToken.finish();
+    }
   }
 
   public static class StringUsageTarget implements ConfigurableUsageTarget, ItemPresentation, TypeSafeDataProvider {
@@ -439,18 +534,70 @@ public class FindInProjectUtil {
     }
   }
 
+  private static void addSourceDirectoriesFromLibraries(@NotNull Project project,
+                                                        @NotNull VirtualFile directory,
+                                                        @NotNull Collection<VirtualFile> outSourceRoots) {
+    ProjectFileIndex index = ProjectFileIndex.SERVICE.getInstance(project);
+    // if we already are in the sources, search just in this directory only
+    if (!index.isInLibraryClasses(directory)) return;
+    VirtualFile classRoot = index.getClassRootForFile(directory);
+    if (classRoot == null) return;
+    String relativePath = VfsUtilCore.getRelativePath(directory, classRoot);
+    if (relativePath == null) return;
+
+    Collection<VirtualFile> otherSourceRoots = new THashSet<>();
+
+    // if we are in the library sources, return (to search in this directory only)
+    // otherwise, if we outside sources or in a jar directory, add directories from other source roots
+    searchForOtherSourceDirs:
+    for (OrderEntry entry : index.getOrderEntriesForFile(directory)) {
+      if (entry instanceof LibraryOrderEntry) {
+        Library library = ((LibraryOrderEntry)entry).getLibrary();
+        if (library == null) continue;
+        // note: getUrls() returns jar directories too
+        String[] sourceUrls = library.getUrls(OrderRootType.SOURCES);
+        for (String sourceUrl : sourceUrls) {
+          if (VfsUtilCore.isEqualOrAncestor(sourceUrl, directory.getUrl())) {
+            // already in this library sources, no need to look for another source root
+            otherSourceRoots.clear();
+            break searchForOtherSourceDirs;
+          }
+          // otherwise we may be inside the jar file in a library which is configured as a jar directory
+          // in which case we have no way to know whether this is a source jar or classes jar - so try to locate the source jar
+        }
+      }
+      for (VirtualFile sourceRoot : entry.getFiles(OrderRootType.SOURCES)) {
+        VirtualFile sourceFile = sourceRoot.findFileByRelativePath(relativePath);
+        if (sourceFile != null) {
+          otherSourceRoots.add(sourceFile);
+        }
+      }
+    }
+    outSourceRoots.addAll(otherSourceRoots);
+  }
+
   @NotNull
   static SearchScope getScopeFromModel(@NotNull Project project, @NotNull FindModel findModel) {
     SearchScope customScope = findModel.getCustomScope();
-    PsiDirectory psiDir = getPsiDirectory(findModel, project);
-    VirtualFile directory = psiDir == null ? null : psiDir.getVirtualFile();
+    VirtualFile directory = getDirectory(findModel);
     Module module = findModel.getModuleName() == null ? null : ModuleManager.getInstance(project).findModuleByName(findModel.getModuleName());
-    return findModel.isCustomScope() && customScope != null ? customScope :
+    return findModel.isCustomScope() && customScope != null ? customScope.intersectWith(GlobalSearchScope.allScope(project)) :
            // we don't have to check for myProjectFileIndex.isExcluded(file) here like FindInProjectTask.collectFilesInScope() does
            // because all found usages are guaranteed to be not in excluded dir
-           directory != null ? GlobalSearchScopesCore.directoryScope(project, directory, findModel.isWithSubdirectories()) :
+           directory != null ? forDirectory(project, findModel.isWithSubdirectories(), directory) :
            module != null ? module.getModuleContentScope() :
            findModel.isProjectScope() ? ProjectScope.getContentScope(project) :
            GlobalSearchScope.allScope(project);
+  }
+
+  @NotNull
+  private static GlobalSearchScope forDirectory(@NotNull Project project,
+                                                boolean withSubdirectories,
+                                                @NotNull VirtualFile directory) {
+    Set<VirtualFile> result = new LinkedHashSet<>();
+    result.add(directory);
+    addSourceDirectoriesFromLibraries(project, directory, result);
+    VirtualFile[] array = result.toArray(new VirtualFile[result.size()]);
+    return GlobalSearchScopesCore.directoriesScope(project, withSubdirectories, array);
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -68,9 +68,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
+import java.util.*;
 import java.util.List;
 
 /**
@@ -88,7 +86,7 @@ public class AppEngineSupportProvider extends FrameworkSupportInModuleProvider {
 
   @Override
   public List<FrameworkDependency> getDependenciesFrameworkIds() {
-    return Arrays.asList(FrameworkDependency.required("web"), FrameworkDependency.optional(JPA_FRAMEWORK_ID));
+    return AppEngineWebIntegration.getInstance().getAppEngineFrameworkDependencies();
   }
 
   @Override
@@ -202,7 +200,7 @@ public class AppEngineSupportProvider extends FrameworkSupportInModuleProvider {
 
   private static Library addProjectLibrary(final Module module, final String name, final List<String> jarDirectories, final VirtualFile[] sources) {
     return new WriteAction<Library>() {
-      protected void run(final Result<Library> result) {
+      protected void run(@NotNull final Result<Library> result) {
         final LibraryTable libraryTable = LibraryTablesRegistrar.getInstance().getLibraryTable(module.getProject());
         Library library = libraryTable.getLibraryByName(name);
         if (library == null) {

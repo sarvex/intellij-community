@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  This file is used only when IDEA is started from IDEA. searchableOptions.xml packaged in the product installation is produced during
+  build by traverseUI command (see com.intellij.ide.ui.search.TraverseUIStarter for details).
+-->
 <options>
   <configurable id="reference.settings.ide.settings.file-colors" configurable_name="File Colors">
     <option name="" hit="" />
@@ -3408,6 +3412,8 @@
     <option name="synchronize" hit="Synchronize now" />
   </configurable>
   <configurable id="preferences.sourceCode" configurable_name="Code Style">
+    <option name="detect" hit="Detect and use existing file indents for editing" />
+    <option name="indent" hit="Detect and use existing file indents for editing" />
     <option name="" hit="" />
     <option name="code" hit="Code Style" />
     <option name="style" hit="Code Style" />
@@ -10379,8 +10385,8 @@
     <option name="opens" path="ActionManager" hit="Opens folder with log file" />
     <option name="with" path="ActionManager" hit="Opens folder with log file" />
     <option name="opera" path="ActionManager" hit="Opera" />
-    <option name="imports" path="ActionManager" hit="Optimize Imports..." />
-    <option name="optimize" path="ActionManager" hit="Optimize Imports..." />
+    <option name="imports" path="ActionManager" hit="Optimize Imports" />
+    <option name="optimize" path="ActionManager" hit="Optimize Imports" />
     <option name="options" path="ActionManager" hit="Options..." />
     <option name="organic" path="ActionManager" hit="Organic" />
     <option name="orthogonal" path="ActionManager" hit="Orthogonal" />
@@ -10874,8 +10880,8 @@
     <option name="2" path="ActionManager" hit="Refactoring Actions (2)" />
     <option name="actions" path="ActionManager" hit="Refactoring Actions (2)" />
     <option name="refactoring" path="ActionManager" hit="Refactoring Actions (2)" />
-    <option name="code" path="ActionManager" hit="Reformat Code..." />
-    <option name="reformat" path="ActionManager" hit="Reformat Code..." />
+    <option name="code" path="ActionManager" hit="Reformat Code" />
+    <option name="reformat" path="ActionManager" hit="Reformat Code" />
     <option name="code" path="ActionManager" hit="Reformat code" />
     <option name="reformat" path="ActionManager" hit="Reformat code" />
     <option name="80" path="ActionManager" hit="Reformat string literal or comment to fit maximum width (usually 80)" />
@@ -19853,10 +19859,9 @@
     <option name="native-to-ascii" hit="Transparent native-to-ascii conversion" />
     <option name="transparent" hit="Transparent native-to-ascii conversion" />
   </configurable>
-  <configurable id="Console Folding" configurable_name="Console Folding">
+  <configurable id="Console" configurable_name="Console">
     <option name="" hit="" />
-    <option name="console" hit="Console Folding" />
-    <option name="folding" hit="Console Folding" />
+    <option name="console" hit="Console" />
     <option name="exceptions" hit="Exceptions" />
     <option name="console" hit="Fold console lines that contain" />
     <option name="contain" hit="Fold console lines that contain" />
@@ -20084,7 +20089,7 @@
     <option name="flag" hit="Undefined Flag" />
     <option name="undefined" hit="Undefined Flag" />
   </configurable>
-  <configurable id="com.jetbrains.python.templateLanguages.TemplateLanguageModulesConfigurable" configurable_name="Python Template Languages">
+  <configurable id="com.jetbrains.python.templateLanguages.PyTemplateLanguageModulesConfigurable" configurable_name="Python Template Languages">
     <option name="" hit="" />
     <option name="languages" hit="Python Template Languages" />
     <option name="python" hit="Python Template Languages" />
@@ -21614,9 +21619,9 @@
     <option name="home" hit="Entity Local Home Interface" />
     <option name="interface" hit="Entity Local Home Interface" />
     <option name="local" hit="Entity Local Home Interface" />
-    <option name="erb" hit="Erb File.html" />
-    <option name="file" hit="Erb File.html" />
-    <option name="html" hit="Erb File.html" />
+    <option name="erb" hit="Erb File" />
+    <option name="file" hit="Erb File" />
+    <option name="html" hit="Erb File" />
     <option name="file" hit="File Header" />
     <option name="header" hit="File Header" />
     <option name="annotated" hit="Filter Annotated Class" />

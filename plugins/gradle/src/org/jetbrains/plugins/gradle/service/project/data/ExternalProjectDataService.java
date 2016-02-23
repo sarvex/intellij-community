@@ -16,90 +16,29 @@
 package org.jetbrains.plugins.gradle.service.project.data;
 
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.externalSystem.model.*;
-import com.intellij.openapi.externalSystem.service.project.manage.ProjectDataManager;
-import com.intellij.openapi.externalSystem.service.project.manage.ProjectDataService;
-import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
+import com.intellij.openapi.externalSystem.model.DataNode;
+import com.intellij.openapi.externalSystem.model.Key;
+import com.intellij.openapi.externalSystem.model.ProjectKeys;
+import com.intellij.openapi.externalSystem.model.project.ProjectData;
+import com.intellij.openapi.externalSystem.service.project.IdeModifiableModelsProvider;
+import com.intellij.openapi.externalSystem.service.project.manage.AbstractProjectDataService;
 import com.intellij.openapi.externalSystem.util.ExternalSystemConstants;
 import com.intellij.openapi.externalSystem.util.Order;
-import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.Pair;
-import com.intellij.openapi.util.io.FileUtil;
-import com.intellij.util.Function;
-import com.intellij.util.containers.ConcurrentFactoryMap;
-import com.intellij.util.containers.ContainerUtil;
-import gnu.trove.TObjectHashingStrategy;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import java.io.File;
-import java.io.IOException;
-import java.util.Collection;
-import java.util.Map;
+import org.jetbrains.plugins.gradle.model.ExternalProject;
+import java.util.*;
 
 /**
  * @author Vladislav.Soroka
  * @since 7/17/2014
  */
 @Order(ExternalSystemConstants.BUILTIN_SERVICE_ORDER)
-public class ExternalProjectDataService implements ProjectDataService<ExternalProject, Project> {
+public class ExternalProjectDataService extends AbstractProjectDataService<ExternalProject, Project> {
   private static final Logger LOG = Logger.getInstance(ExternalProjectDataService.class);
 
   @NotNull public static final Key<ExternalProject> KEY = Key.create(ExternalProject.class, ProjectKeys.TASK.getProcessingWeight() + 1);
-
-  @NotNull private final Map<Pair<ProjectSystemId, File>, ExternalProject> myExternalRootProjects;
-
-  @NotNull private ProjectDataManager myProjectDataManager;
-
-  private static final TObjectHashingStrategy<Pair<ProjectSystemId, File>> HASHING_STRATEGY =
-    new TObjectHashingStrategy<Pair<ProjectSystemId, File>>() {
-      @Override
-      public int computeHashCode(Pair<ProjectSystemId, File> object) {
-        try {
-          return object.first.hashCode() + FileUtil.pathHashCode(object.second.getCanonicalPath());
-        }
-        catch (IOException e) {
-          LOG.warn("unable to get canonical file path", e);
-          return object.first.hashCode() + FileUtil.fileHashCode(object.second);
-        }
-      }
-
-      @Override
-      public boolean equals(Pair<ProjectSystemId, File> o1, Pair<ProjectSystemId, File> o2) {
-        try {
-          return o1.first.equals(o2.first) && FileUtil.pathsEqual(o1.second.getCanonicalPath(), o2.second.getCanonicalPath());
-        }
-        catch (IOException e) {
-          LOG.warn("unable to get canonical file path", e);
-          return o1.first.equals(o2.first) && FileUtil.filesEqual(o1.second, o2.second);
-        }
-      }
-    };
-
-
-  public ExternalProjectDataService(@NotNull ProjectDataManager projectDataManager) {
-    myProjectDataManager = projectDataManager;
-    myExternalRootProjects = new ConcurrentFactoryMap<Pair<ProjectSystemId, File>, ExternalProject>() {
-
-      @Override
-      protected Map<Pair<ProjectSystemId, File>, ExternalProject> createMap() {
-        return ContainerUtil.newConcurrentMap(HASHING_STRATEGY);
-      }
-
-      @Nullable
-      @Override
-      protected ExternalProject create(Pair<ProjectSystemId, File> key) {
-        return new ExternalProjectSerializer().load(key.first, key.second);
-      }
-
-      @Override
-      public ExternalProject put(Pair<ProjectSystemId, File> key, ExternalProject value) {
-        new ExternalProjectSerializer().save(value);
-        return super.put(key, value);
-      }
-    };
-  }
 
   @NotNull
   @Override
@@ -108,61 +47,14 @@ public class ExternalProjectDataService implements ProjectDataService<ExternalPr
   }
 
   public void importData(@NotNull final Collection<DataNode<ExternalProject>> toImport,
+                         @Nullable ProjectData projectData,
                          @NotNull final Project project,
-                         final boolean synchronous) {
+                         @NotNull IdeModifiableModelsProvider modelsProvider) {
+    if(toImport.isEmpty()) return;
     if (toImport.size() != 1) {
       throw new IllegalArgumentException(
         String.format("Expected to get a single external project but got %d: %s", toImport.size(), toImport));
     }
-    saveExternalProject(toImport.iterator().next().getData());
-  }
-
-  @Override
-  public void removeData(@NotNull final Collection<? extends Project> modules, @NotNull Project project, boolean synchronous) {
-  }
-
-  @Nullable
-  public ExternalProject getRootExternalProject(@NotNull ProjectSystemId systemId, @NotNull File projectRootDir) {
-    ExternalProject externalProject = myExternalRootProjects.get(Pair.create(systemId, projectRootDir));
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Can not find data for project at: " + projectRootDir);
-      LOG.debug("Existing imported projects paths: " + ContainerUtil.map(
-        myExternalRootProjects.entrySet(),
-        new Function<Map.Entry<Pair<ProjectSystemId, File>, ExternalProject>, Object>() {
-          @Override
-          public Object fun(Map.Entry<Pair<ProjectSystemId, File>, ExternalProject> entry) {
-            //noinspection ConstantConditions
-            if (!(entry.getValue() instanceof ExternalProject)) return null;
-            return Pair.create(entry.getKey(), entry.getValue().getProjectDir());
-          }
-        }));
-    }
-    return externalProject;
-  }
-
-  public void saveExternalProject(@NotNull ExternalProject externalProject) {
-    myExternalRootProjects.put(
-      Pair.create(new ProjectSystemId(externalProject.getExternalSystemId()), externalProject.getProjectDir()),
-      new DefaultExternalProject(externalProject)
-    );
-  }
-
-  @Nullable
-  public ExternalProject findExternalProject(@NotNull ExternalProject parentProject, @NotNull Module module) {
-    String externalProjectId = ExternalSystemApiUtil.getExternalProjectId(module);
-    return externalProjectId != null ? findExternalProject(parentProject, externalProjectId) : null;
-  }
-
-  @Nullable
-  private static ExternalProject findExternalProject(@NotNull ExternalProject parentProject, @NotNull String externalProjectId) {
-    if (parentProject.getQName().equals(externalProjectId)) return parentProject;
-    if (parentProject.getChildProjects().containsKey(externalProjectId)) {
-      return parentProject.getChildProjects().get(externalProjectId);
-    }
-    for (ExternalProject externalProject : parentProject.getChildProjects().values()) {
-      final ExternalProject project = findExternalProject(externalProject, externalProjectId);
-      if (project != null) return project;
-    }
-    return null;
+    ExternalProjectDataCache.getInstance(project).saveExternalProject(toImport.iterator().next().getData());
   }
 }

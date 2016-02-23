@@ -18,18 +18,20 @@ package com.jetbrains.python.nameResolver;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.Pair;
 import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiReference;
 import com.intellij.psi.util.PsiCacheKey;
 import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.psi.util.PsiTreeUtil;
+import com.intellij.psi.util.QualifiedName;
 import com.intellij.util.Function;
 import com.jetbrains.python.psi.*;
+import com.jetbrains.python.psi.resolve.PyResolveContext;
+import com.jetbrains.python.psi.types.TypeEvalContext;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
+import java.util.*;
 
 /**
  * @author Ilya.Kazakevich
@@ -63,7 +65,8 @@ public final class NameResolverTools {
   }
 
   /**
-   * Checks if FQ element name is one of provided names
+   * Checks if FQ element name is one of provided names. May be <strong>heavy</strong>.
+   * It is always better to use less accurate but lighter {@link #isCalleeShortCut(PyCallExpression, FQNamesProvider)}
    *
    * @param element        element to check
    * @param namesProviders some enum that has one or more names
@@ -103,6 +106,82 @@ public final class NameResolverTools {
   }
 
   /**
+   * Same as {@link #isName(PyElement, FQNamesProvider...)} for call expr, but first checks name.
+   * Aliases not supported, but much lighter that way
+   *
+   * @param call     expr
+   * @param function names to check
+   * @return true if callee is correct
+   */
+  public static boolean isCalleeShortCut(@NotNull final PyCallExpression call,
+                                         @NotNull final FQNamesProvider function) {
+    final PyExpression callee = call.getCallee();
+    if (callee == null) {
+      return false;
+    }
+
+    final String callableName = callee.getName();
+
+    final Collection<String> possibleNames = new LinkedList<String>();
+    for (final String lastComponent : getLastComponents(function)) {
+      possibleNames.add(lastComponent);
+    }
+    return possibleNames.contains(callableName) && call.isCallee(function);
+  }
+
+  @NotNull
+  private static List<String> getLastComponents(@NotNull final FQNamesProvider provider) {
+    final List<String> result = new ArrayList<String>();
+    for (final String name : provider.getNames()) {
+      final String component = QualifiedName.fromDottedString(name).getLastComponent();
+      if (component != null) {
+        result.add(component);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Checks if some string contains last component one of name
+   *
+   * @param text  test to check
+   * @param names
+   */
+  public static boolean isContainsName(@NotNull final String text, @NotNull final FQNamesProvider names) {
+    for (final String lastComponent : getLastComponents(names)) {
+      if (text.contains(lastComponent)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Checks if some file contains last component one of name
+   *
+   * @param file  file to check
+   * @param names
+   */
+  public static boolean isContainsName(@NotNull final PsiFile file, @NotNull final FQNamesProvider names) {
+    return isContainsName(file.getText(), names);
+  }
+
+  /**
+   * Check if class has parent with some name
+   * @param child class to check
+   */
+  public static boolean isSubclass(@NotNull final PyClass child,
+                                   @NotNull final FQNamesProvider parentName,
+                                   @NotNull final TypeEvalContext context) {
+    for (final String nameToCheck : parentName.getNames()) {
+      if (child.isSubclass(nameToCheck, context)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Looks for call of some function
    */
   private static class MyFunctionCondition implements Condition<PsiElement> {
@@ -128,9 +207,18 @@ public final class NameResolverTools {
   private static class QualifiedAndClassNameObtainer implements Function<PyElement, Pair<String, String>> {
     @Override
     @NotNull
-    public Pair<String, String> fun(@NotNull final PyElement element) {
-      PyElement elementToCheck = element;
-      final PsiReference reference = element.getReference();
+    public Pair<String, String> fun(@NotNull final PyElement param) {
+      PyElement elementToCheck = param;
+
+      // Trying to use no implicit context if possible...
+      final PsiReference reference;
+      if (param instanceof PyReferenceOwner) {
+        reference = ((PyReferenceOwner)param).getReference(PyResolveContext.noImplicits());
+      }
+      else {
+        reference = param.getReference();
+      }
+
       if (reference != null) {
         final PsiElement resolvedElement = reference.resolve();
         if (resolvedElement instanceof PyElement) {

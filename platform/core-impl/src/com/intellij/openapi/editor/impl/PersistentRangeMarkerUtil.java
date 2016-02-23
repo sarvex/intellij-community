@@ -15,8 +15,7 @@
  */
 package com.intellij.openapi.editor.impl;
 
-import com.intellij.openapi.editor.RangeMarker;
-import com.intellij.openapi.editor.impl.event.DocumentEventImpl;
+import com.intellij.openapi.editor.event.DocumentEvent;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -29,22 +28,18 @@ class PersistentRangeMarkerUtil {
    * identified by the given event.
    *
    * @param e             event that describes document change
-   * @param rangeMarker   target range marker which update strategy should be selected
+   * @param rangeStart    target range marker start, for which update strategy should be selected
+   * @param rangeEnd      target range marker end
    * @return              <code>true</code> if target document range referenced by the given range marker should be translated via
    *                      diff algorithm; <code>false</code> otherwise
    */
-  static boolean shouldTranslateViaDiff(@NotNull DocumentEventImpl e, @NotNull RangeMarker rangeMarker) {
+  static boolean shouldTranslateViaDiff(@NotNull DocumentEvent e, int rangeStart, int rangeEnd) {
     if (e.isWholeTextReplaced()) {
       // Perform translation if the whole text is replaced.
       return true;
     }
 
-    if (!rangeMarker.isValid()) {
-      // Don't perform complex processing if current range marker is already invalid.
-      return false;
-    }
-
-    if (e.getOffset() >= rangeMarker.getEndOffset() || e.getOffset() + e.getOldLength() <= rangeMarker.getStartOffset()) {
+    if (e.getOffset() >= rangeEnd || e.getOffset() + e.getOldLength() <= rangeStart) {
       // Don't perform complex processing if the change doesn't affect target range.
       return false;
     }

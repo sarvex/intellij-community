@@ -69,11 +69,13 @@ class GitBrancherImpl implements GitBrancher {
   }
 
   @Override
-  public void checkout(@NotNull final String reference, @NotNull final List<GitRepository> repositories,
+  public void checkout(@NotNull final String reference,
+                       final boolean detach,
+                       @NotNull final List<GitRepository> repositories,
                        @Nullable Runnable callInAwtLater) {
     new CommonBackgroundTask(myProject, "Checking out " + reference, callInAwtLater) {
       @Override public void execute(@NotNull ProgressIndicator indicator) {
-        newWorker(indicator).checkout(reference, repositories);
+        newWorker(indicator).checkout(reference, detach, repositories);
       }
     }.runInBackground();
   }
@@ -125,6 +127,36 @@ class GitBrancherImpl implements GitBrancher {
     new CommonBackgroundTask(myProject, "Merging " + branchName, null) {
       @Override public void execute(@NotNull ProgressIndicator indicator) {
         newWorker(indicator).merge(branchName, deleteOnMerge, repositories);
+      }
+    }.runInBackground();
+  }
+
+  @Override
+  public void rebase(@NotNull final List<GitRepository> repositories, @NotNull final String branchName) {
+    new CommonBackgroundTask(myProject, "Rebasing onto " + branchName, null) {
+      @Override
+      void execute(@NotNull ProgressIndicator indicator) {
+        newWorker(indicator).rebase(repositories, branchName);
+      }
+    }.runInBackground();
+  }
+
+  @Override
+  public void rebaseOnCurrent(@NotNull final List<GitRepository> repositories, @NotNull final String branchName) {
+    new CommonBackgroundTask(myProject, "Rebasing " + branchName + "...", null) {
+      @Override
+      void execute(@NotNull ProgressIndicator indicator) {
+        newWorker(indicator).rebaseOnCurrent(repositories, branchName);
+      }
+    }.runInBackground();
+  }
+
+  @Override
+  public void renameBranch(@NotNull final String currentName, @NotNull final String newName, @NotNull final List<GitRepository> repositories) {
+    new CommonBackgroundTask(myProject, "Renaming " + currentName + " to " + newName + "...", null) {
+      @Override
+      void execute(@NotNull ProgressIndicator indicator) {
+        newWorker(indicator).renameBranch(currentName, newName, repositories);
       }
     }.runInBackground();
   }

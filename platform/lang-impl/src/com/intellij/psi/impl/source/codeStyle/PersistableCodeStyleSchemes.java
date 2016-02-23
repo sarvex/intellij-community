@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.intellij.psi.impl.source.codeStyle;
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
-import com.intellij.openapi.components.StoragePathMacros;
 import com.intellij.openapi.options.SchemesManagerFactory;
 import com.intellij.psi.codeStyle.CodeStyleScheme;
 import com.intellij.util.xmlb.Accessor;
@@ -34,12 +33,14 @@ import org.jetbrains.annotations.Nullable;
 @State(
   name = "CodeStyleSchemeSettings",
   storages = {
-    @Storage(file = StoragePathMacros.APP_CONFIG + "/code.style.schemes.xml"),
-    @Storage(file = StoragePathMacros.APP_CONFIG + "/other.xml", deprecated = true)
+    @Storage("code.style.schemes.xml"),
+    @Storage(value = "other.xml", deprecated = true)
   },
   additionalExportFile = CodeStyleSchemesImpl.CODE_STYLES_DIR_PATH
 )
 class PersistableCodeStyleSchemes extends CodeStyleSchemesImpl implements PersistentStateComponent<Element> {
+  public String CURRENT_SCHEME_NAME = DEFAULT_SCHEME_NAME;
+
   public PersistableCodeStyleSchemes(@NotNull SchemesManagerFactory schemesManagerFactory) {
     super(schemesManagerFactory);
   }
@@ -47,6 +48,8 @@ class PersistableCodeStyleSchemes extends CodeStyleSchemesImpl implements Persis
   @Nullable
   @Override
   public Element getState() {
+    CodeStyleScheme currentScheme = getCurrentScheme();
+    CURRENT_SCHEME_NAME = currentScheme == null ? null : currentScheme.getName();
     return XmlSerializer.serialize(this, new SerializationFilter() {
       @Override
       public boolean accepts(@NotNull Accessor accessor, @NotNull Object bean) {
@@ -63,7 +66,7 @@ class PersistableCodeStyleSchemes extends CodeStyleSchemesImpl implements Persis
   @Override
   public void loadState(Element state) {
     XmlSerializer.deserializeInto(this, state);
-    CodeStyleScheme current = CURRENT_SCHEME_NAME == null ? null : findSchemeByName(CURRENT_SCHEME_NAME);
+    CodeStyleScheme current = CURRENT_SCHEME_NAME == null ? null : mySchemeManager.findSchemeByName(CURRENT_SCHEME_NAME);
     setCurrentScheme(current == null ? getDefaultScheme() : current);
   }
 }

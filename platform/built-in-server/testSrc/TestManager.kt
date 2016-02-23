@@ -1,44 +1,41 @@
 package org.jetbrains.ide
 
-import com.intellij.openapi.vfs.VirtualFile
-import org.junit.rules.TestWatcher
-import org.junit.runner.Description
-
-import java.lang.annotation.ElementType
-import java.lang.annotation.Retention
-import java.lang.annotation.RetentionPolicy
-import java.lang.annotation.Target
-import com.intellij.openapi.util.text.StringUtil
-import com.intellij.testFramework.fixtures.IdeaProjectTestFixture
+import com.intellij.openapi.application.runWriteAction
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.roots.ModuleRootModificationUtil
 import com.intellij.openapi.util.io.FileUtilRt
+import com.intellij.openapi.util.text.StringUtil
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.testFramework.ProjectRule
+import com.intellij.testFramework.TemporaryDirectory
+import com.intellij.testFramework.runInEdtAndWait
+import com.intellij.util.createFile
+import com.intellij.util.systemIndependentPath
+import org.junit.rules.TestWatcher
+import org.junit.runner.Description
 import java.io.File
 
-class TestManager(val projectFixture: IdeaProjectTestFixture) : TestWatcher() {
-  class object {
-    val EXCLUDED_DIR_NAME = "excludedDir"
-  }
+private val EXCLUDED_DIR_NAME = "excludedDir"
 
-  public var annotation: TestDescriptor? = null
+internal class TestManager(val projectRule: ProjectRule, private val tempDirManager: TemporaryDirectory) : TestWatcher() {
+  var annotation: TestDescriptor? = null
 
-  public var filePath: String? = null
+  var filePath: String? = null
   private var fileToDelete: VirtualFile? = null
 
   private var ioFileToDelete: File? = null
 
-  Retention(RetentionPolicy.RUNTIME)
-  Target(ElementType.METHOD)
-  annotation public class TestDescriptor(public val filePath: String,
-                                         public val line: Int = -1,
-                                         public val column: Int = -1,
-                                         public val relativeToProject: Boolean = false,
-                                         public val excluded: Boolean = false,
-                                         public val doNotCreate: Boolean = false,
-                                         public val status: Int = 200)
+  @Target(AnnotationTarget.FUNCTION)
+  annotation class TestDescriptor(val filePath: String,
+                                  val line: Int = -1,
+                                  val column: Int = -1,
+                                  val relativeToProject: Boolean = false,
+                                  val excluded: Boolean = false,
+                                  val doNotCreate: Boolean = false,
+                                  val status: Int = 200)
 
   override fun starting(description: Description) {
-    annotation = description.getAnnotation<TestDescriptor>(javaClass<TestDescriptor>())
+    annotation = description.getAnnotation(TestDescriptor::class.java)
     if (annotation == null) {
       return
     }
@@ -48,14 +45,15 @@ class TestManager(val projectFixture: IdeaProjectTestFixture) : TestWatcher() {
       return
     }
 
+    // trigger project creation
+    projectRule.project
+
     if (filePath!! == "_tmp_") {
-      if (annotation!!.doNotCreate) {
-        filePath = FileUtilRt.generateRandomTemporaryPath().getPath()
+      val file = tempDirManager.newPath(".txt", refreshVfs = true)
+      if (!annotation!!.doNotCreate) {
+        file.createFile()
       }
-      else {
-        ioFileToDelete = FileUtilRt.createTempFile("testFile", ".txt")
-        filePath = ioFileToDelete!!.getPath()
-      }
+      filePath = file.systemIndependentPath
       return
     }
 
@@ -63,19 +61,20 @@ class TestManager(val projectFixture: IdeaProjectTestFixture) : TestWatcher() {
       return
     }
 
-    invokeAndWaitIfNeed {
-      val normalizedFilePath = FileUtilRt.toSystemIndependentName(filePath)
+    runInEdtAndWait {
+      val normalizedFilePath = FileUtilRt.toSystemIndependentName(filePath!!)
       if (annotation!!.relativeToProject) {
-        val root = projectFixture.getProject().getBaseDir()
+        val root = projectRule.project.baseDir
         runWriteAction {
           fileToDelete = root.findOrCreateChildData(this@TestManager, normalizedFilePath)
         }
       }
       else {
+        val module = projectRule.module
         if (annotation!!.excluded) {
-          ModuleRootModificationUtil.updateModel(projectFixture.getModule()) { model ->
-            val contentEntry = model.getContentEntries()[0]
-            val contentRoot = contentEntry.getFile()!!
+          ModuleRootModificationUtil.updateModel(module) { model ->
+            val contentEntry = model.contentEntries[0]
+            val contentRoot = contentEntry.file!!
             runWriteAction {
               contentRoot.findChild(EXCLUDED_DIR_NAME)?.delete(this@TestManager)
               fileToDelete = contentRoot.createChildDirectory(this@TestManager, EXCLUDED_DIR_NAME)
@@ -87,7 +86,7 @@ class TestManager(val projectFixture: IdeaProjectTestFixture) : TestWatcher() {
           filePath = "$EXCLUDED_DIR_NAME/$filePath"
         }
         else {
-          val root = ModuleRootManager.getInstance(projectFixture.getModule()).getSourceRoots()[0]
+          val root = ModuleRootManager.getInstance(module).sourceRoots[0]
           runWriteAction {
             fileToDelete = root.findOrCreateChildData(this@TestManager, normalizedFilePath)
           }
@@ -98,15 +97,15 @@ class TestManager(val projectFixture: IdeaProjectTestFixture) : TestWatcher() {
 
   override fun finished(description: Description?) {
     if (annotation!!.excluded) {
-      ModuleRootModificationUtil.updateModel(projectFixture.getModule()) { model -> model.getContentEntries()[0].removeExcludeFolder(EXCLUDED_DIR_NAME) }
+      ModuleRootModificationUtil.updateModel(projectRule.module) { model -> model.contentEntries[0].removeExcludeFolder(EXCLUDED_DIR_NAME) }
     }
 
     if (fileToDelete != null) {
-      invokeAndWaitIfNeed { runWriteAction { fileToDelete?.delete(this@TestManager) } }
+      runInEdtAndWait { runWriteAction { fileToDelete?.delete(this@TestManager) } }
       fileToDelete = null
     }
 
-    if (ioFileToDelete != null && !FileUtilRt.delete(ioFileToDelete)) {
+    if (ioFileToDelete != null && !FileUtilRt.delete(ioFileToDelete!!)) {
       ioFileToDelete!!.deleteOnExit()
     }
 

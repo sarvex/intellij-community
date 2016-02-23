@@ -26,21 +26,19 @@ import com.intellij.execution.Location;
 import com.intellij.execution.RunManagerEx;
 import com.intellij.execution.configuration.ConfigurationFactoryEx;
 import com.intellij.execution.configurations.*;
-import com.intellij.execution.impl.RunManagerImpl;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.psi.PsiElement;
 import com.theoryinpractice.testng.model.TestData;
+import com.theoryinpractice.testng.model.TestNGTestObject;
 import icons.TestngIcons;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
 
-public class TestNGConfigurationType implements ConfigurationType
-{
-  private static final Logger LOGGER = Logger.getInstance("TestNG Runner");
+public class TestNGConfigurationType implements ConfigurationType {
 
     private final ConfigurationFactory myFactory;
 
@@ -50,7 +48,6 @@ public class TestNGConfigurationType implements ConfigurationType
         {
             @Override
             public RunConfiguration createTemplateConfiguration(Project project) {
-                LOGGER.info("Create TestNG Template Configuration");
                 return new TestNGConfiguration("", project, this);
             }
 
@@ -72,12 +69,13 @@ public class TestNGConfigurationType implements ConfigurationType
             return false;
         else {
           final PsiElement element = location.getPsiElement();
-          if (testobject.isConfiguredByElement(element)) {
+          final TestNGTestObject testNGTestObject = TestNGTestObject.fromConfig(config);
+          if (testNGTestObject != null && testNGTestObject.isConfiguredByElement(element)) {
             final Module configurationModule = config.getConfigurationModule().getModule();
             if (Comparing.equal(location.getModule(), configurationModule)) return true;
 
             final Module predefinedModule =
-              ((TestNGConfiguration)((RunManagerImpl)RunManagerEx.getInstanceEx(location.getProject())).getConfigurationTemplate(myFactory)
+              ((TestNGConfiguration)RunManagerEx.getInstanceEx(location.getProject()).getConfigurationTemplate(myFactory)
                 .getConfiguration()).getConfigurationModule().getModule();
             return Comparing.equal(predefinedModule, configurationModule);
 

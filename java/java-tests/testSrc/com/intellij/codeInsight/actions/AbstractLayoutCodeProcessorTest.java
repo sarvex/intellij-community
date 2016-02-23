@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package com.intellij.codeInsight.actions;
 
 import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.EditorFactory;
@@ -23,6 +24,7 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.module.StdModuleTypes;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiDocumentManager;
@@ -32,8 +34,8 @@ import com.intellij.psi.impl.file.PsiDirectoryFactory;
 import com.intellij.psi.search.SearchScope;
 import com.intellij.testFramework.PsiTestCase;
 import com.intellij.testFramework.PsiTestUtil;
+import com.intellij.testFramework.VfsTestUtil;
 import com.intellij.util.containers.ContainerUtil;
-import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -98,7 +100,7 @@ public abstract class AbstractLayoutCodeProcessorTest extends PsiTestCase {
 
   @Override
   public void tearDown() throws Exception {
-    delete(myWorkingDirectory.getVirtualFile());
+    VfsTestUtil.deleteFile(myWorkingDirectory.getVirtualFile());
     super.tearDown();
   }
 
@@ -188,30 +190,22 @@ public abstract class AbstractLayoutCodeProcessorTest extends PsiTestCase {
   }
 
   protected AnActionEvent createEventFor(AnAction action, final VirtualFile[] files, final Project project) {
-    return new AnActionEvent(null, new DataContext() {
-      @Nullable
-      @Override
-      public Object getData(@NonNls String dataId) {
-        if (CommonDataKeys.VIRTUAL_FILE_ARRAY.is(dataId)) return files;
-        if (CommonDataKeys.PROJECT.is(dataId)) return project;
-        return null;
-      }
-    }, "", action.getTemplatePresentation(), ActionManager.getInstance(), 0);
+    return AnActionEvent.createFromAnAction(action, null, "", dataId -> {
+      if (CommonDataKeys.VIRTUAL_FILE_ARRAY.is(dataId)) return files;
+      if (CommonDataKeys.PROJECT.is(dataId)) return project;
+      return null;
+    });
   }
 
   protected AnActionEvent createEventFor(AnAction action, final List<VirtualFile> files, final Project project, @NotNull final AdditionalEventInfo eventInfo) {
-    return new AnActionEvent(null, new DataContext() {
-      @Nullable
-      @Override
-      public Object getData(@NonNls String dataId) {
-        if (CommonDataKeys.VIRTUAL_FILE_ARRAY.is(dataId)) return files.toArray(new VirtualFile[files.size()]);
-        if (CommonDataKeys.PROJECT.is(dataId)) return project;
-        if (CommonDataKeys.EDITOR.is(dataId)) return eventInfo.getEditor();
-        if (LangDataKeys.MODULE_CONTEXT.is(dataId)) return eventInfo.getModule();
-        if (CommonDataKeys.PSI_ELEMENT.is(dataId)) return eventInfo.getElement();
-        return null;
-      }
-    }, "", action.getTemplatePresentation(), ActionManager.getInstance(), 0);
+    return AnActionEvent.createFromAnAction(action, null, "", dataId -> {
+      if (CommonDataKeys.VIRTUAL_FILE_ARRAY.is(dataId)) return files.toArray(new VirtualFile[files.size()]);
+      if (CommonDataKeys.PROJECT.is(dataId)) return project;
+      if (CommonDataKeys.EDITOR.is(dataId)) return eventInfo.getEditor();
+      if (LangDataKeys.MODULE_CONTEXT.is(dataId)) return eventInfo.getModule();
+      if (CommonDataKeys.PSI_ELEMENT.is(dataId)) return eventInfo.getElement();
+      return null;
+    });
   }
 
 
@@ -271,7 +265,7 @@ public abstract class AbstractLayoutCodeProcessorTest extends PsiTestCase {
     PsiDirectory dir = createDirectory(getTempRootDirectory().getVirtualFile(), newModuleName);
     String path = dir.getVirtualFile().getPath() + "/" + newModuleName + ".iml";
 
-    Module module = ModuleManager.getInstance(getProject()).newModule(path, StdModuleTypes.JAVA.getId());
+    Module module = ApplicationManager.getApplication().runWriteAction((Computable<Module>)() -> ModuleManager.getInstance(getProject()).newModule(path, StdModuleTypes.JAVA.getId()));
     PsiDirectory src = createDirectory(dir.getVirtualFile(), "src");
 
     PsiTestUtil.addSourceRoot(module, src.getVirtualFile());

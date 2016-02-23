@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,10 +66,10 @@ public class SharedImplUtil {
   }
 
   public static PsiFile getContainingFile(ASTNode thisElement) {
-    FileASTNode element = findFileElement(thisElement);
-    PsiElement psiElement = element == null ? null : element.getPsi();
-    if (psiElement == null) return null;
-    return psiElement.getContainingFile();
+    FileASTNode node = findFileElement(thisElement);
+    PsiElement psi = node == null ? null : node.getPsi();
+    if (psi == null || psi instanceof PsiFile) return (PsiFile)psi;
+    throw new AssertionError("Invalid PSI " + psi + " of " + psi.getClass() + " for AST " + node + " of " + node.getClass());
   }
 
   public static boolean isValid(ASTNode thisElement) {
@@ -99,15 +99,18 @@ public class SharedImplUtil {
     return null;
   }
 
+  @NotNull
   public static CharTable findCharTableByTree(ASTNode tree) {
-    while (tree != null) {
-      final CharTable userData = tree.getUserData(CharTable.CHAR_TABLE_KEY);
-      if (userData != null) return userData;
-      if (tree instanceof FileElement) return ((FileElement)tree).getCharTable();
-      tree = tree.getTreeParent();
+    for (ASTNode o = tree; o != null; o = o.getTreeParent()) {
+      CharTable charTable = o.getUserData(CharTable.CHAR_TABLE_KEY);
+      if (charTable != null) {
+        return charTable;
+      }
+      if (o instanceof FileASTNode) {
+        return ((FileASTNode)o).getCharTable();
+      }
     }
-    LOG.error("Invalid root element");
-    return null;
+    throw new AssertionError("CharTable not found in: " + tree);
   }
 
   public static PsiElement addRange(PsiElement thisElement,

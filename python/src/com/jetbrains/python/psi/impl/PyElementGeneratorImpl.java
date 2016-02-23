@@ -74,7 +74,7 @@ public class PyElementGeneratorImpl extends PyElementGenerator {
 
   public PsiFile createDummyFile(LanguageLevel langLevel, String contents, boolean physical) {
     final PsiFileFactory factory = PsiFileFactory.getInstance(myProject);
-    final String name = "dummy." + PythonFileType.INSTANCE.getDefaultExtension();
+    final String name = getDummyFileName();
     final LightVirtualFile virtualFile = new LightVirtualFile(name, PythonFileType.INSTANCE, contents);
     virtualFile.putUserData(LanguageLevel.KEY, langLevel);
     final PsiFile psiFile = ((PsiFileFactoryImpl)factory).trySetupPsiForFile(virtualFile, PythonLanguage.getInstance(), physical, true);
@@ -82,10 +82,22 @@ public class PyElementGeneratorImpl extends PyElementGenerator {
     return psiFile;
   }
 
+  /**
+   * @return name used for {@link #createDummyFile(LanguageLevel, String)}
+   */
+  @NotNull
+  public static String getDummyFileName() {
+    return "dummy." + PythonFileType.INSTANCE.getDefaultExtension();
+  }
+
   public PyStringLiteralExpression createStringLiteralAlreadyEscaped(String str) {
     final PsiFile dummyFile = createDummyFile(LanguageLevel.getDefault(), "a=(" + str + ")");
     final PyAssignmentStatement expressionStatement = (PyAssignmentStatement)dummyFile.getFirstChild();
-    return (PyStringLiteralExpression)((PyParenthesizedExpression)expressionStatement.getAssignedValue()).getContainedExpression();
+    final PyExpression assignedValue = expressionStatement.getAssignedValue();
+    if (assignedValue != null) {
+      return (PyStringLiteralExpression)((PyParenthesizedExpression)assignedValue).getContainedExpression();
+    }
+    return createStringLiteralFromString(str);
   }
 
 
@@ -223,7 +235,7 @@ public class PyElementGeneratorImpl extends PyElementGenerator {
         exprNode.addChild(add);
       }
       else {
-        ASTNode next = PyUtil.getNextNonWhitespace(closingTokens[closingTokens.length - 1]);
+        ASTNode next = PyPsiUtils.getNextNonWhitespaceSibling(closingTokens[closingTokens.length - 1]);
         if (next != null) {
           ASTNode comma = createComma();
           exprNode.addChild(comma, next);
@@ -328,6 +340,19 @@ public class PyElementGeneratorImpl extends PyElementGenerator {
   public PyNamedParameter createParameter(@NotNull String name) {
     return createParameter(name, null, null, LanguageLevel.getDefault());
   }
+
+  @NotNull
+  @Override
+  public PyParameterList createParameterList(@NotNull LanguageLevel languageLevel, @NotNull String text) {
+    return createFromText(languageLevel, PyParameterList.class, "def f" + text + ": pass", new int[]{0, 3});
+  }
+
+  @NotNull
+  @Override
+  public PyArgumentList createArgumentList(@NotNull LanguageLevel languageLevel, @NotNull String text) {
+    return createFromText(languageLevel, PyArgumentList.class, "f" + text, new int[]{0, 0, 1});
+  }
+
 
   public PyNamedParameter createParameter(@NotNull String name, @Nullable String defaultValue, @Nullable String annotation,
                                           @NotNull LanguageLevel languageLevel) {

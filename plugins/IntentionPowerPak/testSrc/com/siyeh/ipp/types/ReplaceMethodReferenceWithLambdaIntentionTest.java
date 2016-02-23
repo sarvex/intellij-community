@@ -15,8 +15,10 @@
  */
 package com.siyeh.ipp.types;
 
+import com.intellij.testFramework.LightProjectDescriptor;
 import com.siyeh.IntentionPowerPackBundle;
 import com.siyeh.ipp.IPPTestCase;
+import org.jetbrains.annotations.NotNull;
 
 public class ReplaceMethodReferenceWithLambdaIntentionTest extends IPPTestCase {
  
@@ -28,6 +30,10 @@ public class ReplaceMethodReferenceWithLambdaIntentionTest extends IPPTestCase {
   @Override
   protected String getRelativePath() {
     return "types/methodRefs2lambda";
+  }
+
+  public void testRedundantCast() throws Exception {
+    doTest();
   }
 
   public void testStaticMethodRef() throws Exception {
@@ -108,5 +114,19 @@ public class ReplaceMethodReferenceWithLambdaIntentionTest extends IPPTestCase {
 
   public void testNameConflicts() throws Exception {
     doTest();
+  }
+
+  public void testIntroduceVariableForSideEffectQualifier() throws Exception {
+    doTest();
+  }
+
+  public void testCollapseToExpressionLambdaWhenCast() throws Exception {
+    doTest();
+  }
+
+  @NotNull
+  @Override
+  protected LightProjectDescriptor getProjectDescriptor() {
+    return JAVA_8;
   }
 }

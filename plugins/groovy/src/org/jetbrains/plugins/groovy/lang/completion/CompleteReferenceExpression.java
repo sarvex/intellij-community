@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,10 +61,12 @@ import org.jetbrains.plugins.groovy.lang.psi.util.GroovyPropertyUtils;
 import org.jetbrains.plugins.groovy.lang.psi.util.PsiUtil;
 import org.jetbrains.plugins.groovy.lang.resolve.ClosureMissingMethodContributor;
 import org.jetbrains.plugins.groovy.lang.resolve.ResolveUtil;
-import org.jetbrains.plugins.groovy.lang.resolve.processors.ResolverProcessor;
+import org.jetbrains.plugins.groovy.lang.resolve.processors.ResolverProcessorImpl;
 import org.jetbrains.plugins.groovy.lang.resolve.processors.SubstitutorComputer;
 
 import java.util.*;
+
+import static org.jetbrains.plugins.groovy.lang.resolve.processors.ClassHint.RESOLVE_CONTEXT;
 
 /**
  * @author ven
@@ -290,7 +292,7 @@ public class CompleteReferenceExpression {
     Project project = qualifier.getProject();
     final PsiType qualifierType = TypesUtil.boxPrimitiveType(qualifier.getType(), qualifier.getManager(), qualifier.getResolveScope());
     final ResolveState state = ResolveState.initial();
-    if (qualifierType == null || qualifierType == PsiType.VOID) {
+    if (qualifierType == null || PsiType.VOID.equals(qualifierType)) {
       if (qualifier instanceof GrReferenceExpression) {
         PsiElement resolved = ((GrReferenceExpression)qualifier).resolve();
         if (resolved instanceof PsiPackage || resolved instanceof PsiVariable) {
@@ -306,16 +308,10 @@ public class CompleteReferenceExpression {
       }
     }
     else if (qualifierType instanceof GrTraitType) {
-      GrTypeDefinition definition = ((GrTraitType)qualifierType).getMockTypeDefinition();
-      if (definition != null) {
-        PsiClassType classType = JavaPsiFacade.getElementFactory(project).createType(definition);
-        getVariantsFromQualifierType(classType, project);
-      }
-      else {
-        getVariantsFromQualifierType(((GrTraitType)qualifierType).getExprType(), project);
-        for (PsiClassType traitType : ((GrTraitType)qualifierType).getTraitTypes()) {
-          getVariantsFromQualifierType(traitType, project);
-        }
+      // Process trait type conjuncts in reversed order because last applied trait matters.
+      PsiType[] conjuncts = ((GrTraitType)qualifierType).getConjuncts();
+      for (int i = conjuncts.length - 1; i >= 0; i--) {
+        getVariantsFromQualifierType(conjuncts[i], project);
       }
     }
     else {
@@ -388,7 +384,7 @@ public class CompleteReferenceExpression {
     return InheritanceUtil.isInheritor(qType, CommonClassNames.JAVA_UTIL_MAP);
   }
 
-  private class CompleteReferenceProcessor extends ResolverProcessor implements Consumer<Object> {
+  private class CompleteReferenceProcessor extends ResolverProcessorImpl implements Consumer<Object> {
 
     private final Consumer<LookupElement> myConsumer;
 
@@ -410,7 +406,7 @@ public class CompleteReferenceExpression {
     private boolean myIsEmpty = true;
 
     protected CompleteReferenceProcessor() {
-      super(null, EnumSet.allOf(ResolveKind.class), myRefExpr, PsiType.EMPTY_ARRAY);
+      super(null, EnumSet.allOf(DeclarationKind.class), myRefExpr, PsiType.EMPTY_ARRAY);
       myConsumer = new Consumer<LookupElement>() {
         @Override
         public void consume(LookupElement element) {
@@ -458,7 +454,7 @@ public class CompleteReferenceExpression {
         PsiSubstitutor substitutor = state.get(PsiSubstitutor.KEY);
         if (substitutor == null) substitutor = PsiSubstitutor.EMPTY;
         if (element instanceof PsiMethod) {
-          substitutor = mySubstitutorComputer.obtainSubstitutor(substitutor, (PsiMethod)element, state);
+          substitutor = mySubstitutorComputer.obtainSubstitutor(substitutor, (PsiMethod)element, resolveContext);
         }
 
         consume(new GroovyResolveResultImpl(namedElement, resolveContext, spreadState, substitutor, isAccessible, isStaticsOK));
@@ -489,12 +485,11 @@ public class CompleteReferenceExpression {
       }
 
       if (element instanceof GrReflectedMethod) {
-        element = ((GrReflectedMethod)element).getBaseMethod();
-        if (!myProcessedMethodWithOptionalParams.add((GrMethod)element)) return;
+        GrMethod base = ((GrReflectedMethod)element).getBaseMethod();
+        if (!myProcessedMethodWithOptionalParams.add(base)) return;
 
-        result = new GroovyResolveResultImpl(element, result.getCurrentFileResolveContext(), result.getSpreadState(),
-                                             result.getSubstitutor(), result.isAccessible(), result.isStaticsOK(),
-                                             result.isInvokedOnProperty(), result.isValidResult());
+        result = PsiImplUtil.reflectedToBase(result, base, (GrReflectedMethod)element);
+        element = base;
       }
 
       if (myFieldPointerOperator && !(element instanceof PsiVariable)) {

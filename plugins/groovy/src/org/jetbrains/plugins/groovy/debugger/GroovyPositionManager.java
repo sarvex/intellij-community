@@ -72,7 +72,11 @@ public class GroovyPositionManager implements PositionManager {
   @Override
   @NotNull
   public List<Location> locationsOfLine(@NotNull ReferenceType type, @NotNull SourcePosition position) throws NoDataException {
+    checkGroovyFile(position);
     try {
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("locationsOfLine: " + type + "; " + position);
+      }
       int line = position.getLine() + 1;
       List<Location> locations = getDebugProcess().getVirtualMachineProxy().versionHigher("1.4")
                                  ? type.locationsOfLine(DebugProcess.JAVA_STRATUM, null, line)
@@ -119,7 +123,11 @@ public class GroovyPositionManager implements PositionManager {
   @Override
   public ClassPrepareRequest createPrepareRequest(@NotNull final ClassPrepareRequestor requestor, @NotNull final SourcePosition position)
     throws NoDataException {
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("createPrepareRequest: " + position);
+    }
     checkGroovyFile(position);
+
     String qName = getOuterClassName(position);
     if (qName != null) {
       return myDebugProcess.getRequestsManager().createClassPrepareRequest(requestor, qName);
@@ -207,6 +215,9 @@ public class GroovyPositionManager implements PositionManager {
   public SourcePosition getSourcePosition(final Location location) throws NoDataException {
     if (location == null) throw NoDataException.INSTANCE;
 
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("getSourcePosition: " + location);
+    }
     PsiFile psiFile = getPsiFileByLocation(getDebugProcess().getProject(), location);
     if (psiFile == null) throw NoDataException.INSTANCE;
 
@@ -240,8 +251,15 @@ public class GroovyPositionManager implements PositionManager {
     String qName = getOriginalQualifiedName(refType, runtimeName);
 
     GlobalSearchScope searchScope = addModuleContent(myDebugProcess.getSearchScope());
+    GroovyShortNamesCache cache = GroovyShortNamesCache.getGroovyShortNamesCache(project);
     try {
-      final List<PsiClass> classes = GroovyShortNamesCache.getGroovyShortNamesCache(project).getClassesByFQName(qName, searchScope);
+      List<PsiClass> classes = cache.getClassesByFQName(qName, searchScope, true);
+      if (classes.isEmpty()) {
+        classes = cache.getClassesByFQName(qName, searchScope, false);
+      }
+      if (classes.isEmpty()) {
+        classes = cache.getClassesByFQName(qName, GlobalSearchScope.projectScope(project), false);
+      }
       PsiClass clazz = classes.size() == 1 ? classes.get(0) : null;
       if (clazz != null) return clazz.getContainingFile();
     }
@@ -291,6 +309,10 @@ public class GroovyPositionManager implements PositionManager {
   @Override
   @NotNull
   public List<ReferenceType> getAllClasses(@NotNull final SourcePosition position) throws NoDataException {
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("getAllClasses: " + position);
+    }
+
     checkGroovyFile(position);
     List<ReferenceType> result = ApplicationManager.getApplication().runReadAction(new Computable<List<ReferenceType>>() {
       @Override
@@ -323,6 +345,9 @@ public class GroovyPositionManager implements PositionManager {
       }
     });
 
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("getAllClasses = " + result);
+    }
     if (result == null) throw NoDataException.INSTANCE;
     return result;
   }

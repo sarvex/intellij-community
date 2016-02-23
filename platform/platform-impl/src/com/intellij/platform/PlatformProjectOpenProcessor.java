@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.intellij.platform;
 import com.intellij.ide.GeneralSettings;
 import com.intellij.ide.impl.ProjectUtil;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
@@ -29,7 +30,7 @@ import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.project.ex.ProjectManagerEx;
 import com.intellij.openapi.roots.ContentEntry;
 import com.intellij.openapi.roots.ModifiableRootModel;
-import com.intellij.openapi.roots.ModuleRootManager;
+import com.intellij.openapi.roots.ModuleRootModificationUtil;
 import com.intellij.openapi.startup.StartupManager;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.util.Disposer;
@@ -38,11 +39,11 @@ import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.openapi.wm.ToolWindowManager;
 import com.intellij.openapi.wm.impl.welcomeScreen.WelcomeFrame;
 import com.intellij.projectImport.ProjectAttachProcessor;
 import com.intellij.projectImport.ProjectOpenProcessor;
 import com.intellij.projectImport.ProjectOpenedCallback;
+import com.intellij.util.Consumer;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -158,9 +159,10 @@ public class PlatformProjectOpenProcessor extends ProjectOpenProcessor {
       }
     }
 
-    boolean runConfigurators = true;
-    final ProjectManagerEx projectManager = ProjectManagerEx.getInstanceEx();
+    boolean runConfigurators = true, newProject = false;
+    ProjectManagerEx projectManager = ProjectManagerEx.getInstanceEx();
     Project project = null;
+
     if (projectDir.exists()) {
       try {
         for (ProjectOpenProcessor processor : ProjectOpenProcessor.EXTENSION_POINT_NAME.getExtensions()) {
@@ -168,52 +170,48 @@ public class PlatformProjectOpenProcessor extends ProjectOpenProcessor {
         }
 
         project = projectManager.convertAndLoadProject(baseDir.getPath());
-        if (project == null) {
-          WelcomeFrame.showIfNoProjectOpened();
-          return null;
-        }
 
-        final Module[] modules = ModuleManager.getInstance(project).getModules();
-        if (modules.length > 0) {
-          runConfigurators = false;
+        if (project != null) {
+          Module[] modules = ModuleManager.getInstance(project).getModules();
+          if (modules.length > 0) {
+            runConfigurators = false;
+          }
         }
       }
       catch (Exception e) {
-        // ignore
+        LOG.error(e);
       }
     }
     else {
+      //noinspection ResultOfMethodCallIgnored
       projectDir.mkdirs();
-    }
 
-    boolean isNew = false;
-
-    if (project == null) {
       String projectName = dummyProject ? dummyProjectName : projectDir.getParentFile().getName();
       project = projectManager.newProject(projectName, projectDir.getParent(), true, dummyProject);
-      isNew = true;
+
+      newProject = true;
     }
 
     if (project == null) {
+      WelcomeFrame.showIfNoProjectOpened();
       return null;
     }
 
     ProjectBaseDirectory.getInstance(project).setBaseDir(baseDir);
-    final Module module = runConfigurators ? runDirectoryProjectConfigurators(baseDir, project) : ModuleManager.getInstance(project).getModules()[0];
+
+    Module module = runConfigurators ? runDirectoryProjectConfigurators(baseDir, project) : ModuleManager.getInstance(project).getModules()[0];
     if (runConfigurators && dummyProject) { // add content root for chosen (single) file
-      ApplicationManager.getApplication().runWriteAction(new Runnable() {
+      ModuleRootModificationUtil.updateModel(module, new Consumer<ModifiableRootModel>() {
         @Override
-        public void run() {
-          ModifiableRootModel model = ModuleRootManager.getInstance(module).getModifiableModel();
+        public void consume(ModifiableRootModel model) {
           ContentEntry[] entries = model.getContentEntries();
           if (entries.length == 1) model.removeContentEntry(entries[0]); // remove custom content entry created for temp directory
           model.addContentEntry(virtualFile);
-          model.commit();
         }
       });
     }
 
-    if (isNew) {
+    if (newProject) {
       project.save();
     }
 
@@ -261,34 +259,34 @@ public class PlatformProjectOpenProcessor extends ProjectOpenProcessor {
     return false;
   }
 
-  private static void openFileFromCommandLine(final Project project, final VirtualFile virtualFile, final int line) {
+  private static void openFileFromCommandLine(final Project project, final VirtualFile file, final int line) {
     StartupManager.getInstance(project).registerPostStartupActivity(new DumbAwareRunnable() {
+      @Override
       public void run() {
-        ToolWindowManager.getInstance(project).invokeLater(new Runnable() {
+        ApplicationManager.getApplication().invokeLater(new Runnable() {
+          @Override
           public void run() {
-            ToolWindowManager.getInstance(project).invokeLater(new Runnable() {
-              public void run() {
-                if (!virtualFile.isDirectory()) {
-                  if (line > 0) {
-                    new OpenFileDescriptor(project, virtualFile, line-1, 0).navigate(true);
-                  }
-                  else {
-                    new OpenFileDescriptor(project, virtualFile).navigate(true);
-                  }
-                }
+            if (!project.isDisposed() && file.isValid() && !file.isDirectory()) {
+              if (line > 0) {
+                new OpenFileDescriptor(project, file, line - 1, 0).navigate(true);
               }
-            });
+              else {
+                new OpenFileDescriptor(project, file).navigate(true);
+              }
+            }
           }
-        });
+        }, ModalityState.NON_MODAL);
       }
     });
   }
 
   @Nullable
+  @Override
   public Icon getIcon() {
     return null;
   }
 
+  @Override
   public String getName() {
     return "text editor";
   }

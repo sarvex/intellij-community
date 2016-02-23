@@ -180,7 +180,7 @@ public class UpdateInfoTree extends PanelWithActionsAndCloseButton implements Di
         if (treeNode instanceof FileTreeNode) {
           pointer = ((FileTreeNode)treeNode).getFilePointer();
         }
-        if (pointer != null && pointer.isValid()) {
+        if (pointer != null) {
           mySelectedUrl = pointer.getUrl();
           mySelectedFile = pointer.getFile();
         }
@@ -196,11 +196,11 @@ public class UpdateInfoTree extends PanelWithActionsAndCloseButton implements Di
       public String convert(TreePath path) {
         Object last = path.getLastPathComponent();
         if (last instanceof AbstractTreeNode) {
-          return ((AbstractTreeNode)last).getName();
+          return ((AbstractTreeNode)last).getText();
         }
         return TreeSpeedSearch.NODE_DESCRIPTOR_TOSTRING.convert(path);
       }
-    });
+    }, true);
 
     myTree.addMouseListener(new PopupHandler() {
       public void invokePopup(Component comp, int x, int y) {

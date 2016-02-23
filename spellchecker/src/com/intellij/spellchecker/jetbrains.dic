@@ -1,6 +1,10 @@
+Liskov
 accessor
+accessors
+agentmain
 aggregator
 ajax
+akka
 alloc
 anyschema
 aopalliance
@@ -11,9 +15,11 @@ args
 argv
 arial
 arity
+arquillian
 asensitive
 aspectj
 async
+atomikos
 attr
 attlist
 auth
@@ -58,6 +64,7 @@ captcha
 ccflags
 cdata
 cglib
+changelog
 changelist
 charset
 charsets
@@ -66,6 +73,8 @@ checkboxes
 checkstyle
 checksum
 chmod
+classloader
+classloading
 classpath
 clazz
 clion
@@ -74,6 +83,7 @@ clojure
 cloneable
 closable
 closeable
+cloudfoundry
 cmake
 cmdline
 codebase
@@ -97,6 +107,7 @@ covariant
 cron
 ctrl
 customizer
+customizers
 cyclomatic
 cygwin
 datafile
@@ -140,7 +151,6 @@ elseif
 elsif
 endregion
 endif
-enqueue
 enum
 enums
 eqeqeq
@@ -148,6 +158,7 @@ eval
 evex
 exif
 expr
+externalizer
 facebook
 facelet
 fallthrough
@@ -196,7 +207,10 @@ hardcoded
 hardlink
 hardlinks
 hashcode
+hateoas
 haxe
+hazelcast
+hdiv
 helvetica
 holdability
 hostname
@@ -217,6 +231,8 @@ incrementer
 indextype
 indices
 infile
+infinispan
+informix
 init
 initializer
 initrans
@@ -231,6 +247,7 @@ iphone
 iphoneos
 isnan
 isnull
+jacoco
 javabean
 javabeans
 javac
@@ -273,10 +290,10 @@ linestring
 linkplain
 lldb
 llvm
+logback
 localhost
 localtime
 localtimestamp
-locator
 logfile
 login
 logoff
@@ -320,6 +337,7 @@ mongodb
 monospaced
 multi
 multilinestring
+multipart
 multipoint
 multipolygon
 multiset
@@ -419,6 +437,7 @@ postprocessor
 pragma
 prebuilt
 prefetch
+premain
 prepend
 prepended
 prepends
@@ -458,6 +477,7 @@ reifies
 reify
 reifying
 reindex
+reindexing
 renderer
 replacer
 repo
@@ -542,6 +562,7 @@ sqlerror
 sqlexception
 sqlstate
 sqlwarning
+stacktrace
 startup
 stateful
 stdarg
@@ -558,6 +579,7 @@ subpartition
 subpartitions
 subst
 substring
+subtag
 subtree
 subtrees
 subview
@@ -612,6 +634,7 @@ undofile
 unescaped
 unhandled
 uninstall
+uniques
 unmerged
 unpivot
 unprotect
@@ -642,6 +665,8 @@ viewports
 vtlvariable
 watchlist
 wchar
+webjar
+webjars
 webpack
 webservice
 whitespace

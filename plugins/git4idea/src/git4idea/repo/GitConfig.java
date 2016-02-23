@@ -93,7 +93,7 @@ public class GitConfig {
   private static GitRemote convertRemoteToGitRemote(@NotNull Collection<Url> urls, @NotNull Remote remote) {
     UrlsAndPushUrls substitutedUrls = substituteUrls(urls, remote);
     return new GitRemote(remote.myName, substitutedUrls.getUrls(), substitutedUrls.getPushUrls(),
-                         remote.getFetchSpecs(), computePushSpec(remote));
+                         remote.getFetchSpecs(), remote.getPushSpec());
   }
 
   /**
@@ -139,7 +139,9 @@ public class GitConfig {
     }
 
     IdeaPluginDescriptor plugin = platformFacade.getPluginByClassName(GitConfig.class.getName());
-    ClassLoader classLoader = plugin == null ? null : plugin.getPluginClassLoader(); // null if IDEA is started from IDEA
+    ClassLoader classLoader = plugin == null ?
+                              GitConfig.class.getClassLoader() :   // null e.g. if IDEA is started from IDEA
+                              plugin.getPluginClassLoader();
 
     Pair<Collection<Remote>, Collection<Url>> remotesAndUrls = parseRemotes(ini, classLoader);
     Collection<BranchConfig> trackedInfos = parseTrackedInfos(ini, classLoader);
@@ -148,7 +150,7 @@ public class GitConfig {
   }
 
   @NotNull
-  private static Collection<BranchConfig> parseTrackedInfos(@NotNull Ini ini, @Nullable ClassLoader classLoader) {
+  private static Collection<BranchConfig> parseTrackedInfos(@NotNull Ini ini, @NotNull ClassLoader classLoader) {
     Collection<BranchConfig> configs = new ArrayList<BranchConfig>();
     for (Map.Entry<String, Profile.Section> stringSectionEntry : ini.entrySet()) {
       String sectionName = stringSectionEntry.getKey();
@@ -222,7 +224,7 @@ public class GitConfig {
   }
 
   @Nullable
-  private static BranchConfig parseBranchSection(String sectionName, Profile.Section section, @Nullable ClassLoader classLoader) {
+  private static BranchConfig parseBranchSection(String sectionName, Profile.Section section, @NotNull ClassLoader classLoader) {
     BranchBean branchBean = section.as(BranchBean.class, classLoader);
     Matcher matcher = BRANCH_INFO_SECTION.matcher(sectionName);
     if (matcher.matches()) {
@@ -237,20 +239,18 @@ public class GitConfig {
   }
 
   @NotNull
-  private static Pair<Collection<Remote>, Collection<Url>> parseRemotes(@NotNull Ini ini, @Nullable ClassLoader classLoader) {
+  private static Pair<Collection<Remote>, Collection<Url>> parseRemotes(@NotNull Ini ini, @NotNull ClassLoader classLoader) {
     Collection<Remote> remotes = new ArrayList<Remote>();
     Collection<Url> urls = new ArrayList<Url>();
     for (Map.Entry<String, Profile.Section> stringSectionEntry : ini.entrySet()) {
       String sectionName = stringSectionEntry.getKey();
       Profile.Section section = stringSectionEntry.getValue();
 
-      if (sectionName.startsWith("remote") || sectionName.startsWith("svn-remote")) {
-        Remote remote = parseRemoteSection(sectionName, section, classLoader);
-        if (remote != null) {
-          remotes.add(remote);
-        }
+      Remote remote = parseRemoteSection(sectionName, section, classLoader);
+      if (remote != null) {
+        remotes.add(remote);
       }
-      else if (sectionName.startsWith("url")) {
+      else {
         Url url = parseUrlSection(sectionName, section, classLoader);
         if (url != null) {
           urls.add(url);
@@ -258,12 +258,6 @@ public class GitConfig {
       }
     }
     return Pair.create(remotes, urls);
-  }
-
-  @NotNull
-  private static List<String> computePushSpec(@NotNull Remote remote) {
-    List<String> pushSpec = remote.getPushSpec();
-    return pushSpec == null ? remote.getFetchSpecs() : pushSpec;
   }
 
   /**
@@ -373,24 +367,22 @@ public class GitConfig {
   }
 
   @Nullable
-  private static Remote parseRemoteSection(@NotNull String sectionName, @NotNull Profile.Section section, @Nullable ClassLoader classLoader) {
-    RemoteBean remoteBean = section.as(RemoteBean.class, classLoader);
+  private static Remote parseRemoteSection(@NotNull String sectionName,
+                                           @NotNull Profile.Section section,
+                                           @NotNull ClassLoader classLoader) {
     Matcher matcher = REMOTE_SECTION.matcher(sectionName);
-    if (matcher.matches()) {
-      return new Remote(matcher.group(1), remoteBean);
+    if (matcher.matches() && matcher.groupCount() == 1) {
+      return new Remote(matcher.group(1), section.as(RemoteBean.class, classLoader));
     }
-    LOG.error(String.format("Invalid remote section format in .git/config. sectionName: %s section: %s", sectionName, section));
     return null;
   }
 
   @Nullable
-  private static Url parseUrlSection(@NotNull String sectionName, @NotNull Profile.Section section, @Nullable ClassLoader classLoader) {
-    UrlBean urlBean = section.as(UrlBean.class, classLoader);
+  private static Url parseUrlSection(@NotNull String sectionName, @NotNull Profile.Section section, @NotNull ClassLoader classLoader) {
     Matcher matcher = URL_SECTION.matcher(sectionName);
-    if (matcher.matches()) {
-      return new Url(matcher.group(1), urlBean);
+    if (matcher.matches() && matcher.groupCount() == 1) {
+      return new Url(matcher.group(1), section.as(UrlBean.class, classLoader));
     }
-    LOG.error(String.format("Invalid url section format in .git/config. sectionName: %s section: %s", sectionName, section));
     return null;
   }
 
@@ -414,11 +406,10 @@ public class GitConfig {
       return nonNullCollection(myRemoteBean.getPushUrl());
     }
 
-    @Nullable
-    // no need in wrapping null here - we check for it in #computePushSpec 
+    @NotNull
     private List<String> getPushSpec() {
       String[] push = myRemoteBean.getPush();
-      return push == null ? null : Arrays.asList(push);
+      return push == null ? Collections.<String>emptyList() : Arrays.asList(push);
     }
 
     @NotNull

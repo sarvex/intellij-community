@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import com.intellij.openapi.util.SystemInfo;
 import com.intellij.ui.*;
 import com.intellij.ui.border.CustomLineBorder;
 import com.intellij.util.Alarm;
+import com.intellij.util.Consumer;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.tree.TreeUtil;
 import com.intellij.xdebugger.XDebugSession;
@@ -89,10 +90,11 @@ public class XWatchesViewImpl extends XDebugView implements DnDNativeTarget, XWa
     actionManager.getAction(XDebuggerActions.XREMOVE_WATCH).registerCustomShortcutSet(CommonShortcuts.getDelete(), tree, myDisposables);
 
     CustomShortcutSet f2Shortcut = new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_F2, 0));
-    actionManager.getAction(XDebuggerActions.XEDIT_WATCH).registerCustomShortcutSet(f2Shortcut, tree);
+    actionManager.getAction(XDebuggerActions.XEDIT_WATCH).registerCustomShortcutSet(f2Shortcut, tree, myDisposables);
 
     AnAction copyAction = actionManager.getAction(XDebuggerActions.XCOPY_WATCH);
-    copyAction.registerCustomShortcutSet(ActionManager.getInstance().getAction(IdeActions.ACTION_EDITOR_DUPLICATE).getShortcutSet(), tree);
+    copyAction.registerCustomShortcutSet(
+      ActionManager.getInstance().getAction(IdeActions.ACTION_EDITOR_DUPLICATE).getShortcutSet(), tree, myDisposables);
 
     DnDManager.getInstance().registerTarget(this, tree);
     myRootNode = new WatchesRootNode(tree, this, session.getSessionData().getWatchExpressions());
@@ -432,11 +434,15 @@ public class XWatchesViewImpl extends XDebugView implements DnDNativeTarget, XWa
     if (object instanceof XValueNodeImpl[]) {
       final XValueNodeImpl[] nodes = (XValueNodeImpl[])object;
       for (XValueNodeImpl node : nodes) {
-        String expression = node.getValueContainer().getEvaluationExpression();
-        if (expression != null) {
-          //noinspection ConstantConditions
-          addWatchExpression(XExpressionImpl.fromText(expression), -1, false);
-        }
+        node.getValueContainer().calculateEvaluationExpression().done(new Consumer<XExpression>() {
+          @Override
+          public void consume(XExpression expression) {
+            if (expression != null) {
+              //noinspection ConstantConditions
+              addWatchExpression(expression, -1, false);
+            }
+          }
+        });
       }
     }
     else if (object instanceof EventInfo) {
@@ -468,6 +474,9 @@ public class XWatchesViewImpl extends XDebugView implements DnDNativeTarget, XWa
     public Object getData(@NonNls String dataId) {
       if (XWatchesView.DATA_KEY.is(dataId)) {
         return XWatchesViewImpl.this;
+      }
+      else if (CommonDataKeys.VIRTUAL_FILE.is(dataId)) {
+        return getCurrentFile(getTree());
       }
       return null;
     }

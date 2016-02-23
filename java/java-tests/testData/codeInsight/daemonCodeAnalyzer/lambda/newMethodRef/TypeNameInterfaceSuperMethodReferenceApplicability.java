@@ -38,5 +38,30 @@ class Test {
       }
     };
   }
+
+  interface D extends J {
+    default void m() {
+      <error descr="No enclosing instance of type 'Test.D' is in scope">D</error>.super.toString();
+      J.super.toString();
+    }
+  }
+
+  class E implements I {
+    public void a() {}
+  }
+  
+  class F extends E implements I {
+    void bar() {
+      <error descr="Bad type qualifier in default super call: method a is overridden in Test.E">I</error>.super.a();
+      Runnable r = <error descr="Bad type qualifier in default super call: method a is overridden in Test.E">I</error>.super::a;
+    }
+  }
+  
+  class G extends A implements I {
+    void bar() {
+      I.super.a();
+      Runnable r = I.super::a;
+    }
+  }
 }
 

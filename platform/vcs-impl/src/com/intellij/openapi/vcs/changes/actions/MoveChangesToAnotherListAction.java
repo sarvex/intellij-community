@@ -21,7 +21,10 @@ import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.MessageType;
-import com.intellij.openapi.vcs.*;
+import com.intellij.openapi.vcs.FilePath;
+import com.intellij.openapi.vcs.FileStatus;
+import com.intellij.openapi.vcs.ProjectLevelVcsManager;
+import com.intellij.openapi.vcs.VcsDataKeys;
 import com.intellij.openapi.vcs.changes.*;
 import com.intellij.openapi.vcs.changes.ui.ChangeListChooser;
 import com.intellij.openapi.vcs.changes.ui.ChangesListView;
@@ -30,7 +33,9 @@ import com.intellij.openapi.vcs.ui.VcsBalloonProblemNotifier;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowManager;
+import com.intellij.vcsUtil.VcsUtil;
 import gnu.trove.THashSet;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
@@ -97,7 +102,7 @@ public class MoveChangesToAnotherListAction extends AnAction implements DumbAwar
             unversionedFiles.add(vFile);
             if (changedFiles != null) changedFiles.add(vFile);
           } else if (FileStatus.NOT_CHANGED.equals(status) && vFile.isDirectory()) {
-            addAllChangesUnderPath(changedFiles, changeListManager, changesInFiles, new FilePathImpl(vFile));
+            addAllChangesUnderPath(changedFiles, changeListManager, changesInFiles, VcsUtil.getFilePath(vFile));
           }
           continue;
         }
@@ -170,12 +175,13 @@ public class MoveChangesToAnotherListAction extends AnAction implements DumbAwar
     }
   }
 
-  public static boolean askAndMove(final Project project, final Collection<Change> changes, final List<VirtualFile> unversionedFiles) {
+  public static boolean askAndMove(final Project project, @NotNull final Collection<Change> changes, final List<VirtualFile> unversionedFiles) {
     if (changes.isEmpty() && unversionedFiles.isEmpty()) return false;
     final ChangeListManagerImpl listManager = ChangeListManagerImpl.getInstanceImpl(project);
     final List<LocalChangeList> lists = listManager.getChangeLists();
-    final List<LocalChangeList> preferredLists = getPreferredLists(lists, changes, true);
-    ChangeListChooser chooser = new ChangeListChooser(project, preferredLists, guessPreferredList(preferredLists),
+    final List<LocalChangeList> preferredLists = getPreferredLists(lists, changes);
+    ChangeListChooser chooser = new ChangeListChooser(project, preferredLists.isEmpty() ? Collections
+      .singletonList(listManager.getDefaultChangeList()) : preferredLists, guessPreferredList(preferredLists),
                                                       ActionsBundle.message("action.ChangesView.Move.text"), null);
     chooser.show();
     LocalChangeList resultList = chooser.getSelectedList();
@@ -204,9 +210,7 @@ public class MoveChangesToAnotherListAction extends AnAction implements DumbAwar
     return null;
   }
 
-  private static List<LocalChangeList> getPreferredLists(final List<LocalChangeList> lists,
-                                                    final Collection<Change> changes,
-                                                    final boolean includeDefaultIfEmpty) {
+  private static List<LocalChangeList> getPreferredLists(@NotNull final List<LocalChangeList> lists, @NotNull final Collection<Change> changes) {
     List<LocalChangeList> preferredLists = new ArrayList<LocalChangeList>(lists);
     Set<Change> changesAsSet = new THashSet<Change>(changes);
     for (LocalChangeList list : lists) {
@@ -217,15 +221,6 @@ public class MoveChangesToAnotherListAction extends AnAction implements DumbAwar
         }
       }
     }
-
-    if (preferredLists.isEmpty() && includeDefaultIfEmpty) {
-      for (LocalChangeList list : lists) {
-        if (list.isDefault()) {
-          preferredLists.add(list);
-        }
-      }
-    }
-
     return preferredLists;
   }
 }

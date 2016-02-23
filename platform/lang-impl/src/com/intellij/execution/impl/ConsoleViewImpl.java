@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.command.CommandProcessor;
+import com.intellij.openapi.command.undo.UndoUtil;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.*;
 import com.intellij.openapi.editor.actionSystem.*;
@@ -65,15 +66,11 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.ui.EditorNotificationPanel;
 import com.intellij.ui.awt.RelativePoint;
-import com.intellij.util.Alarm;
-import com.intellij.util.Consumer;
-import com.intellij.util.EditorPopupHandler;
-import com.intellij.util.SystemProperties;
+import com.intellij.util.*;
 import com.intellij.util.text.CharArrayUtil;
 import com.intellij.util.ui.UIUtil;
 import gnu.trove.TIntObjectHashMap;
@@ -84,7 +81,9 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.MouseWheelEvent;
 import java.io.IOException;
 import java.util.*;
 import java.util.List;
@@ -100,10 +99,14 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
 
   public static final Key<ConsoleViewImpl> CONSOLE_VIEW_IN_EDITOR_VIEW = Key.create("CONSOLE_VIEW_IN_EDITOR_VIEW");
 
-  static {
+  private static boolean ourTypedHandlerInitialized;
+
+  private static synchronized void initTypedHandler() {
+    if (ourTypedHandlerInitialized) return;
     final EditorActionManager actionManager = EditorActionManager.getInstance();
     final TypedAction typedAction = actionManager.getTypedAction();
     typedAction.setupHandler(new MyTypedHandler(typedAction.getHandler()));
+    ourTypedHandlerInitialized = true;
   }
 
 
@@ -117,7 +120,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
   private final Alarm mySpareTimeAlarm = new Alarm(this);
   @Nullable
   private final Alarm myHeavyAlarm;
-  private       int   myHeavyUpdateTicket;
+  private volatile int myHeavyUpdateTicket;
 
   private final Collection<ChangeListener> myListeners = new CopyOnWriteArraySet<ChangeListener>();
   private final List<AnAction> customActions = new ArrayList<AnAction>();
@@ -126,9 +129,9 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
   private EditorHyperlinkSupport myHyperlinks;
   private MyDiffContainer myJLayeredPane;
   private JPanel myMainPanel;
-  private final Runnable myFinishProgress;
-  private boolean myAllowHeavyFilters = false;
-  private boolean myLastPreserveVisualArea;
+  private boolean myAllowHeavyFilters;
+  private boolean myLastStickingToEnd;
+  private boolean myCancelStickToEnd;
 
   private boolean myTooMuchOfOutput;
   private boolean myInDocumentUpdate;
@@ -151,6 +154,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
   public void scrollToEnd() {
     if (myEditor == null) return;
     EditorUtil.scrollToTheEnd(myEditor);
+    myCancelStickToEnd = false;
   }
 
   public void foldImmediately() {
@@ -245,7 +249,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
   private String myHelpId;
 
   private final Alarm myFlushUserInputAlarm = new Alarm(Alarm.ThreadToUse.POOLED_THREAD, this);
-  private final Alarm myFlushAlarm = new Alarm(Alarm.ThreadToUse.SWING_THREAD, this);
+  private final Alarm myFlushAlarm = new Alarm(this);
 
   private final Set<MyFlushRunnable> myCurrentRequests = new HashSet<MyFlushRunnable>();
 
@@ -253,7 +257,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
 
   @Nullable private final InputFilter myInputMessageFilter;
 
-  private final Alarm myFoldingAlarm = new Alarm(Alarm.ThreadToUse.SWING_THREAD, this);
+  private final Alarm myFoldingAlarm = new Alarm(this);
   private final List<FoldRegion> myPendingFoldRegions = new ArrayList<FoldRegion>();
 
   public ConsoleViewImpl(final Project project, boolean viewer) {
@@ -281,6 +285,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
                             boolean usePredefinedMessageFilter)
   {
     super(new BorderLayout());
+    initTypedHandler();
     myIsViewer = viewer;
     myState = initialState;
     myPsiDisposedCheck = new DisposedPsiManagerCheck(project);
@@ -324,12 +329,6 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
       myInputMessageFilter = null;
     }
 
-    myFinishProgress = new Runnable() {
-      @Override
-      public void run() {
-        myJLayeredPane.finishUpdating();
-      }
-    };
     consoleTooMuchTextBufferRatio = Registry.intValue("console.too.much.text.buffer.ratio");
 
     project.getMessageBus().connect(this).subscribe(DumbService.DUMB_MODE, new DumbService.DumbModeListener() {
@@ -344,12 +343,18 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
 
       @Override
       public void exitDumbMode() {
-        if (myEditor == null) return;
-        DocumentEx document = myEditor.getDocument();
-        if (myLastStamp != document.getModificationStamp()) {
-          clearHyperlinkAndFoldings();
-          highlightHyperlinksAndFoldings(document.createRangeMarker(0, 0));
-        }
+        ApplicationManager.getApplication().invokeLater(new Runnable() {
+          @Override
+          public void run() {
+            if (myEditor == null || project.isDisposed() || DumbService.getInstance(project).isDumb()) return;
+            
+            DocumentEx document = myEditor.getDocument();
+            if (myLastStamp != document.getModificationStamp()) {
+              clearHyperlinkAndFoldings();
+              highlightHyperlinksAndFoldings(document.createRangeMarker(0, 0));
+            }
+          }
+        });
       }
     });
 
@@ -377,7 +382,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
 
   @Override
   public void scrollTo(final int offset) {
-    if (myEditor == null || myFlushAlarm.isDisposed()) return;
+    if (myEditor == null) return;
     class ScrollRunnable extends MyFlushRunnable {
       private final int myOffset = offset;
 
@@ -402,7 +407,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
   }
 
   public void requestScrollingToEnd() {
-    if (myEditor == null || myFlushAlarm.isDisposed()) {
+    if (myEditor == null) {
       return;
     }
 
@@ -423,7 +428,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
     addFlushRequest(scrollRunnable, 0);
   }
 
-  private void addFlushRequest(MyFlushRunnable flushRunnable, final int millis) {
+  private void addFlushRequest(@NotNull MyFlushRunnable flushRunnable, final int millis) {
     synchronized (myCurrentRequests) {
       if (!myFlushAlarm.isDisposed() && myCurrentRequests.add(flushRunnable)) {
         myFlushAlarm.addRequest(flushRunnable, millis, getStateForUpdate());
@@ -498,10 +503,42 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
     return this;
   }
 
-  protected void initConsoleEditor() {
+  /**
+   * Adds transparent (actually, non-opaque) component over console.
+   * It will be as big as console. Use it to draw on console because it does not prevent user from console usage.
+   *
+   * @param component component to add
+   */
+  public final void addLayerToPane(@NotNull final JComponent component) {
+    getComponent(); // Make sure component exists
+    component.setOpaque(false);
+    component.setVisible(true);
+    myJLayeredPane.add(component, 0);
+  }
+
+  private void initConsoleEditor() {
     myEditor = createConsoleEditor();
     registerConsoleEditorActions();
     myEditor.getScrollPane().setBorder(null);
+    MouseAdapter mouseListener = new MouseAdapter() {
+      @Override
+      public void mousePressed(MouseEvent e) {
+        updateStickToEndState(true);
+      }
+
+      @Override
+      public void mouseDragged(MouseEvent e) {
+        updateStickToEndState(false);
+      }
+      
+      @Override
+      public void mouseWheelMoved(MouseWheelEvent e) {
+        updateStickToEndState(false);
+      }
+    };
+    myEditor.getScrollPane().addMouseWheelListener(mouseListener);
+    myEditor.getScrollPane().getVerticalScrollBar().addMouseListener(mouseListener);
+    myEditor.getScrollPane().getVerticalScrollBar().addMouseMotionListener(mouseListener);
     myHyperlinks = new EditorHyperlinkSupport(myEditor, myProject);
     myEditor.getScrollingModel().addVisibleAreaListener(new VisibleAreaListener() {
       @Override
@@ -513,11 +550,27 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
 
         if (oldR != null && oldR.height <= 0 &&
             e.getNewRectangle().height > 0 &&
-            !shouldPreserveCurrentVisualArea()) {
+            isStickingToEnd()) {
           scrollToEnd();
         }
       }
     });
+  }
+
+  private void updateStickToEndState(boolean useImmediatePosition) {
+    if (myEditor == null) return;
+
+    JScrollBar scrollBar = myEditor.getScrollPane().getVerticalScrollBar();
+    int scrollBarPosition = useImmediatePosition ? scrollBar.getValue() : 
+                            myEditor.getScrollingModel().getVisibleAreaOnScrollingFinished().y;
+    boolean vscrollAtBottom = scrollBarPosition == scrollBar.getMaximum() - scrollBar.getVisibleAmount();
+    boolean stickingToEnd = isStickingToEnd();
+
+    if (!vscrollAtBottom && stickingToEnd) {
+      myCancelStickToEnd = true;
+    } else if (vscrollAtBottom && !stickingToEnd) {
+      scrollToEnd();
+    }
   }
 
   protected JComponent createCenterComponent() {
@@ -589,7 +642,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
       if (contentType == ConsoleViewContentType.USER_INPUT && NEW_LINE_MATCHER.indexIn(s) >= 0) {
         flushDeferredUserInput();
       }
-      if (myEditor != null && !myFlushAlarm.isDisposed()) {
+      if (myEditor != null) {
         final boolean shouldFlushNow = myBuffer.isUseCyclicBuffer() && myBuffer.getLength() >= myBuffer.getCyclicBufferSize();
         addFlushRequest(new MyFlushRunnable(), shouldFlushNow ? 0 : DEFAULT_FLUSH_DELAY);
       }
@@ -605,7 +658,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
   }
 
   private void requestFlushImmediately() {
-    if (myEditor != null && !myFlushAlarm.isDisposed()) {
+    if (myEditor != null) {
       addFlushRequest(new MyFlushRunnable());
     }
   }
@@ -636,7 +689,8 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
       //already disposed
       return;
     }
-    final boolean preserveCurrentVisualArea = !clear && shouldPreserveCurrentVisualArea();
+    final boolean shouldStickToEnd = clear || !myCancelStickToEnd && isStickingToEnd();
+    myCancelStickToEnd = false; // Cancel only needs to last for one update. Next time, isStickingToEnd() will be false.
     if (clear) {
       final DocumentEx document = editor.getDocument();
       synchronized (LOCK) {
@@ -662,6 +716,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
           }
         }, null, DocCommandGroupId.noneGroupId(document));
       }
+      return;
     }
 
 
@@ -689,12 +744,12 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
     CommandProcessor.getInstance().executeCommand(myProject, new Runnable() {
       @Override
       public void run() {
-        if (preserveCurrentVisualArea) {
+        if (!shouldStickToEnd) {
           myEditor.getScrollingModel().accumulateViewportChanges();
         }
         try {
           myInDocumentUpdate = true;
-          String[] strings = addedText.split("\\r");
+          String[] strings = addedText.split("\\r", -1); // limit must be any negative number to avoid discarding of trailing empty strings
           for (int i = 0; i < strings.length - 1; i++) {
             document.insertString(document.getTextLength(), strings[i]);
             int lastLine = document.getLineCount() - 1;
@@ -710,7 +765,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
         }
         finally {
           myInDocumentUpdate = false;
-          if (preserveCurrentVisualArea) {
+          if (!shouldStickToEnd) {
             myEditor.getScrollingModel().flushViewportChanges();
           }
         }
@@ -770,17 +825,17 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
       }
     }
 
-    if (!preserveCurrentVisualArea) {
+    if (shouldStickToEnd) {
       scrollToEnd();
     }
   }
 
-  private boolean shouldPreserveCurrentVisualArea() {
-    if (myEditor == null) return myLastPreserveVisualArea;
+  private boolean isStickingToEnd() {
+    if (myEditor == null) return myLastStickingToEnd;
     Document document = myEditor.getDocument();
     int caretOffset = myEditor.getCaretModel().getOffset();
-    myLastPreserveVisualArea = document.getLineNumber(caretOffset) < document.getLineCount() - 1;
-    return myLastPreserveVisualArea;
+    myLastStickingToEnd = document.getLineNumber(caretOffset) >= document.getLineCount() - 1;
+    return myLastStickingToEnd;
   }
 
   private boolean isTheAmountOfTextTooBig(final int textLength) {
@@ -881,6 +936,8 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
       @Override
       public EditorEx compute() {
         EditorEx editor = doCreateConsoleEditor();
+        LOG.assertTrue(UndoUtil.isUndoDisabledFor(editor.getDocument()));
+        editor.setContextMenuGroupId(null); // disabling default context menu
         editor.addEditorMouseListener(new EditorPopupHandler() {
           @Override
           public void invokePopup(final EditorMouseEvent event) {
@@ -945,9 +1002,10 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
   }
 
   private void registerConsoleEditorActions() {
-    HyperlinkNavigationAction hyperlinkNavigationAction = new HyperlinkNavigationAction();
-    hyperlinkNavigationAction.registerCustomShortcutSet(CommonShortcuts.ENTER, myEditor.getContentComponent());
-    registerActionHandler(myEditor, IdeActions.ACTION_GOTO_DECLARATION, hyperlinkNavigationAction);
+    Shortcut[] shortcuts = KeymapManager.getInstance().getActiveKeymap().getShortcuts(IdeActions.ACTION_GOTO_DECLARATION);
+    CustomShortcutSet shortcutSet = new CustomShortcutSet(ArrayUtil.mergeArrays(shortcuts, CommonShortcuts.ENTER.getShortcuts()));
+    new HyperlinkNavigationAction().registerCustomShortcutSet(shortcutSet, myEditor.getContentComponent());
+
 
     if (!myIsViewer) {
       new EnterHandler().registerCustomShortcutSet(CommonShortcuts.ENTER, myEditor.getContentComponent());
@@ -996,7 +1054,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
     lastProcessedOutput.dispose();
     int endLine = myEditor.getDocument().getLineCount() - 1;
     ApplicationManager.getApplication().assertIsDispatchThread();
-    PsiDocumentManager.getInstance(myProject).commitAllDocuments();
+
     if (canHighlightHyperlinks) {
       myHyperlinks.highlightHyperlinks(myFilters, line1, endLine);
     }
@@ -1029,7 +1087,6 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
           myFilters.applyHeavyFilter(documentCopy, startOffset, startLine, new Consumer<FilterMixin.AdditionalHighlight>() {
             @Override
             public void consume(final FilterMixin.AdditionalHighlight additionalHighlight) {
-              if (myFlushAlarm.isDisposed()) return;
               addFlushRequest(new MyFlushRunnable() {
                 @Override
                 public void doRun() {
@@ -1048,7 +1105,12 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
         }
         finally {
           if (myHeavyAlarm.isEmpty()) {
-            SwingUtilities.invokeLater(myFinishProgress);
+            SwingUtilities.invokeLater(new Runnable() {
+              @Override
+              public void run() {
+                myJLayeredPane.finishUpdating();
+              }
+            });
           }
         }
       }
@@ -1177,23 +1239,34 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
 
 
   public static class ClearAllAction extends DumbAwareAction {
+    private final ConsoleView myConsoleView;
+
+    @SuppressWarnings("unused")
     public ClearAllAction() {
+      this(null);
+    }
+
+    public ClearAllAction(ConsoleView consoleView) {
       super(ExecutionBundle.message("clear.all.from.console.action.name"), "Clear the contents of the console", AllIcons.Actions.GC);
+      myConsoleView = consoleView;
     }
 
     @Override
     public void update(AnActionEvent e) {
-      boolean enabled = e.getData(LangDataKeys.CONSOLE_VIEW) != null;
-      Editor editor = e.getData(CommonDataKeys.EDITOR);
-      if (editor != null && editor.getDocument().getTextLength() == 0) {
-        enabled = false;
+      boolean enabled = myConsoleView != null && myConsoleView.getContentSize() > 0;
+      if (!enabled) {
+        enabled = e.getData(LangDataKeys.CONSOLE_VIEW) != null;
+        Editor editor = e.getData(CommonDataKeys.EDITOR);
+        if (editor != null && editor.getDocument().getTextLength() == 0) {
+          enabled = false;
+        }
       }
       e.getPresentation().setEnabled(enabled);
     }
 
     @Override
     public void actionPerformed(final AnActionEvent e) {
-      final ConsoleView consoleView = e.getData(LangDataKeys.CONSOLE_VIEW);
+      final ConsoleView consoleView = myConsoleView != null ? myConsoleView : e.getData(LangDataKeys.CONSOLE_VIEW);
       if (consoleView != null) {
         consoleView.clear();
       }
@@ -1342,6 +1415,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
     public void execute(final ConsoleViewImpl consoleView, final DataContext context) {
       String s = CopyPasteManager.getInstance().getContents(DataFlavor.stringFlavor);
       if (s == null) return;
+      s = StringUtil.convertLineSeparators(s);
       ApplicationManager.getApplication().assertIsDispatchThread();
       Editor editor = consoleView.myEditor;
       SelectionModel selectionModel = editor.getSelectionModel();
@@ -1559,7 +1633,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
     consoleActions[2] = switchSoftWrapsAction;
     consoleActions[3] = autoScrollToTheEndAction;
     consoleActions[4] = ActionManager.getInstance().getAction("Print");
-    consoleActions[5] = new ClearAllAction();
+    consoleActions[5] = new ClearAllAction(this);
     for (int i = 0; i < customActions.size(); ++i) {
       consoleActions[i + 6] = customActions.get(i);
     }
@@ -1603,7 +1677,9 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
 
     String textToUse = StringUtil.convertLineSeparators(s);
     synchronized (consoleView.LOCK) {
-      if (consoleView.myTokens.isEmpty()) return;
+      if (consoleView.myTokens.isEmpty()) {
+        addToken(0, null, ConsoleViewContentType.SYSTEM_OUTPUT);
+      }
       final TokenInfo info = consoleView.myTokens.get(consoleView.myTokens.size() - 1);
       if (info.contentType != ConsoleViewContentType.USER_INPUT && !StringUtil.containsChar(textToUse, '\n')) {
         consoleView.print(textToUse, ConsoleViewContentType.USER_INPUT);
@@ -1808,7 +1884,7 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
      * @return placeholder text if given line should be folded; <code>null</code> otherwise
      */
     @Nullable
-    public String getPlaceholder(int line) {
+    private String getPlaceholder(int line) {
       if (myEditor == null || line != 0) {
         return null;
       }
@@ -1818,16 +1894,21 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
       if (text.length() < 1000) {
         return null;
       }
-      boolean nonWhiteSpaceFound = false;
       int index = 0;
-      for (; index < text.length(); index++) {
-        char c = text.charAt(index);
-        if (c != ' ' && c != '\t') {
-          nonWhiteSpaceFound = true;
-          continue;
-        }
-        if (nonWhiteSpaceFound) {
-          break;
+      if (text.charAt(0) == '"') {
+        index = text.indexOf('"', 1) + 1;
+      }
+      if (index == 0) {
+        boolean nonWhiteSpaceFound = false;
+        for (; index < text.length(); index++) {
+          char c = text.charAt(index);
+          if (c != ' ' && c != '\t') {
+            nonWhiteSpaceFound = true;
+            continue;
+          }
+          if (nonWhiteSpaceFound) {
+            break;
+          }
         }
       }
       assert index <= text.length();
@@ -1910,6 +1991,11 @@ public class ConsoleViewImpl extends JPanel implements ConsoleView, ObservableCo
     public void update(AnActionEvent e) {
       e.getPresentation().setEnabled(myHyperlinks.getLinkNavigationRunnable(myEditor.getCaretModel().getLogicalPosition()) != null);
     }
+  }
+
+  @NotNull
+  public String getText() {
+    return myEditor.getDocument().getText();
   }
 }
 

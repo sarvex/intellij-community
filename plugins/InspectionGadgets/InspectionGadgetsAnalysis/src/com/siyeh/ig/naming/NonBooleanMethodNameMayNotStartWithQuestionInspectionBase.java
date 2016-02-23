@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,18 +33,19 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class NonBooleanMethodNameMayNotStartWithQuestionInspectionBase extends BaseInspection {
+
+  @SuppressWarnings("PublicField")
+  @NonNls public String questionString = BooleanMethodNameMustStartWithQuestionInspectionBase.DEFAULT_QUESTION_WORDS;
+  @SuppressWarnings("PublicField")
+  public boolean ignoreBooleanMethods = false;
+  @SuppressWarnings("PublicField")
+  public boolean onlyWarnOnBaseMethods = true;
+
+  List<String> questionList = new ArrayList(32);
+
   public NonBooleanMethodNameMayNotStartWithQuestionInspectionBase() {
     parseString(questionString, questionList);
   }
-
-  /**
-   * @noinspection PublicField
-   */
-  @NonNls public String questionString = "is,can,has,should,could,will,shall,check,contains,equals,startsWith,endsWith";
-  @SuppressWarnings({"PublicField"})
-  public boolean ignoreBooleanMethods = false;
-  @SuppressWarnings({"PublicField"})
-  public boolean onlyWarnOnBaseMethods = true;List<String> questionList = new ArrayList(32);
 
   @Override
   @NotNull
@@ -119,7 +120,7 @@ public class NonBooleanMethodNameMayNotStartWithQuestionInspectionBase extends B
       else if (LibraryUtil.isOverrideOfLibraryMethod(method)) {
         return;
       }
-      registerMethodError(method);
+      registerMethodError(method, method);
     }
   }
 }

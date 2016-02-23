@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,18 @@
  */
 package com.intellij.openapi.vfs.newvfs.impl;
 
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.application.impl.ApplicationImpl;
+import com.intellij.openapi.application.impl.ApplicationInfoImpl;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.roots.OrderEnumerator;
 import com.intellij.openapi.roots.ProjectRootManager;
 import com.intellij.openapi.util.Computable;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
@@ -37,7 +40,6 @@ import com.intellij.util.SystemProperties;
 import com.intellij.util.containers.ContainerUtil;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
@@ -47,7 +49,8 @@ import java.util.ArrayList;
 import java.util.Set;
 
 public class VfsRootAccess {
-  public static boolean SHOULD_PERFORM_ACCESS_CHECK = System.getenv("NO_FS_ROOTS_ACCESS_CHECK") == null;
+  private static final boolean SHOULD_PERFORM_ACCESS_CHECK = System.getenv("NO_FS_ROOTS_ACCESS_CHECK") == null;
+
   // we don't want test subclasses to accidentally remove allowed files, added by base classes
   private static final Set<String> ourAdditionalRoots = new THashSet<String>(FileUtil.PATH_HASHING_STRATEGY);
   private static boolean insideGettingRoots;
@@ -58,7 +61,9 @@ public class VfsRootAccess {
     if (SHOULD_PERFORM_ACCESS_CHECK &&
         application.isUnitTestMode() &&
         application instanceof ApplicationImpl &&
-        ((ApplicationImpl)application).isComponentsCreated()) {
+        ((ApplicationImpl)application).isComponentsCreated() &&
+        !ApplicationInfoImpl.isInPerformanceTest()) {
+
       if (delegate != LocalFileSystem.getInstance() && delegate != JarFileSystem.getInstance()) {
         return;
       }
@@ -101,8 +106,6 @@ public class VfsRootAccess {
   }
 
   // null means we were unable to get roots, so do not check access
-  @Nullable
-  @TestOnly
   private static Set<String> allowedRoots() {
     if (insideGettingRoots) return null;
 
@@ -111,6 +114,13 @@ public class VfsRootAccess {
 
     final Set<String> allowed = new THashSet<String>(FileUtil.PATH_HASHING_STRATEGY);
     allowed.add(FileUtil.toSystemIndependentName(PathManager.getHomePath()));
+
+    // In plugin development environment PathManager.getHomePath() returns path like "~/.IntelliJIdea/system/plugins-sandbox/test" when running tests
+    // The following is to avoid errors in tests like "File accessed outside allowed roots: file://C:/Program Files/idea/lib/idea.jar"
+    final String homePath2 = PathManager.getHomePathFor(Application.class);
+    if (homePath2 != null) {
+      allowed.add(FileUtil.toSystemIndependentName(homePath2));
+    }
 
     try {
       URL outUrl = Application.class.getResource("/");
@@ -151,7 +161,6 @@ public class VfsRootAccess {
     return allowed;
   }
 
-  @TestOnly
   private static VirtualFile[] getAllRoots(@NotNull Project project) {
     insideGettingRoots = true;
     final Set<VirtualFile> roots = new THashSet<VirtualFile>();
@@ -162,6 +171,18 @@ public class VfsRootAccess {
 
     insideGettingRoots = false;
     return VfsUtilCore.toVirtualFileArray(roots);
+  }
+
+  @TestOnly
+  public static void allowRootAccess(@NotNull Disposable disposable, @NotNull final String... roots) {
+    if (roots.length == 0) return;
+    allowRootAccess(roots);
+    Disposer.register(disposable, new Disposable() {
+      @Override
+      public void dispose() {
+        disallowRootAccess(roots);
+      }
+    });
   }
 
   @TestOnly

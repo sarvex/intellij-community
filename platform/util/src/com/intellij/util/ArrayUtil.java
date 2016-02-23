@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -100,6 +100,22 @@ public class ArrayUtil extends ArrayUtilRt {
 
   @NotNull
   @Contract(pure=true)
+  public static long[] realloc(@NotNull long[] array, int newSize) {
+    if (newSize == 0) {
+      return EMPTY_LONG_ARRAY;
+    }
+
+    final int oldSize = array.length;
+    if (oldSize == newSize) {
+      return array;
+    }
+
+    long[] result = new long[newSize];
+    System.arraycopy(array, 0, result, 0, Math.min(oldSize, newSize));
+    return result;
+  }
+  @NotNull
+  @Contract(pure=true)
   public static int[] realloc(@NotNull int[] array, final int newSize) {
     if (newSize == 0) {
       return EMPTY_INT_ARRAY;
@@ -131,6 +147,13 @@ public class ArrayUtil extends ArrayUtilRt {
     return result;
   }
 
+  @NotNull
+  @Contract(pure=true)
+  public static long[] append(@NotNull long[] array, long value) {
+    array = realloc(array, array.length + 1);
+    array[array.length - 1] = value;
+    return array;
+  }
   @NotNull
   @Contract(pure=true)
   public static int[] append(@NotNull int[] array, int value) {
@@ -383,6 +406,16 @@ public class ArrayUtil extends ArrayUtilRt {
 
   @NotNull
   @Contract(pure=true)
+  public static <T> T[] prepend(final T element, @NotNull final T[] src, @NotNull ArrayFactory<T> factory) {
+    int length = src.length;
+    T[] result = factory.create(length + 1);
+    System.arraycopy(src, 0, result, 1, length);
+    result[0] = element;
+    return result;
+  }
+
+  @NotNull
+  @Contract(pure=true)
   public static byte[] prepend(byte element, @NotNull byte[] array) {
     int length = array.length;
     final byte[] result = new byte[length + 1];
@@ -391,6 +424,7 @@ public class ArrayUtil extends ArrayUtilRt {
     return result;
   }
 
+  @NotNull
   @Contract(pure=true)
   public static <T> T[] append(@NotNull final T[] src, final T element, @NotNull ArrayFactory<T> factory) {
     int length = src.length;
@@ -607,12 +641,6 @@ public class ArrayUtil extends ArrayUtilRt {
     return newArray;
   }
 
-  public static void reverse(@NotNull char[] array) {
-    for (int i = 0; i < array.length; i++) {
-      swap(array, array.length - i - 1, i);
-    }
-  }
-
   @Contract(pure=true)
   public static int lexicographicCompare(@NotNull String[] obj1, @NotNull String[] obj2) {
     for (int i = 0; i < Math.max(obj1.length, obj2.length); i++) {
@@ -721,6 +749,14 @@ public class ArrayUtil extends ArrayUtilRt {
   }
 
   @Contract(pure=true)
+  public static int indexOf(@NotNull long[] ints, long value) {
+    for (int i = 0; i < ints.length; i++) {
+      if (ints[i] == value) return i;
+    }
+
+    return -1;
+  }
+  @Contract(pure=true)
   public static int indexOf(@NotNull int[] ints, int value) {
     for (int i = 0; i < ints.length; i++) {
       if (ints[i] == value) return i;
@@ -750,6 +786,17 @@ public class ArrayUtil extends ArrayUtilRt {
         if (o.equals(obj)) {
           return i;
         }
+      }
+    }
+    return -1;
+  }
+
+  @Contract(pure=true)
+  public static <T> int lastIndexOf(@NotNull final int[] src, final int obj) {
+    for (int i = src.length - 1; i >= 0; i--) {
+      final int o = src[i];
+      if (o == obj) {
+          return i;
       }
     }
     return -1;
@@ -842,6 +889,11 @@ public class ArrayUtil extends ArrayUtilRt {
     return array != null && array.length > 0 ? array[array.length - 1] : null;
   }
 
+  @Contract(value = "null -> true", pure=true)
+  public static <T> boolean isEmpty(@Nullable T[] array) {
+    return array == null || array.length == 0;
+  }
+
   @NotNull
   @Contract(pure=true)
   public static String[] toStringArray(@Nullable Collection<String> collection) {
@@ -867,5 +919,29 @@ public class ArrayUtil extends ArrayUtilRt {
       }
     }
     return 0;
+  }
+
+  // calculates average of the median values in the selected part of the array. E.g. for part=3 returns average in the middle third.
+  public static long averageAmongMedians(@NotNull long[] time, int part) {
+    assert part >= 1;
+    int n = time.length;
+    Arrays.sort(time);
+    long total = 0;
+    for (int i= n /2- n / part /2; i< n /2+ n / part /2; i++) {
+      total += time[i];
+    }
+    int middlePartLength = n / part;
+    return middlePartLength == 0 ? 0 : total / middlePartLength;
+  }
+  public static long averageAmongMedians(@NotNull int[] time, int part) {
+    assert part >= 1;
+    int n = time.length;
+    Arrays.sort(time);
+    long total = 0;
+    for (int i= n /2- n / part /2; i< n /2+ n / part /2; i++) {
+      total += time[i];
+    }
+    int middlePartLength = n / part;
+    return middlePartLength == 0 ? 0 : total / middlePartLength;
   }
 }

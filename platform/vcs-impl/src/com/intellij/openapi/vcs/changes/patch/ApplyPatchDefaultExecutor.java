@@ -15,37 +15,32 @@
  */
 package com.intellij.openapi.vcs.changes.patch;
 
-import com.intellij.openapi.diff.impl.patch.BinaryFilePatch;
-import com.intellij.openapi.diff.impl.patch.FilePatch;
-import com.intellij.openapi.diff.impl.patch.PatchEP;
-import com.intellij.openapi.diff.impl.patch.PatchSyntaxException;
+import com.intellij.openapi.diff.impl.patch.*;
 import com.intellij.openapi.diff.impl.patch.formove.PatchApplier;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.MessageType;
-import com.intellij.openapi.vcs.ObjectsConvertor;
 import com.intellij.openapi.vcs.changes.CommitContext;
 import com.intellij.openapi.vcs.changes.LocalChangeList;
 import com.intellij.openapi.vcs.changes.TransparentlyFailedValueI;
 import com.intellij.openapi.vcs.ui.VcsBalloonProblemNotifier;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Consumer;
-import com.intellij.util.containers.Convertor;
+import com.intellij.util.Function;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.HashSet;
 import com.intellij.util.containers.MultiMap;
+import org.jetbrains.annotations.CalledInAwt;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * @author irengrig
- *         Date: 2/25/11
- *         Time: 5:58 PM
- */
-public class ApplyPatchDefaultExecutor implements ApplyPatchExecutor {
-  private final Project myProject;
+public class ApplyPatchDefaultExecutor implements ApplyPatchExecutor<AbstractFilePatchInProgress> {
+  protected final Project myProject;
 
   public ApplyPatchDefaultExecutor(Project project) {
     myProject = project;
@@ -57,29 +52,47 @@ public class ApplyPatchDefaultExecutor implements ApplyPatchExecutor {
     return null;
   }
 
+  @CalledInAwt
   @Override
-  public void apply(MultiMap<VirtualFile, FilePatchInProgress> patchGroups,
-                    LocalChangeList localList,
-                    String fileName,
-                    TransparentlyFailedValueI<Map<String, Map<String, CharSequence>>, PatchSyntaxException> additionalInfo) {
-    final Collection<PatchApplier> appliers = new LinkedList<PatchApplier>();
+  public void apply(@NotNull MultiMap<VirtualFile, AbstractFilePatchInProgress> patchGroups,
+                    @Nullable LocalChangeList localList,
+                    @Nullable String fileName,
+                    @Nullable TransparentlyFailedValueI<Map<String, Map<String, CharSequence>>, PatchSyntaxException> additionalInfo) {
     final CommitContext commitContext = new CommitContext();
     applyAdditionalInfoBefore(myProject, additionalInfo, commitContext);
-
-    for (VirtualFile base : patchGroups.keySet()) {
-      final PatchApplier patchApplier =
-        new PatchApplier<BinaryFilePatch>(myProject, base, ObjectsConvertor.convert(patchGroups.get(base),
-                                                                                  new Convertor<FilePatchInProgress, FilePatch>() {
-                                                                                    public FilePatch convert(FilePatchInProgress o) {
-                                                                                      return o.getPatch();
-                                                                                    }
-                                                                                  }), localList, null, commitContext);
-      appliers.add(patchApplier);
-    }
-    PatchApplier.executePatchGroup(appliers, localList);
-
-    applyAdditionalInfo(myProject, additionalInfo, commitContext);
+    final Collection<PatchApplier> appliers = getPatchAppliers(patchGroups, localList, commitContext);
+    executeAndApplyAdditionalInfo(localList, additionalInfo, commitContext, appliers);
   }
+
+  protected ApplyPatchStatus executeAndApplyAdditionalInfo(@Nullable LocalChangeList localList,
+                                                           @Nullable TransparentlyFailedValueI<Map<String, Map<String, CharSequence>>, PatchSyntaxException> additionalInfo,
+                                                           @NotNull CommitContext commitContext,
+                                                           @NotNull Collection<PatchApplier> appliers) {
+    final ApplyPatchStatus applyPatchStatus = PatchApplier.executePatchGroup(appliers, localList);
+    if (applyPatchStatus != ApplyPatchStatus.ABORT) {
+      applyAdditionalInfo(myProject, additionalInfo, commitContext);
+    }
+    return applyPatchStatus;
+  }
+
+  @NotNull
+  protected Collection<PatchApplier> getPatchAppliers(@NotNull MultiMap<VirtualFile, AbstractFilePatchInProgress> patchGroups,
+                                                      @Nullable LocalChangeList localList,
+                                                      @NotNull CommitContext commitContext) {
+    final Collection<PatchApplier> appliers = new LinkedList<PatchApplier>();
+    for (VirtualFile base : patchGroups.keySet()) {
+      appliers.add(new PatchApplier<BinaryFilePatch>(myProject, base,
+                                                     ContainerUtil
+                                                       .map(patchGroups.get(base), new Function<AbstractFilePatchInProgress, FilePatch>() {
+                                                         @Override
+                                                         public FilePatch fun(AbstractFilePatchInProgress patchInProgress) {
+                                                           return patchInProgress.getPatch();
+                                                         }
+                                                       }), localList, null, commitContext));
+    }
+    return appliers;
+  }
+
 
   public static void applyAdditionalInfoBefore(final Project project,
                                          TransparentlyFailedValueI<Map<String, Map<String, CharSequence>>, PatchSyntaxException> additionalInfo,
@@ -103,9 +116,9 @@ public class ApplyPatchDefaultExecutor implements ApplyPatchExecutor {
     });
   }
 
-  public static void applyAdditionalInfoImpl(final Project project,
-                                         TransparentlyFailedValueI<Map<String, Map<String, CharSequence>>, PatchSyntaxException> additionalInfo,
-                                         CommitContext commitContext, final Consumer<InfoGroup> worker) {
+  private static void applyAdditionalInfoImpl(final Project project,
+                                              TransparentlyFailedValueI<Map<String, Map<String, CharSequence>>, PatchSyntaxException> additionalInfo,
+                                              CommitContext commitContext, final Consumer<InfoGroup> worker) {
     final PatchEP[] extensions = Extensions.getExtensions(PatchEP.EP_NAME, project);
     if (extensions.length == 0) return;
     if (additionalInfo != null) {
@@ -131,10 +144,10 @@ public class ApplyPatchDefaultExecutor implements ApplyPatchExecutor {
   }
   
   private static class InfoGroup {
-    private PatchEP myPatchEP;
-    private String myPath;
-    private CharSequence myContent;
-    private CommitContext myCommitContext;
+    private final PatchEP myPatchEP;
+    private final String myPath;
+    private final CharSequence myContent;
+    private final CommitContext myCommitContext;
 
     private InfoGroup(PatchEP patchEP, String path, CharSequence content, CommitContext commitContext) {
       myPatchEP = patchEP;
@@ -144,10 +157,10 @@ public class ApplyPatchDefaultExecutor implements ApplyPatchExecutor {
     }
   }
 
-  public static Set<String> pathsFromGroups(MultiMap<VirtualFile, FilePatchInProgress> patchGroups) {
+  public static Set<String> pathsFromGroups(MultiMap<VirtualFile, AbstractFilePatchInProgress> patchGroups) {
     final Set<String> selectedPaths = new HashSet<String>();
-    final Collection<? extends FilePatchInProgress> values = patchGroups.values();
-    for (FilePatchInProgress value : values) {
+    final Collection<? extends AbstractFilePatchInProgress> values = patchGroups.values();
+    for (AbstractFilePatchInProgress value : values) {
       final String path = value.getPatch().getBeforeName() == null ? value.getPatch().getAfterName() : value.getPatch().getBeforeName();
       selectedPaths.add(path);
     }

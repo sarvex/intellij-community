@@ -22,8 +22,9 @@ import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.VcsTestUtil;
+import com.intellij.openapi.vfs.LocalFileSystem;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.containers.ContainerUtil;
-import git4idea.GitBranch;
 import git4idea.GitLocalBranch;
 import git4idea.GitRemoteBranch;
 import git4idea.GitStandardRemoteBranch;
@@ -57,15 +58,17 @@ public class GitConfigTest extends GitPlatformTest {
 
   //inspired by IDEA-135557
   public void test_branch_with_hash_symbol() throws IOException {
-    GitTestUtil.createRepository(myProject, myProjectPath, true);
-    git("remote add origin http://example.git"); // define a remote to be able to set up tracking
+    createRepository();
+    addRemote("http://example.git");
     git("update-ref refs/remotes/origin/a#branch HEAD");
     git("branch --track a#branch origin/a#branch");
 
     File gitDir = new File(myProjectPath, ".git");
     GitConfig config = GitConfig.read(myPlatformFacade, new File(gitDir, "config"));
-    GitBranchState state = new GitRepositoryReader(gitDir).readState(config.parseRemotes());
-    Collection<GitBranchTrackInfo> trackInfos = config.parseTrackInfos(state.getLocalBranches(), state.getRemoteBranches());
+    VirtualFile dir = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(gitDir);
+    GitRepositoryReader reader = new GitRepositoryReader(GitRepositoryFiles.getInstance(dir));
+    GitBranchState state = reader.readState(config.parseRemotes());
+    Collection<GitBranchTrackInfo> trackInfos = config.parseTrackInfos(state.getLocalBranches().keySet(), state.getRemoteBranches().keySet());
     assertTrue("Couldn't find correct a#branch tracking information among: [" + trackInfos + "]",
                ContainerUtil.exists(trackInfos, new Condition<GitBranchTrackInfo>() {
                  @Override
@@ -74,6 +77,45 @@ public class GitConfigTest extends GitPlatformTest {
                           info.getRemoteBranch().getNameForLocalOperations().equals("origin/a#branch");
                  }
                }));
+  }
+
+  // IDEA-143363 Check that remote.pushdefault (generic, without remote name) doesn't fail the config parsing procedure
+  public void test_remote_unspecified_section() throws Exception {
+    createRepository();
+    addRemote("git@github.com:foo/bar.git");
+    git("config remote.pushdefault origin");
+
+    assertSingleRemoteInConfig();
+  }
+
+  public void test_invalid_section_with_remote_prefix_is_ignored() throws Exception {
+    createRepository();
+    addRemote("git@github.com:foo/bar.git");
+    git("config remote-cfg.newkey newval");
+
+    assertSingleRemoteInConfig();
+  }
+
+  private static void addRemote(@NotNull String url) {
+    git("remote add origin " + url);
+  }
+
+  private void createRepository() {
+    GitTestUtil.createRepository(myProject, myProjectPath, true);
+  }
+
+  private static void assertSingleRemote(@NotNull Collection<GitRemote> remotes) {
+    assertEquals(1, remotes.size());
+    GitRemote remote = ContainerUtil.getFirstItem(remotes);
+    assertNotNull(remote);
+    assertEquals("origin", remote.getName());
+    assertEquals("git@github.com:foo/bar.git", remote.getFirstUrl());
+  }
+
+  private void assertSingleRemoteInConfig() {
+    File gitDir = new File(myProjectPath, ".git");
+    Collection<GitRemote> remotes = GitConfig.read(myPlatformFacade, new File(gitDir, "config")).parseRemotes();
+    assertSingleRemote(remotes);
   }
 
   private void doTestRemotes(String testName, File configFile, File resultFile) throws IOException {
@@ -174,8 +216,8 @@ public class GitConfigTest extends GitPlatformTest {
       String remoteBranchAtRemote = info[2];
       String remoteBranchHere = info[3];
       boolean merge = info[4].equals("merge");
-      remotes.add(new GitBranchTrackInfo(new GitLocalBranch(branch, GitBranch.DUMMY_HASH),
-                                         new GitStandardRemoteBranch(remote, remoteBranchAtRemote, GitBranch.DUMMY_HASH),
+      remotes.add(new GitBranchTrackInfo(new GitLocalBranch(branch),
+                                         new GitStandardRemoteBranch(remote, remoteBranchAtRemote),
                                          merge));
     }
     return remotes;

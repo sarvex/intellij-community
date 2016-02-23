@@ -23,8 +23,8 @@ import com.intellij.codeInsight.lookup.Lookup;
 import com.intellij.codeInsight.lookup.LookupElement;
 import com.intellij.codeInsight.lookup.LookupElementBuilder;
 import com.intellij.testFramework.PsiTestUtil;
-import com.jetbrains.python.documentation.DocStringFormat;
 import com.jetbrains.python.documentation.PyDocumentationSettings;
+import com.jetbrains.python.documentation.docstrings.DocStringFormat;
 import com.jetbrains.python.fixtures.PyTestCase;
 import com.jetbrains.python.psi.LanguageLevel;
 import org.jetbrains.annotations.Nullable;
@@ -37,17 +37,17 @@ public class PythonCompletionTest extends PyTestCase {
 
   private void doTest() {
     CamelHumpMatcher.forceStartMatching(getTestRootDisposable());
-    final String testName = "completion/" + getTestName(true);
+    final String testName = getTestName(true);
     myFixture.configureByFile(testName + ".py");
     myFixture.completeBasic();
     myFixture.checkResultByFile(testName + ".after.py");
   }
 
   private void doMultiFileTest() {
-    myFixture.copyDirectoryToProject("completion/" + getTestName(true), "");
+    myFixture.copyDirectoryToProject(getTestName(true), "");
     myFixture.configureByFile("a.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/" + getTestName(true) + "/a.after.py");
+    myFixture.checkResultByFile(getTestName(true) + "/a.after.py");
   }
 
   private List<String> doTestByText(String text) {
@@ -58,14 +58,14 @@ public class PythonCompletionTest extends PyTestCase {
 
   @Nullable
   private List<String> doTestByFile() {
-    myFixture.configureByFile("completion/" + getTestName(true) + ".py");
+    myFixture.configureByFile(getTestName(true) + ".py");
     myFixture.completeBasic();
     return myFixture.getLookupElementStrings();
   }
 
   @Nullable
   private List<String> doTestSmartByFile() {
-    myFixture.configureByFile("completion/" + getTestName(true) + ".py");
+    myFixture.configureByFile(getTestName(true) + ".py");
     myFixture.complete(CompletionType.SMART);
     return myFixture.getLookupElementStrings();
   }
@@ -91,6 +91,11 @@ public class PythonCompletionTest extends PyTestCase {
   }
 
   public void testInitParams() {
+    doTest();
+  }
+
+  // PY-14044
+  public void testNamedTupleInitParams() {
     doTest();
   }
 
@@ -127,7 +132,7 @@ public class PythonCompletionTest extends PyTestCase {
   }
 
   public void testOneUnderscore() {
-    final String testName = "completion/" + getTestName(true);
+    final String testName = getTestName(true);
     myFixture.configureByFile(testName + ".py");
     myFixture.completeBasic();
     myFixture.type('\n');
@@ -178,8 +183,12 @@ public class PythonCompletionTest extends PyTestCase {
     doTest();
   }
 
+  public void testPySixTest() {
+    doTest();
+  }
+
   public void testSeenMembers() {  // PY-1181
-    final String testName = "completion/" + getTestName(true);
+    final String testName = getTestName(true);
     myFixture.configureByFile(testName + ".py");
     final LookupElement[] elements = myFixture.completeBasic();
     assertNotNull(elements);
@@ -188,26 +197,24 @@ public class PythonCompletionTest extends PyTestCase {
   }
 
   public void testImportModule() {
-    final String testName = "completion/" + getTestName(true);
-    myFixture.configureByFiles(testName + ".py", "completion/someModule.py");
+    final String testName = getTestName(true);
+    myFixture.configureByFiles(testName + ".py", "someModule.py");
     myFixture.completeBasic();
     myFixture.checkResultByFile(testName + ".after.py");
   }
 
   public void testPy255() {
-    final String dirname = "completion/";
-    final String testName = dirname + "moduleClass";
-    myFixture.configureByFiles(testName + ".py", dirname + "__init__.py");
-    myFixture.copyDirectoryToProject(dirname + "mymodule", dirname + "mymodule");
+    final String dirName = getTestName(true);
+    myFixture.copyDirectoryToProject(dirName, "");
+    myFixture.configureByFiles("moduleClass.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile(testName + ".after.py");
+    myFixture.checkResultByFile(dirName + "/moduleClass.after.py");
   }
 
   public void testPy874() {
-    final String dirname = "completion/";
-    final String testName = dirname + "py874";
+    final String testName = "py874";
     myFixture.configureByFile(testName + ".py");
-    myFixture.copyDirectoryToProject(dirname + "root", dirname + "root");
+    myFixture.copyDirectoryToProject("root", "root");
     myFixture.completeBasic();
     myFixture.checkResultByFile(testName + ".after.py");
   }
@@ -217,7 +224,7 @@ public class PythonCompletionTest extends PyTestCase {
   }
 
   public void testStarImport() {
-    myFixture.configureByFiles("completion/starImport/starImport.py", "completion/starImport/importSource.py");
+    myFixture.configureByFiles("starImport/starImport.py", "starImport/importSource.py");
     myFixture.completeBasic();
     assertSameElements(myFixture.getLookupElementStrings(), Arrays.asList("my_foo", "my_bar"));
   }
@@ -240,11 +247,11 @@ public class PythonCompletionTest extends PyTestCase {
   }
 
   public void testFromImportBinary() {
-    myFixture.copyFileToProject("completion/root/binary_mod.pyd");
-    myFixture.copyFileToProject("completion/root/binary_mod.so");
-    myFixture.configureByFiles("completion/fromImportBinary.py", "completion/root/__init__.py");
+    myFixture.copyFileToProject("root/binary_mod.pyd");
+    myFixture.copyFileToProject("root/binary_mod.so");
+    myFixture.configureByFiles("fromImportBinary.py", "root/__init__.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/fromImportBinary.after.py");
+    myFixture.checkResultByFile("fromImportBinary.after.py");
   }
 
   public void testNonExistingProperty() {  // PY-1748
@@ -252,26 +259,24 @@ public class PythonCompletionTest extends PyTestCase {
   }
 
   public void testImportItself() {  // PY-1895
-    myFixture.copyDirectoryToProject("completion/importItself/package1", "package1");
+    myFixture.copyDirectoryToProject("importItself/package1", "package1");
     myFixture.configureFromTempProjectFile("package1/submodule1.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/importItself.after.py");
+    myFixture.checkResultByFile("importItself.after.py");
   }
 
   public void testImportedFile() { // PY-1955
-    final String dirname = "completion/";
-    myFixture.copyDirectoryToProject(dirname + "root", dirname + "root");
-    myFixture.configureByFile(dirname + "importedFile.py");
+    myFixture.copyDirectoryToProject("root", "root");
+    myFixture.configureByFile("importedFile.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile(dirname + "importedFile.after.py");
+    myFixture.checkResultByFile("importedFile.after.py");
   }
 
   public void testImportedModule() {  // PY-1956
-    final String dirname = "completion/";
-    myFixture.copyDirectoryToProject(dirname + "root", dirname + "root");
-    myFixture.configureByFile(dirname + "importedModule.py");
+    myFixture.copyDirectoryToProject("root", "root");
+    myFixture.configureByFile("importedModule.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile(dirname + "importedModule.after.py");
+    myFixture.checkResultByFile("importedModule.after.py");
   }
 
   public void testDictKeys() {  // PY-2245
@@ -319,17 +324,17 @@ public class PythonCompletionTest extends PyTestCase {
   }
 
   public void testRelativeImport() {  // PY-2816
-    myFixture.copyDirectoryToProject("completion/relativeImport", "relativeImport");
+    myFixture.copyDirectoryToProject("relativeImport", "relativeImport");
     myFixture.configureByFile("relativeImport/pkg/main.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/relativeImport/pkg/main.after.py");
+    myFixture.checkResultByFile("relativeImport/pkg/main.after.py");
   }
 
   public void testRelativeImportNameFromInitPy() {  // PY-2816
-    myFixture.copyDirectoryToProject("completion/relativeImport", "relativeImport");
+    myFixture.copyDirectoryToProject("relativeImport", "relativeImport");
     myFixture.configureByFile("relativeImport/pkg/name.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/relativeImport/pkg/name.after.py");
+    myFixture.checkResultByFile("relativeImport/pkg/name.after.py");
   }
 
   public void testImport() {
@@ -375,7 +380,7 @@ public class PythonCompletionTest extends PyTestCase {
     final PyDocumentationSettings settings = PyDocumentationSettings.getInstance(myFixture.getModule());
     settings.setFormat(DocStringFormat.EPYTEXT);
     try {
-      myFixture.configureByFile("completion/epydocTags.py");
+      myFixture.configureByFile("epydocTags.py");
       myFixture.completeBasic();
       final List<String> lookupElementStrings = myFixture.getLookupElementStrings();
       assertNotNull(lookupElementStrings);
@@ -390,9 +395,9 @@ public class PythonCompletionTest extends PyTestCase {
     final PyDocumentationSettings settings = PyDocumentationSettings.getInstance(myFixture.getModule());
     settings.setFormat(DocStringFormat.EPYTEXT);
     try {
-      myFixture.configureByFile("completion/epydocTagsMiddle.py");
+      myFixture.configureByFile("epydocTagsMiddle.py");
       myFixture.completeBasic();
-      myFixture.checkResultByFile("completion/epydocTagsMiddle.after.py");
+      myFixture.checkResultByFile("epydocTagsMiddle.after.py");
     }
     finally {
       settings.setFormat(DocStringFormat.PLAIN);
@@ -402,39 +407,155 @@ public class PythonCompletionTest extends PyTestCase {
   public void testIdentifiersInPlainDocstring() {
     final PyDocumentationSettings settings = PyDocumentationSettings.getInstance(myFixture.getModule());
     settings.setFormat(DocStringFormat.PLAIN);
-    myFixture.configureByFile("completion/identifiersInPlainDocstring.py");
+    myFixture.configureByFile("identifiersInPlainDocstring.py");
     final LookupElement[] elements = myFixture.completeBasic();
     assertNotNull(elements);
     assertContainsElements(Lists.newArrayList(elements),
                            LookupElementBuilder.create("bar").withAutoCompletionPolicy(AutoCompletionPolicy.NEVER_AUTOCOMPLETE));
   }
 
+  // PY-16877
+  public void testSectionNamesInGoogleDocstring() {
+    runWithDocStringFormat(DocStringFormat.GOOGLE, new Runnable() {
+      @Override
+      public void run() {
+        final List<String> variants = doTestByFile();
+        assertNotNull(variants);
+        assertContainsElements(variants, "Args", "Keyword Args", "Returns");
+        assertDoesntContain(variants, "Parameters", "Return", "Yield");
+      }
+    });
+  }
+
+  // PY-17023
+  public void testSectionNamesInNumpyDocstrings() {
+    runWithDocStringFormat(DocStringFormat.NUMPY, new Runnable() {
+      @Override
+      public void run() {
+        final List<String> variants = doTestByFile();
+        assertNotNull(variants);
+        assertContainsElements(variants, "Parameters", "Other Parameters", "Returns");
+        assertDoesntContain(variants, "Args", "Return", "Yield");
+      }
+    });
+  }
+
+  // PY-16991
+  public void testSecondSectionNameInGoogleDocstring() {
+    runWithDocStringFormat(DocStringFormat.GOOGLE, new Runnable() {
+      @Override
+      public void run() {
+        doTest();
+      }
+    });
+  }
+
+  // PY-16877
+  public void testTwoWordsSectionNameInGoogleDocstring() throws Exception {
+    runWithDocStringFormat(DocStringFormat.GOOGLE, new Runnable() {
+      @Override
+      public void run() {
+        doTest();
+      }
+    });
+  }
+
+  // PY-16870
+  public void testParamNameInGoogleDocstring() {
+    runWithDocStringFormat(DocStringFormat.GOOGLE, new Runnable() {
+      @Override
+      public void run() {
+        final List<String> variants = doTestByFile();
+        assertNotNull(variants);
+        assertSameElements(variants, "param1", "param2");
+      }
+    });
+  }
+
+  // PY-16870
+  public void testOverrideParamNameInGoogleDocstring() {
+    runWithDocStringFormat(DocStringFormat.GOOGLE, new Runnable() {
+      @Override
+      public void run() {
+        final List<String> variants = doTestByFile();
+        assertNotNull(variants);
+        assertSameElements(variants, "param2");
+      }
+    });
+  }
+
+  // PY-16870
+  public void testOverrideParamNameInRestDocstring() {
+    runWithDocStringFormat(DocStringFormat.REST, new Runnable() {
+      @Override
+      public void run() {
+        final List<String> variants = doTestByFile();
+        assertNotNull(variants);
+        assertSameElements(variants, "param2");
+      }
+    });
+  }
+
+  // PY-16870, PY-16972
+  public void testClassNameInDocstring() {
+    runWithDocStringFormat(DocStringFormat.EPYTEXT, new Runnable() {
+      @Override
+      public void run() {
+        doTest();
+      }
+    });
+  }
+
+  // PY-17002
+  public void testParamTypeInGoogleDocstringWithoutClosingParenthesis() {
+    runWithDocStringFormat(DocStringFormat.GOOGLE, new Runnable() {
+      @Override
+      public void run() {
+        final List<String> variants = doTestByFile();
+        assertNotNull(variants);
+        assertSameElements(variants, "str", "basestring");
+      }
+    });
+  }
+
+  // PY-17635
+  public void testParamNameInTypeDeclarationInRestDocstring() {
+    runWithDocStringFormat(DocStringFormat.REST, new Runnable() {
+      @Override
+      public void run() {
+        final List<String> variants = doTestByFile();
+        assertNotNull(variants);
+        assertContainsElements(variants, "foo");
+      }
+    });
+  }
+
   public void testPep328Completion() {  // PY-3409
-    myFixture.copyDirectoryToProject("completion/pep328", "pep328");
+    myFixture.copyDirectoryToProject("pep328", "pep328");
     myFixture.configureByFile("pep328/package/subpackage1/moduleX.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/pep328/package/subpackage1/moduleX.after.py");
+    myFixture.checkResultByFile("pep328/package/subpackage1/moduleX.after.py");
   }
 
   public void testImportedSubmoduleCompletion() {  // PY-3227
-    myFixture.copyDirectoryToProject("completion/submodules", "submodules");
+    myFixture.copyDirectoryToProject("submodules", "submodules");
     myFixture.configureByFile("submodules/foo.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/submodules/foo.after.py");
+    myFixture.checkResultByFile("submodules/foo.after.py");
   }
 
   public void testFromImportedModuleCompletion() {  // PY-3595
-    myFixture.copyDirectoryToProject("completion/py3595", "");
+    myFixture.copyDirectoryToProject("py3595", "");
     myFixture.configureByFile("moduleX.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/py3595/moduleX.after.py");
+    myFixture.checkResultByFile("py3595/moduleX.after.py");
   }
 
   public void testExportedConstants() {  // PY-3658
-    myFixture.copyDirectoryToProject("completion/exportedConstants", "");
+    myFixture.copyDirectoryToProject("exportedConstants", "");
     myFixture.configureByFile("a.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/exportedConstants/a.after.py");
+    myFixture.checkResultByFile("exportedConstants/a.after.py");
   }
 
   public void testAlias() {  // PY-3672
@@ -517,7 +638,7 @@ public class PythonCompletionTest extends PyTestCase {
     runWithLanguageLevel(LanguageLevel.PYTHON27, new Runnable() {
       @Override
       public void run() {
-        myFixture.copyDirectoryToProject("completion/relativeImportExcludeToplevel", "");
+        myFixture.copyDirectoryToProject("relativeImportExcludeToplevel", "");
         myFixture.configureByFile("pack/subpack/modX.py");
         myFixture.completeBasic();
         assertNull(myFixture.getLookupElementStrings());
@@ -560,10 +681,10 @@ public class PythonCompletionTest extends PyTestCase {
   }
 
   public void testLocalImportedModule() {  // PY-3668
-    myFixture.copyDirectoryToProject("completion/py3668", "");
+    myFixture.copyDirectoryToProject("py3668", "");
     myFixture.configureByFile("py3668.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile("completion/py3668/py3668.after.py");
+    myFixture.checkResultByFile("py3668/py3668.after.py");
   }
 
   public void testDuplicateDunderAll() {  // PY-6483
@@ -622,7 +743,7 @@ public class PythonCompletionTest extends PyTestCase {
 
   // PY-13140
   public void testModulePrivateNamesCompletedInsideImport() {
-    myFixture.copyDirectoryToProject("completion/" + getTestName(true), "");
+    myFixture.copyDirectoryToProject(getTestName(true), "");
     myFixture.configureByFile("a.py");
     myFixture.completeBasic();
     List<String> suggested = myFixture.getLookupElementStrings();
@@ -702,6 +823,11 @@ public class PythonCompletionTest extends PyTestCase {
     assertUnderscoredMethodSpecialAttributesSuggested();
   }
 
+  // PY-5833
+  public void testPassedNamedTupleAttributes() {
+    doTest();
+  }
+
   private void assertUnderscoredFunctionAttributesSuggested() {
     final List<String> suggested = doTestByFile();
     assertNotNull(suggested);
@@ -729,7 +855,7 @@ public class PythonCompletionTest extends PyTestCase {
 
   // PY-14387
   public void testSubmoduleOfIndirectlyImportedPackage() {
-    myFixture.copyDirectoryToProject("completion/" + getTestName(true), "");
+    myFixture.copyDirectoryToProject(getTestName(true), "");
     myFixture.configureByFile("a.py");
     myFixture.completeBasic();
     final List<String> suggested = myFixture.getLookupElementStrings();
@@ -739,7 +865,7 @@ public class PythonCompletionTest extends PyTestCase {
 
   // PY-14519
   public void testOsPath() {
-    myFixture.copyDirectoryToProject("completion/" + getTestName(true), "");
+    myFixture.copyDirectoryToProject(getTestName(true), "");
     myFixture.configureByFile("a.py");
     myFixture.completeBasic();
     final List<String> suggested = myFixture.getLookupElementStrings();
@@ -749,7 +875,7 @@ public class PythonCompletionTest extends PyTestCase {
 
   // PY-14331
   public void testExcludedTopLevelPackage() {
-    myFixture.copyDirectoryToProject("completion/" + getTestName(true), "");
+    myFixture.copyDirectoryToProject(getTestName(true), "");
     myFixture.configureByFile("a.py");
     PsiTestUtil.addExcludedRoot(myFixture.getModule(), myFixture.findFileInTempDir("pkg1"));
     final LookupElement[] variants = myFixture.completeBasic();
@@ -759,7 +885,7 @@ public class PythonCompletionTest extends PyTestCase {
 
   // PY-14331
   public void testExcludedSubPackage() {
-    myFixture.copyDirectoryToProject("completion/" + getTestName(true), "");
+    myFixture.copyDirectoryToProject(getTestName(true), "");
     myFixture.configureByFile("a.py");
     PsiTestUtil.addExcludedRoot(myFixture.getModule(), myFixture.findFileInTempDir("pkg1/subpkg1"));
     final LookupElement[] variants = myFixture.completeBasic();
@@ -767,7 +893,96 @@ public class PythonCompletionTest extends PyTestCase {
     assertEmpty(variants);
   }
 
+  // PY-15119
+  public void testRelativeFromImportWhitespacesAfterDot() {
+    myFixture.copyDirectoryToProject(getTestName(true), "");
+    myFixture.configureByFile("pkg/subpkg1/a.py");
+    myFixture.completeBasic();
+    assertSameElements(myFixture.getLookupElementStrings(), "import", "subpkg1", "subpkg2", "m");
+  }
+
+  // PY-15197
+  public void testKeywordArgumentEqualsSignSurroundedWithSpaces() {
+    getPythonCodeStyleSettings().SPACE_AROUND_EQ_IN_KEYWORD_ARGUMENT = true;
+    doTest();
+  }
+
   public void testStructuralType() {
     doTest();
+  }
+
+  // PY-11214
+  public void testNext() {
+    doTest();
+  }
+
+  //PY-3077
+  public void testFormatString() {
+    doTest();
+  }
+
+  //PY-3077
+  public void testFormatFuncArgument() {
+    doTest();
+  }
+
+  //PY-3077
+  public void testFormatStringFromStarArg() {
+    doTest();
+  }
+
+  //PY-3077
+  public void testFormatStringOutsideBraces() {
+    doTest();
+  }
+
+  //PY-3077
+  public void testFormatStringFromRef() {
+    doTest();
+  }
+
+  // PY-17437
+  public void testStrFormat() {
+    doTest();
+  }
+
+  public void testProtectedClassNames() {
+    doTest();
+  }
+
+  public void testProtectedClassNameNoPrefix() {
+    final List<String> variants = doTestByFile();
+    assertNotNull(variants);
+    assertDoesntContain(variants, "_foo(self)");
+  }
+
+  // PY-12425
+  public void testInstanceFromDefinedCallAttr() {
+    doTest();
+  }
+
+  // PY-12425
+  public void testInstanceFromFunctionAssignedToCallAttr() {
+    doTest();
+  }
+
+  // PY-12425
+  public void testInstanceFromCallableAssignedToCallAttr() {
+    doTest();
+  }
+
+  // PY-12425
+  public void testInstanceFromInheritedCallAttr() {
+    doTest();
+  }
+
+  // PY-12425
+  public void testInstanceFromProvidedCallAttr() {
+    doMultiFileTest();
+  }
+
+  @Override
+  protected String getTestDataPath() {
+    return super.getTestDataPath() + "/completion";
   }
 }

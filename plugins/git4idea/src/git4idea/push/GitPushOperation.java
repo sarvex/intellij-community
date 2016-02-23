@@ -133,15 +133,15 @@ public class GitPushOperation {
 
         GroupedPushResult result = GroupedPushResult.group(resultMap);
 
-        // stop on first error
-        if (!result.errors.isEmpty()) {
+        // stop if error happens, or if push is rejected for a custom reason (not because a pull is needed)
+        if (!result.errors.isEmpty() || !result.customRejected.isEmpty()) {
           break;
         }
 
         // propose to update if rejected
         if (!result.rejected.isEmpty()) {
           boolean shouldUpdate = true;
-          if (pushingToNotTrackedBranch(result.rejected)) {
+          if (myForce || pushingToNotTrackedBranch(result.rejected)) {
             shouldUpdate = false;
           }
           else if (pushAttempt == 0 && !mySettings.autoUpdateIfPushRejected()) {
@@ -234,7 +234,7 @@ public class GitPushOperation {
     return ContainerUtil.filter(results.keySet(), new Condition<GitRepository>() {
       @Override
       public boolean value(GitRepository repository) {
-        return results.get(repository).getType() == GitPushRepoResult.Type.REJECTED ||
+        return results.get(repository).getType() == GitPushRepoResult.Type.REJECTED_NO_FF ||
                results.get(repository).getType() == GitPushRepoResult.Type.NOT_PUSHED;
       }
     });
@@ -368,7 +368,9 @@ public class GitPushOperation {
     GitLineHandlerListener progressListener = GitStandardProgressAnalyzer.createListener(myProgressIndicator);
     boolean setUpstream = pushSpec.getTarget().isNewBranchCreated() && !branchTrackingInfoIsSet(repository, sourceBranch);
     String tagMode = myTagMode == null ? null : myTagMode.getArgument();
-    GitCommandResult res = myGit.push(repository, sourceBranch, targetBranch, myForce, setUpstream, tagMode, progressListener);
+
+    String spec = sourceBranch.getFullName() + ":" + targetBranch.getNameForRemoteOperations();
+    GitCommandResult res = myGit.push(repository, targetBranch.getRemote(), spec, myForce, setUpstream, tagMode, progressListener);
     return new ResultWithOutput(res);
   }
 

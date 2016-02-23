@@ -15,39 +15,32 @@
  */
 package com.intellij.vcs.log.ui.actions;
 
+import com.intellij.codeInsight.AutoPopupController;
+import com.intellij.openapi.editor.SpellCheckingEditorCustomizationProvider;
 import com.intellij.openapi.editor.ex.EditorEx;
-import com.intellij.openapi.progress.PerformInBackgroundOption;
-import com.intellij.openapi.progress.ProgressIndicator;
-import com.intellij.openapi.progress.ProgressManager;
-import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
-import com.intellij.spellchecker.ui.SpellCheckingEditorCustomization;
+import com.intellij.ui.EditorCustomization;
 import com.intellij.ui.IdeBorderFactory;
 import com.intellij.ui.TextFieldWithAutoCompletion;
+import com.intellij.ui.TextFieldWithAutoCompletionListProvider;
 import com.intellij.util.ui.AsyncProcessIcon;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.KeyEvent;
-import java.util.Collection;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 
-public abstract class TextFieldWithProgress extends JPanel {
-  @NotNull private final TextFieldWithAutoCompletion<String> myTextField;
+public abstract class TextFieldWithProgress<T> extends JPanel {
+  @NotNull private final TextFieldWithAutoCompletion<T> myTextField;
   @NotNull private final AsyncProcessIcon myProgressIcon;
 
-  public TextFieldWithProgress(@NotNull Project project, @NotNull Collection<String> variants) {
+  public TextFieldWithProgress(@NotNull Project project,
+                               @NotNull TextFieldWithAutoCompletionListProvider<T> completionProvider) {
     super(new BorderLayout());
     setBorder(IdeBorderFactory.createEmptyBorder(3));
 
     myProgressIcon = new AsyncProcessIcon("Loading commits");
-    myTextField =
-      new TextFieldWithAutoCompletion<String>(project, new TextFieldWithAutoCompletion.StringsCompletionProvider(variants, null), false,
-                                              null) {
+    myTextField = new TextFieldWithAutoCompletion<T>(project, completionProvider, false, null) {
         @Override
         public void setBackground(Color bg) {
           super.setBackground(bg);
@@ -56,9 +49,12 @@ public abstract class TextFieldWithProgress extends JPanel {
 
         @Override
         protected EditorEx createEditor() {
-          // spell check is not needed
           EditorEx editor = super.createEditor();
-          SpellCheckingEditorCustomization.getInstance(false).customize(editor);
+          editor.putUserData(AutoPopupController.ALWAYS_AUTO_POPUP, true);
+          EditorCustomization customization = SpellCheckingEditorCustomizationProvider.getInstance().getDisabledCustomization();
+          if (customization != null) {
+            customization.customize(editor);
+          }
           return editor;
         }
 

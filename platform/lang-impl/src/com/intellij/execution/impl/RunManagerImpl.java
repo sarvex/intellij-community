@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,11 +27,13 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.project.DumbService;
+import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ModuleRootAdapter;
 import com.intellij.openapi.roots.ModuleRootEvent;
 import com.intellij.openapi.updateSettings.impl.pluginsAdvertisement.UnknownFeaturesCollector;
 import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.ui.IconDeferrer;
 import com.intellij.util.EventDispatcher;
 import com.intellij.util.Function;
@@ -52,7 +54,7 @@ import java.util.*;
 @State(
   name = "RunManager",
   defaultStateAsResource = true,
-  storages = @Storage(file = StoragePathMacros.WORKSPACE_FILE)
+  storages = @Storage(StoragePathMacros.WORKSPACE_FILE)
 )
 public class RunManagerImpl extends RunManagerEx implements PersistentStateComponent<Element>, NamedComponent, Disposable {
   private static final Logger LOG = Logger.getInstance(RunManagerImpl.class);
@@ -95,9 +97,8 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
 
   private final EventDispatcher<RunManagerListener> myDispatcher = EventDispatcher.create(RunManagerListener.class);
 
-  public RunManagerImpl(final Project project,
-                        PropertiesComponent propertiesComponent) {
-    myConfig = new RunManagerConfig(propertiesComponent, this);
+  public RunManagerImpl(@NotNull Project project, @NotNull PropertiesComponent propertiesComponent) {
+    myConfig = new RunManagerConfig(propertiesComponent);
     myProject = project;
 
     initializeConfigurationTypes(ConfigurationType.CONFIGURATION_TYPE_EP.getExtensions());
@@ -155,7 +156,6 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
   public RunnerAndConfigurationSettings createConfiguration(@NotNull final RunConfiguration runConfiguration,
                                                             @NotNull final ConfigurationFactory factory) {
     RunnerAndConfigurationSettings template = getConfigurationTemplate(factory);
-    myConfigurationToBeforeTasksMap.put(runConfiguration, getBeforeRunTasks(template.getConfiguration()));
     RunnerAndConfigurationSettingsImpl settings = new RunnerAndConfigurationSettingsImpl(this, runConfiguration, false);
     settings.importRunnerAndConfigurationSettings((RunnerAndConfigurationSettingsImpl)template);
     if (!mySharedConfigurations.containsKey(settings.getUniqueID())) {
@@ -361,7 +361,7 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
     setBeforeRunTasks(configuration, tasks, addEnabledTemplateTasksIfAbsent);
 
     if (existingSettings == settings) {
-      myDispatcher.getMulticaster().runConfigurationChanged(settings);
+      myDispatcher.getMulticaster().runConfigurationChanged(settings, existingId);
     }
     else {
       myDispatcher.getMulticaster().runConfigurationAdded(settings);
@@ -535,6 +535,9 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
   public static boolean canRunConfiguration(@NotNull RunnerAndConfigurationSettings configuration, @NotNull Executor executor) {
     try {
       configuration.checkSettings(executor);
+    }
+    catch (IndexNotReadyException ignored) {
+      return Registry.is("dumb.aware.run.configurations");
     }
     catch (RuntimeConfigurationError ignored) {
       return false;
@@ -722,12 +725,7 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
       }
     }
 
-    try {
-      myOrder.readExternal(parentNode);
-    }
-    catch (InvalidDataException e) {
-      throw new RuntimeException(e);
-    }
+    myOrder.readExternal(parentNode);
 
     // migration (old ids to UUIDs)
     readList(myOrder);
@@ -736,12 +734,7 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
     Element recentNode = parentNode.getChild(RECENT);
     if (recentNode != null) {
       JDOMExternalizableStringList list = new JDOMExternalizableStringList();
-      try {
-        list.readExternal(recentNode);
-      }
-      catch (InvalidDataException e) {
-        throw new RuntimeException(e);
-      }
+      list.readExternal(recentNode);
       readList(list);
       for (String name : list) {
         RunnerAndConfigurationSettings settings = myConfigurations.get(name);
@@ -1098,7 +1091,7 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
                                                   long startTime = System.currentTimeMillis();
 
                                                   Icon icon;
-                                                  if (DumbService.isDumb(myProject)) {
+                                                  if (DumbService.isDumb(myProject) && !Registry.is("dumb.aware.run.configurations")) {
                                                     icon =
                                                       IconLoader.getDisabledIcon(ProgramRunnerUtil.getRawIcon(settings));
                                                     if (settings.isTemporary()) {
@@ -1107,11 +1100,18 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
                                                   }
                                                   else {
                                                     try {
+                                                      DumbService.getInstance(myProject).setAlternativeResolveEnabled(true);
                                                       settings.checkSettings();
                                                       icon = ProgramRunnerUtil.getConfigurationIcon(settings, false);
                                                     }
+                                                    catch (IndexNotReadyException e) {
+                                                      icon = ProgramRunnerUtil.getConfigurationIcon(settings, !Registry.is("dumb.aware.run.configurations"));
+                                                    }
                                                     catch (RuntimeConfigurationException ignored) {
                                                       icon = ProgramRunnerUtil.getConfigurationIcon(settings, true);
+                                                    }
+                                                    finally {
+                                                      DumbService.getInstance(myProject).setAlternativeResolveEnabled(false);
                                                     }
                                                   }
                                                   myIconCalcTime.put(uniqueID, System.currentTimeMillis() - startTime);
@@ -1126,12 +1126,27 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
     return icon;
   }
 
+  public RunnerAndConfigurationSettings getConfigurationById(@NotNull final String id) {
+    return myConfigurations.get(id);
+  }
+
   @Override
   @Nullable
   public RunnerAndConfigurationSettings findConfigurationByName(@Nullable String name) {
     if (name == null) return null;
     for (RunnerAndConfigurationSettings each : myConfigurations.values()) {
       if (name.equals(each.getName())) return each;
+    }
+    return null;
+  }
+
+  @Nullable
+  public RunnerAndConfigurationSettings findConfigurationByTypeAndName(@NotNull String typeId, @NotNull String name) {
+    for (RunnerAndConfigurationSettings settings : getSortedConfigurations()) {
+      ConfigurationType t = settings.getType();
+      if (t != null && typeId.equals(t.getId()) && name.equals(settings.getName())) {
+        return settings;
+      }
     }
     return null;
   }
@@ -1265,7 +1280,7 @@ public class RunManagerImpl extends RunManagerEx implements PersistentStateCompo
   }
 
   public void fireRunConfigurationChanged(@NotNull RunnerAndConfigurationSettings settings) {
-    myDispatcher.getMulticaster().runConfigurationChanged(settings);
+    myDispatcher.getMulticaster().runConfigurationChanged(settings, null);
   }
 
   private void fireRunConfigurationsRemoved(@Nullable List<RunnerAndConfigurationSettings> removed) {

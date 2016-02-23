@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,9 @@ import com.intellij.psi.controlFlow.*;
 import com.intellij.psi.search.LocalSearchScope;
 import com.intellij.psi.search.searches.ReferencesSearch;
 import com.intellij.psi.util.PsiUtil;
+import com.intellij.refactoring.util.RefactoringUtil;
 import com.intellij.util.IncorrectOperationException;
+import com.siyeh.ig.psiutils.ParenthesesUtils;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
@@ -79,7 +81,7 @@ public class ConvertSwitchToIfIntention implements IntentionAction {
     if (switchExpression == null) {
       return;
     }
-    final PsiType switchExpressionType = switchExpression.getType();
+    final PsiType switchExpressionType = RefactoringUtil.getTypeByExpressionWithExpectedType(switchExpression);
     if (switchExpressionType == null) {
       return;
     }
@@ -109,15 +111,14 @@ public class ConvertSwitchToIfIntention implements IntentionAction {
           "i", switchExpression, true);
       }
       expressionText = variableName;
-      declarationString =
-        switchExpressionType.getPresentableText() + ' ' +
-        variableName + " = " +
-        switchExpression.getText() + ';';
+      declarationString = switchExpressionType.getCanonicalText() + ' ' + variableName + " = " + switchExpression.getText() + ';';
     }
     else {
       hadSideEffects = false;
       declarationString = null;
-      expressionText = switchExpression.getText();
+      expressionText = ParenthesesUtils.getPrecedence(switchExpression) > ParenthesesUtils.EQUALITY_PRECEDENCE
+                       ? '(' + switchExpression.getText() + ')'
+                       : switchExpression.getText();
     }
     final PsiCodeBlock body = switchStatement.getBody();
     if (body == null) {
@@ -331,7 +332,7 @@ public class ConvertSwitchToIfIntention implements IntentionAction {
     for (PsiLocalVariable variable : variables) {
       if (ReferencesSearch.search(variable, new LocalSearchScope(bodyStatements.toArray(new PsiElement[bodyStatements.size()]))).findFirst() != null) {
         final PsiType varType = variable.getType();
-        ifStatementString.append(varType.getPresentableText());
+        ifStatementString.append(varType.getCanonicalText());
         ifStatementString.append(' ');
         ifStatementString.append(variable.getName());
         ifStatementString.append(';');

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,7 @@
  */
 package com.siyeh.ig.naming;
 
-import com.intellij.psi.PsiCatchSection;
-import com.intellij.psi.PsiElement;
-import com.intellij.psi.PsiForeachStatement;
-import com.intellij.psi.PsiParameter;
+import com.intellij.psi.*;
 import com.siyeh.InspectionGadgetsBundle;
 import com.siyeh.ig.BaseInspectionVisitor;
 import org.jetbrains.annotations.NotNull;
@@ -46,22 +43,8 @@ public class ParameterNamingConventionInspectionBase extends ConventionInspectio
   }
 
   @Override
-  @NotNull
-  public String buildErrorString(Object... infos) {
-    final String parametername = (String)infos[0];
-    if (parametername.length() < getMinLength()) {
-      return InspectionGadgetsBundle.message(
-        "parameter.naming.convention.problem.descriptor.short");
-    }
-    else if (parametername.length() > getMaxLength()) {
-      return InspectionGadgetsBundle.message(
-        "parameter.naming.convention.problem.descriptor.long");
-    }
-    else {
-      return InspectionGadgetsBundle.message(
-        "parameter.naming.convention.problem.descriptor.regex.mismatch",
-        getRegex());
-    }
+  protected String getElementDescription() {
+    return InspectionGadgetsBundle.message("parameter.naming.convention.element.description");
   }
 
   @Override
@@ -90,7 +73,8 @@ public class ParameterNamingConventionInspectionBase extends ConventionInspectio
     public void visitParameter(@NotNull PsiParameter variable) {
       final PsiElement scope = variable.getDeclarationScope();
       if (scope instanceof PsiCatchSection ||
-          scope instanceof PsiForeachStatement) {
+          scope instanceof PsiForeachStatement ||
+          scope instanceof PsiLambdaExpression) {
         return;
       }
       final String name = variable.getName();

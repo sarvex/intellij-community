@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.NullableComputable;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
-import com.intellij.testFramework.UsefulTestCase;
+import com.intellij.testFramework.PlatformTestUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -53,12 +53,13 @@ public class TestDataReferenceCollector {
       myLogMessages.add("Found no parameters annotated with @TestDataFile");
     }
 
-    if (result == null || result.isEmpty()) {
+    if (result.isEmpty()) {
       result = TestDataGuessByExistingFilesUtil.collectTestDataByExistingFiles(method);
     }
     return result;
   }
 
+  @NotNull
   private List<String> collectTestDataReferences(final PsiMethod method,
                                                  final Map<String, Computable<String>> argumentMap,
                                                  final HashSet<PsiMethod> proceed) {
@@ -168,7 +169,7 @@ public class TestDataReferenceCollector {
         final PsiExpression[] psiExpressions = methodCall.getArgumentList().getExpressions();
         if (psiExpressions.length == 1) {
           if ("true".equals(psiExpressions[0].getText()) && !StringUtil.isEmpty(myTestName)) {
-            return UsefulTestCase.lowercaseFirstLetter(myTestName, true);
+            return PlatformTestUtil.lowercaseFirstLetter(myTestName, true);
           }
           return myTestName;
         }

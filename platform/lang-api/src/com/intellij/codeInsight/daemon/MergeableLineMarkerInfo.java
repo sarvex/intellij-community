@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.intellij.openapi.ui.popup.PopupChooserBuilder;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiElement;
+import com.intellij.ui.IdeBorderFactory;
 import com.intellij.ui.awt.RelativePoint;
 import com.intellij.ui.components.JBLabel;
 import com.intellij.ui.components.JBList;
@@ -48,17 +49,22 @@ public abstract class MergeableLineMarkerInfo<T extends PsiElement> extends Line
                                  int updatePass,
                                  @Nullable Function<? super T, String> tooltipProvider,
                                  @Nullable GutterIconNavigationHandler<T> navHandler,
-                                 GutterIconRenderer.Alignment alignment) {
+                                 @NotNull GutterIconRenderer.Alignment alignment) {
     super(element, textRange, icon, updatePass, tooltipProvider, navHandler, alignment);
   }
 
   public abstract boolean canMergeWith(@NotNull MergeableLineMarkerInfo<?> info);
 
   public abstract Icon getCommonIcon(@NotNull List<MergeableLineMarkerInfo> infos);
+  @NotNull
   public abstract Function<? super PsiElement, String> getCommonTooltip(@NotNull List<MergeableLineMarkerInfo> infos);
 
   public GutterIconRenderer.Alignment getCommonIconAlignment(@NotNull List<MergeableLineMarkerInfo> infos) {
     return GutterIconRenderer.Alignment.LEFT;
+  }
+  
+  public String getElementPresentation(PsiElement element) {
+    return element.getText();
   }
 
   public int getCommonUpdatePass(@NotNull List<MergeableLineMarkerInfo> infos) {
@@ -80,7 +86,7 @@ public abstract class MergeableLineMarkerInfo<T extends PsiElement> extends Line
       for (int k = markers.size() - 1; k > i; k--) {
         MergeableLineMarkerInfo current = markers.get(k);
         if (marker.canMergeWith(current)) {
-          toMerge.add(current);
+          toMerge.add(0, current);
           markers.remove(k);
         }
       }
@@ -88,7 +94,7 @@ public abstract class MergeableLineMarkerInfo<T extends PsiElement> extends Line
         result.add(marker);
       }
       else {
-        toMerge.add(marker);
+        toMerge.add(0, marker);
         result.add(new MyLineMarkerInfo(toMerge));
       }
     }
@@ -96,7 +102,7 @@ public abstract class MergeableLineMarkerInfo<T extends PsiElement> extends Line
   }
 
   private static class MyLineMarkerInfo extends LineMarkerInfo<PsiElement> {
-    public MyLineMarkerInfo(@NotNull List<MergeableLineMarkerInfo> markers) {
+    private MyLineMarkerInfo(@NotNull List<MergeableLineMarkerInfo> markers) {
       this(markers, markers.get(0));
     }
 
@@ -148,9 +154,13 @@ public abstract class MergeableLineMarkerInfo<T extends PsiElement> extends Line
                   }
                   PsiElement element = ((LineMarkerInfo)dom).getElement();
                   assert element != null;
-                  String text = StringUtil.first(element.getText(), 100, true).replace('\n', ' ');
+                  final String elementPresentation =
+                    dom instanceof MergeableLineMarkerInfo ? ((MergeableLineMarkerInfo)dom).getElementPresentation(element) : element.getText();
+                  String text = StringUtil.first(elementPresentation, 100, true).replace('\n', ' ');
 
-                  return new JBLabel(text, icon, SwingConstants.LEFT);
+                  final JBLabel label = new JBLabel(text, icon, SwingConstants.LEFT);
+                  label.setBorder(IdeBorderFactory.createEmptyBorder(2));
+                  return label;
                 }
 
                 return new JBLabel();

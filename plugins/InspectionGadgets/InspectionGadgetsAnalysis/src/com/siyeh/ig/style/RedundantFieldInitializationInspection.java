@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2012 Dave Griffith, Bas Leijdekkers
+ * Copyright 2003-2015 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,14 @@ import com.intellij.codeInspection.ProblemHighlightType;
 import com.intellij.codeInspection.ui.SingleCheckboxOptionsPanel;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.util.IncorrectOperationException;
 import com.siyeh.InspectionGadgetsBundle;
 import com.siyeh.ig.BaseInspection;
 import com.siyeh.ig.BaseInspectionVisitor;
 import com.siyeh.ig.InspectionGadgetsFix;
 import com.siyeh.ig.psiutils.ExpressionUtils;
+import com.siyeh.ig.psiutils.VariableAccessUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -103,14 +105,41 @@ public class RedundantFieldInitializationInspection extends BaseInspection imple
         if (onlyWarnOnNull || !PsiKeyword.FALSE.equals(text)) {
           return;
         }
-      } else if (type instanceof PsiPrimitiveType) {
+      }
+      else if (type instanceof PsiPrimitiveType) {
         if (onlyWarnOnNull || !ExpressionUtils.isZero(initializer)) {
           return;
         }
-      } else if (!PsiType.NULL.equals(initializer.getType())) {
+      }
+      else if (!PsiType.NULL.equals(initializer.getType())) {
+        return;
+      }
+      if (initializer instanceof PsiReferenceExpression ||
+          !PsiTreeUtil.findChildrenOfType(initializer, PsiReferenceExpression.class).isEmpty()) {
+        return;
+      }
+      if (isAssignmentInInitializerOverwritten(field)) {
         return;
       }
       registerError(initializer, ProblemHighlightType.LIKE_UNUSED_SYMBOL);
+    }
+
+    private boolean isAssignmentInInitializerOverwritten(@NotNull PsiField field) {
+      // JLS 12.5. Creation of New Class Instances
+      final PsiClass aClass = field.getContainingClass();
+      if (aClass == null) {
+        return false;
+      }
+      final boolean isStatic = field.hasModifierProperty(PsiModifier.STATIC);
+      final PsiClassInitializer[] initializers = aClass.getInitializers();
+      for (PsiClassInitializer classInitializer : initializers) {
+        if (classInitializer.hasModifierProperty(PsiModifier.STATIC) == isStatic &&
+            classInitializer.getTextOffset() < field.getTextOffset() &&
+            VariableAccessUtils.variableIsAssigned(field, classInitializer)) {
+          return true;
+        }
+      }
+      return false;
     }
   }
 }

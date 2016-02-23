@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,8 +59,7 @@ public class SdkConfigurationUtil {
     }
 
     FileChooserDescriptor descriptor = createCompositeDescriptor(sdkTypes);
-    String suggestedPath = sdkTypes[0].suggestHomePath();
-    VirtualFile suggestedDir = suggestedPath == null ? null : LocalFileSystem.getInstance().findFileByPath(suggestedPath);
+    VirtualFile suggestedDir = getSuggestedSdkRoot(sdkTypes[0]);
     FileChooser.chooseFiles(descriptor, project, suggestedDir, new FileChooser.FileChooserConsumer() {
       @Override
       public void consume(List<VirtualFile> selectedFiles) {
@@ -136,8 +135,10 @@ public class SdkConfigurationUtil {
   }
 
   @Nullable
-  public static Sdk setupSdk(final Sdk[] allSdks,
-                             final VirtualFile homeDir, final SdkType sdkType, final boolean silent,
+  public static Sdk setupSdk(@NotNull Sdk[] allSdks,
+                             @NotNull VirtualFile homeDir,
+                             final SdkType sdkType,
+                             final boolean silent,
                              @Nullable final SdkAdditionalData additionalData,
                              @Nullable final String customSdkSuggestedName) {
     final List<Sdk> sdksList = Arrays.asList(allSdks);
@@ -256,11 +257,13 @@ public class SdkConfigurationUtil {
     return null;
   }
 
-  public static String createUniqueSdkName(SdkType type, String home, final Collection<Sdk> sdks) {
+  @NotNull
+  public static String createUniqueSdkName(@NotNull SdkType type, String home, final Collection<Sdk> sdks) {
     return createUniqueSdkName(type.suggestSdkName(null, home), sdks);
   }
 
-  public static String createUniqueSdkName(final String suggestedName, final Collection<Sdk> sdks) {
+  @NotNull
+  public static String createUniqueSdkName(@NotNull String suggestedName, @NotNull Collection<Sdk> sdks) {
     final Set<String> names = new HashSet<String>();
     for (Sdk jdk : sdks) {
       names.add(jdk.getName());
@@ -273,7 +276,7 @@ public class SdkConfigurationUtil {
     return newSdkName;
   }
 
-  public static void selectSdkHome(final SdkType sdkType, @NotNull final Consumer<String> consumer) {
+  public static void selectSdkHome(@NotNull final SdkType sdkType, @NotNull final Consumer<String> consumer) {
     final FileChooserDescriptor descriptor = sdkType.getHomeChooserDescriptor();
     if (ApplicationManager.getApplication().isUnitTestMode()) {
       Sdk sdk = ProjectJdkTable.getInstance().findMostRecentSdkOfType(sdkType);
@@ -299,12 +302,13 @@ public class SdkConfigurationUtil {
   }
 
   @Nullable
-  public static VirtualFile getSuggestedSdkRoot(SdkType sdkType) {
+  public static VirtualFile getSuggestedSdkRoot(@NotNull SdkType sdkType) {
     final String homePath = sdkType.suggestHomePath();
     return homePath == null ? null : LocalFileSystem.getInstance().findFileByPath(homePath);
   }
 
-  public static List<String> filterExistingPaths(SdkType sdkType, Collection<String> sdkHomes, final Sdk[] sdks) {
+  @NotNull
+  public static List<String> filterExistingPaths(@NotNull SdkType sdkType, Collection<String> sdkHomes, final Sdk[] sdks) {
     List<String> result = new ArrayList<String>();
     for (String sdkHome : sdkHomes) {
       if (findByPath(sdkType, sdks, sdkHome) == null) {
@@ -315,7 +319,7 @@ public class SdkConfigurationUtil {
   }
 
   @Nullable
-  private static Sdk findByPath(SdkType sdkType, Sdk[] sdks, String sdkHome) {
+  private static Sdk findByPath(@NotNull SdkType sdkType, @NotNull Sdk[] sdks, @NotNull String sdkHome) {
     for (Sdk sdk : sdks) {
       final String path = sdk.getHomePath();
       if (sdk.getSdkType() == sdkType && path != null &&

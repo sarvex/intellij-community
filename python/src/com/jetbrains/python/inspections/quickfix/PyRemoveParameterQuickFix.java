@@ -17,17 +17,12 @@ package com.jetbrains.python.inspections.quickfix;
 
 import com.intellij.codeInspection.LocalQuickFix;
 import com.intellij.codeInspection.ProblemDescriptor;
-import com.intellij.openapi.module.Module;
-import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiElement;
-import com.intellij.psi.PsiWhiteSpace;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.usageView.UsageInfo;
 import com.jetbrains.python.PyBundle;
-import com.jetbrains.python.PyTokenTypes;
-import com.jetbrains.python.documentation.PyDocumentationSettings;
-import com.jetbrains.python.editor.PythonDocCommentUtil;
+import com.jetbrains.python.documentation.docstrings.PyDocstringGenerator;
 import com.jetbrains.python.psi.*;
 import com.jetbrains.python.psi.resolve.PyResolveContext;
 import com.jetbrains.python.refactoring.PyRefactoringUtil;
@@ -65,8 +60,9 @@ public class PyRemoveParameterQuickFix implements LocalQuickFix {
           if (callExpression instanceof PyCallExpression) {
             final PyArgumentList argumentList = ((PyCallExpression)callExpression).getArgumentList();
             if (argumentList != null) {
-              final CallArgumentsMapping mapping = argumentList.analyzeCall(PyResolveContext.noImplicits());
-              for (Map.Entry<PyExpression, PyNamedParameter> parameterEntry : mapping.getPlainMappedParams().entrySet()) {
+              final PyResolveContext resolveContext = PyResolveContext.noImplicits();
+              final PyCallExpression.PyArgumentsMapping mapping = ((PyCallExpression)callExpression).mapArguments(resolveContext);
+              for (Map.Entry<PyExpression, PyNamedParameter> parameterEntry : mapping.getMappedParameters().entrySet()) {
                 if (parameterEntry.getValue().equals(element)) {
                   parameterEntry.getKey().delete();
                 }
@@ -78,27 +74,9 @@ public class PyRemoveParameterQuickFix implements LocalQuickFix {
       final PyStringLiteralExpression expression = pyFunction.getDocStringExpression();
       final String paramName = ((PyParameter)element).getName();
       if (expression != null && paramName != null) {
-        final Module module = ModuleUtilCore.findModuleForPsiElement(pyFunction);
-        assert module != null;
-        PyDocumentationSettings documentationSettings = PyDocumentationSettings.getInstance(module);
-        String prefix = documentationSettings.isEpydocFormat(pyFunction.getContainingFile()) ? "@" : ":";
-        final String replacement = PythonDocCommentUtil.removeParamFromDocstring(expression.getText(), prefix, paramName);
-        PyExpression str =
-          PyElementGenerator.getInstance(project).createDocstring(replacement).getExpression();
-        expression.replace(str);
+        PyDocstringGenerator.forDocStringOwner(pyFunction).withoutParam(paramName).buildAndInsert();
       }
     }
-
-    final PsiElement nextSibling = PsiTreeUtil.skipSiblingsForward(element, PsiWhiteSpace.class);
-    final PsiElement prevSibling = PsiTreeUtil.skipSiblingsBackward(element, PsiWhiteSpace.class);
     element.delete();
-    if (nextSibling != null && nextSibling.getNode().getElementType().equals(PyTokenTypes.COMMA)) {
-      nextSibling.delete();
-      return;
-    }
-    if (prevSibling != null && prevSibling.getNode().getElementType().equals(PyTokenTypes.COMMA)) {
-      prevSibling.delete();
-    }
-
   }
 }

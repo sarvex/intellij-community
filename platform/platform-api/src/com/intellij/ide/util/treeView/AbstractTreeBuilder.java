@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -298,7 +298,7 @@ public class AbstractTreeBuilder implements Disposable {
 
   @NotNull
   public ActionCallback queueUpdateFrom(final Object element, final boolean forceResort, final boolean updateStructure) {
-    if (getUi() == null) return new ActionCallback.Rejected();
+    if (getUi() == null) return ActionCallback.REJECTED;
 
     final ActionCallback result = new ActionCallback();
 
@@ -484,28 +484,17 @@ public class AbstractTreeBuilder implements Disposable {
     }
   }
 
-  @SuppressWarnings({"UnusedDeclaration", "SpellCheckingInspection"})
-  @Deprecated
-  @NotNull
-  /**
-   * @deprecated use {@link #getInitialized()}
-   * to remove in IDEA 14
-   */
-  public final ActionCallback getIntialized() {
-    return getInitialized();
-  }
-
   @NotNull
   public final ActionCallback getInitialized() {
     if (isDisposed()) {
-      return new ActionCallback.Rejected();
+      return ActionCallback.REJECTED;
     }
     return myUi.getInitialized();
   }
 
   @NotNull
   public final ActionCallback getReady(Object requestor) {
-    if (isDisposed()) return new ActionCallback.Rejected();
+    if (isDisposed()) return ActionCallback.REJECTED;
 
     return myUi.getReady(requestor);
   }
@@ -528,24 +517,24 @@ public class AbstractTreeBuilder implements Disposable {
 
   @NotNull
   public ActionCallback cancelUpdate() {
-    if (isDisposed()) return new ActionCallback.Rejected();
+    if (isDisposed()) return ActionCallback.REJECTED;
 
     return getUi().cancelUpdate();
   }
 
   @NotNull
   public ActionCallback batch(@NotNull Progressive progressive) {
-    if (isDisposed()) return new ActionCallback.Rejected();
+    if (isDisposed()) return ActionCallback.REJECTED;
 
     return getUi().batch(progressive);
   }
 
   @NotNull
   public AsyncResult<Object> revalidateElement(Object element) {
-    if (isDisposed()) return new AsyncResult.Rejected<Object>();
+    if (isDisposed()) return AsyncResult.rejected();
 
     AbstractTreeStructure structure = getTreeStructure();
-    if (structure == null) return new AsyncResult.Rejected<Object>();
+    if (structure == null) return AsyncResult.rejected();
 
     return structure.revalidateElement(element);
   }

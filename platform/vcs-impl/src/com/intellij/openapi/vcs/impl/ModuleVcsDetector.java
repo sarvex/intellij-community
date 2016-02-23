@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.intellij.openapi.vcs.impl;
 
 import com.intellij.ProjectTopics;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.components.ProjectComponent;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
@@ -28,12 +27,10 @@ import com.intellij.openapi.roots.ModuleRootEvent;
 import com.intellij.openapi.roots.ModuleRootListener;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.startup.StartupManager;
-import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vcs.AbstractVcs;
 import com.intellij.openapi.vcs.ProjectLevelVcsManager;
-import com.intellij.openapi.vcs.VcsBundle;
 import com.intellij.openapi.vcs.VcsDirectoryMapping;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.messages.MessageBus;
@@ -96,7 +93,7 @@ public class ModuleVcsDetector implements ProjectComponent {
     @Override
     public void rootsChanged(ModuleRootEvent event) {
       for (Pair<String, VcsDirectoryMapping> mapping : myMappingsForRemovedModules) {
-        promptRemoveMapping(mapping.first, mapping.second);
+        myVcsManager.removeDirectoryMapping(mapping.second);
       }
       // the check calculates to true only before user has done any change to mappings, i.e. in case modules are detected/added automatically
       // on start etc (look inside)
@@ -106,13 +103,13 @@ public class ModuleVcsDetector implements ProjectComponent {
     }
 
     @Override
-    public void moduleAdded(final Project project, final Module module) {
+    public void moduleAdded(@NotNull final Project project, @NotNull final Module module) {
       myMappingsForRemovedModules.removeAll(getMappings(module));
       autoDetectModuleVcsMapping(module);
     }
 
     @Override
-    public void beforeModuleRemoved(final Project project, final Module module) {
+    public void beforeModuleRemoved(@NotNull final Project project, @NotNull final Module module) {
       myMappingsForRemovedModules.addAll(getMappings(module));
     }
   }
@@ -216,19 +213,5 @@ public class ModuleVcsDetector implements ProjectComponent {
       }
     }
     return result;
-  }
-
-  private void promptRemoveMapping(final String moduleName, final VcsDirectoryMapping mapping) {
-    ApplicationManager.getApplication().invokeLater(new Runnable() {
-      @Override
-      public void run() {
-        if (myProject.isDisposed()) return;
-        final String msg = VcsBundle.message("vcs.root.remove.prompt", FileUtil.toSystemDependentName(mapping.getDirectory()), moduleName);
-        int rc = Messages.showYesNoDialog(myProject, msg, VcsBundle.message("vcs.root.remove.title"), Messages.getQuestionIcon());
-        if (rc == Messages.YES) {
-          myVcsManager.removeDirectoryMapping(mapping);
-        }
-      }
-    }, ModalityState.NON_MODAL);
   }
 }

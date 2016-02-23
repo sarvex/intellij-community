@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -41,7 +42,7 @@ public class RelatedItemLineMarkerInfo<T extends PsiElement> extends MergeableLi
   public RelatedItemLineMarkerInfo(@NotNull T element, @NotNull TextRange range, Icon icon, int updatePass,
                                    @Nullable Function<? super T, String> tooltipProvider,
                                    @Nullable GutterIconNavigationHandler<T> navHandler,
-                                   GutterIconRenderer.Alignment alignment,
+                                   @NotNull GutterIconRenderer.Alignment alignment,
                                    @NotNull NotNullLazyValue<Collection<? extends GotoRelatedItem>> targets) {
     super(element, range, icon, updatePass, tooltipProvider, navHandler, alignment);
     myTargets = targets;
@@ -50,7 +51,7 @@ public class RelatedItemLineMarkerInfo<T extends PsiElement> extends MergeableLi
   public RelatedItemLineMarkerInfo(@NotNull T element, @NotNull TextRange range, Icon icon, int updatePass,
                                    @Nullable Function<? super T, String> tooltipProvider,
                                    @Nullable GutterIconNavigationHandler<T> navHandler,
-                                   GutterIconRenderer.Alignment alignment,
+                                   @NotNull GutterIconRenderer.Alignment alignment,
                                    @NotNull final Collection<? extends GotoRelatedItem> targets) {
     this(element, range, icon, updatePass, tooltipProvider, navHandler, alignment, new NotNullLazyValue<Collection<? extends GotoRelatedItem>>() {
       @NotNull
@@ -82,17 +83,18 @@ public class RelatedItemLineMarkerInfo<T extends PsiElement> extends MergeableLi
     return myIcon;
   }
 
+  @NotNull
   @Override
   public Function<? super PsiElement, String> getCommonTooltip(@NotNull final List<MergeableLineMarkerInfo> infos) {
     return new Function<PsiElement, String>() {
       @Override
       public String fun(PsiElement element) {
-        Set<String> tooltips = ContainerUtil.map2Set(infos, new Function<MergeableLineMarkerInfo, String>() {
+        Set<String> tooltips = new HashSet<String>(ContainerUtil.mapNotNull(infos, new Function<MergeableLineMarkerInfo, String>() {
           @Override
           public String fun(MergeableLineMarkerInfo info) {
             return info.getLineMarkerTooltip();
           }
-        });
+        }));
         StringBuilder tooltip = new StringBuilder();
         for (String info : tooltips) {
           if (tooltip.length() > 0) {

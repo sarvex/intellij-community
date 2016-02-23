@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.intellij.javaee;
 
+import com.intellij.ide.DataManager;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.editor.colors.EditorColorsManager;
@@ -36,7 +37,6 @@ import com.intellij.psi.PsiManager;
 import com.intellij.ui.ColoredTreeCellRenderer;
 import com.intellij.ui.DocumentAdapter;
 import com.intellij.ui.ScrollPaneFactory;
-import com.intellij.ui.components.JBPanel;
 import com.intellij.ui.components.JBTabbedPane;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.tree.TreeUtil;
@@ -46,6 +46,7 @@ import com.intellij.xml.index.IndexedRelevantResource;
 import com.intellij.xml.index.XmlNamespaceIndex;
 import com.intellij.xml.index.XsdNamespaceBuilder;
 import com.intellij.xml.util.XmlUtil;
+import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -76,10 +77,58 @@ public class MapExternalResourceDialog extends DialogWrapper {
   private final FileSystemTreeImpl myExplorer;
   private String myLocation;
 
-  public MapExternalResourceDialog(String uri, @NotNull Project project, @Nullable PsiFile file, @Nullable String location) {
+  public MapExternalResourceDialog(String uri, @Nullable Project project, @Nullable PsiFile file, @Nullable String location) {
     super(project);
     setTitle("Map External Resource");
     myUri.setText(uri);
+    myUri.getDocument().addDocumentListener(new DocumentAdapter() {
+      @Override
+      protected void textChanged(DocumentEvent e) {
+        validateInput();
+      }
+    });
+
+    myExplorer = new FileSystemTreeImpl(project, new FileChooserDescriptor(true, false, false, false, true, false));
+    Disposer.register(getDisposable(), myExplorer);
+
+    myExplorer.addListener(new FileSystemTree.Listener() {
+      @Override
+      public void selectionChanged(List<VirtualFile> selection) {
+        validateInput();
+      }
+    }, myExplorer);
+
+    MouseAdapter mouseAdapter = new MouseAdapter() {
+      @Override
+      public void mouseClicked(MouseEvent e) {
+        if (e.getClickCount() > 1 && isOKActionEnabled()) {
+          doOKAction();
+        }
+      }
+    };
+    myExplorer.getTree().addMouseListener(mouseAdapter);
+
+    myExplorerPanel.add(ScrollPaneFactory.createScrollPane(myExplorer.getTree()), BorderLayout.CENTER);
+
+    AnAction actionGroup = ActionManager.getInstance().getAction("FileChooserToolbar");
+    ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar(ActionPlaces.UNKNOWN, (ActionGroup)actionGroup, true);
+    toolbar.setTargetComponent(myExplorerPanel);
+    myExplorerPanel.add(toolbar.getComponent(), BorderLayout.NORTH);
+
+    if (project != null) {
+      setupSchemasTab(uri, project, file, location, mouseAdapter);
+    }
+    else {
+      myTabs.removeTabAt(0);
+    }
+    init();
+  }
+
+  private void setupSchemasTab(String uri,
+                               @NotNull Project project,
+                               @Nullable PsiFile file,
+                               @Nullable String location,
+                               MouseAdapter mouseAdapter) {
 
     DefaultMutableTreeNode root = new DefaultMutableTreeNode();
     mySchemasTree.setModel(new DefaultTreeModel(root));
@@ -119,46 +168,13 @@ public class MapExternalResourceDialog extends DialogWrapper {
     renderer.setFont(EditorColorsManager.getInstance().getGlobalScheme().getFont(EditorFontType.PLAIN));
 
     mySchemasTree.setCellRenderer(renderer);
-    MouseAdapter mouseAdapter = new MouseAdapter() {
-      @Override
-      public void mouseClicked(MouseEvent e) {
-        if (e.getClickCount() > 1 && isOKActionEnabled()) {
-          doOKAction();
-        }
-      }
-    };
     mySchemasTree.addMouseListener(mouseAdapter);
-
-    myUri.getDocument().addDocumentListener(new DocumentAdapter() {
-      @Override
-      protected void textChanged(DocumentEvent e) {
-        validateInput();
-      }
-    });
     mySchemasTree.getSelectionModel().addTreeSelectionListener(new TreeSelectionListener() {
       @Override
       public void valueChanged(TreeSelectionEvent e) {
         validateInput();
       }
     });
-
-    myExplorer = new FileSystemTreeImpl(project, new FileChooserDescriptor(true, false, false, false, true, false));
-    Disposer.register(getDisposable(), myExplorer);
-
-    myExplorer.addListener(new FileSystemTree.Listener() {
-      @Override
-      public void selectionChanged(List<VirtualFile> selection) {
-        validateInput();
-      }
-    }, myExplorer);
-    myExplorer.getTree().addMouseListener(mouseAdapter);
-
-    myExplorerPanel.add(ScrollPaneFactory.createScrollPane(myExplorer.getTree()), BorderLayout.CENTER);
-
-    AnAction actionGroup = ActionManager.getInstance().getAction("FileChooserToolbar");
-    ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar(ActionPlaces.UNKNOWN, (ActionGroup)actionGroup, true);
-    toolbar.setTargetComponent(myExplorerPanel);
-    myExplorerPanel.add(toolbar.getComponent(), BorderLayout.NORTH);
 
     PsiFile schema = null;
     if (file != null) {
@@ -179,7 +195,7 @@ public class MapExternalResourceDialog extends DialogWrapper {
       myExplorer.select(schema.getVirtualFile(), null);
     }
 
-    int index = PropertiesComponent.getInstance().getOrInitInt(MAP_EXTERNAL_RESOURCE_SELECTED_TAB, 0);
+    int index = PropertiesComponent.getInstance().getInt(MAP_EXTERNAL_RESOURCE_SELECTED_TAB, 0);
     myTabs.setSelectedIndex(index);
     myTabs.getModel().addChangeListener(new ChangeListener() {
       @Override
@@ -187,7 +203,6 @@ public class MapExternalResourceDialog extends DialogWrapper {
         PropertiesComponent.getInstance().setValue(MAP_EXTERNAL_RESOURCE_SELECTED_TAB, Integer.toString(myTabs.getSelectedIndex()));
       }
     });
-    init();
   }
 
   @Override
@@ -219,7 +234,7 @@ public class MapExternalResourceDialog extends DialogWrapper {
   public String getResourceLocation() {
     if (myLocation != null) return myLocation;
 
-    if (myTabs.getSelectedIndex() == 0) {
+    if (myTabs.getTabCount() > 1 && myTabs.getSelectedIndex() == 0) {
       TreePath path = mySchemasTree.getSelectionPath();
       if (path == null) return null;
       Object object = ((DefaultMutableTreeNode)path.getLastPathComponent()).getUserObject();
@@ -233,17 +248,20 @@ public class MapExternalResourceDialog extends DialogWrapper {
   }
 
   private void createUIComponents() {
-    myExplorerPanel = new JBPanel(new BorderLayout()) {
+    myExplorerPanel = new JPanel(new BorderLayout());
+    DataManager.registerDataProvider(myExplorerPanel, new DataProvider() {
+      @Nullable
       @Override
-      public void calcData(DataKey key, DataSink sink) {
-        if (key == CommonDataKeys.VIRTUAL_FILE_ARRAY) {
-          sink.put(CommonDataKeys.VIRTUAL_FILE_ARRAY, myExplorer.getSelectedFiles());
+      public Object getData(@NonNls String dataId) {
+        if (CommonDataKeys.VIRTUAL_FILE_ARRAY.is(dataId)) {
+          return myExplorer.getSelectedFiles();
         }
-        else if (key == FileSystemTree.DATA_KEY) {
-          sink.put(FileSystemTree.DATA_KEY, myExplorer);
+        else if (FileSystemTree.DATA_KEY.is(dataId)) {
+          return myExplorer;
         }
+        return null;
       }
-    };
+    });
   }
 
   @Nullable

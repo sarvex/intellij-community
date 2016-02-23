@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.openapi.roots.ProjectRootManager;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.JavaCodeStyleManager;
@@ -89,9 +90,7 @@ public class UsedIconsListingAction extends AnAction {
           String str = (String)value;
           if (str.startsWith("\"")) {
             str = str.substring(0);
-            if (str.endsWith("\"")) {
-              str = str.substring(0, str.length() - 1);
-            }
+            str = StringUtil.trimEnd(str, "\"");
           }
 
           if (!str.startsWith("/")) {
@@ -206,7 +205,7 @@ public class UsedIconsListingAction extends AnAction {
         if (useScope.contains(file.getVirtualFile())) {
           new WriteCommandAction<Void>(project, file) {
             @Override
-            protected void run(Result<Void> result) throws Throwable {
+            protected void run(@NotNull Result<Void> result) throws Throwable {
               att.setValue(replacement);
             }
           }.execute();
@@ -226,7 +225,7 @@ public class UsedIconsListingAction extends AnAction {
           if (useScope.contains(file.getVirtualFile())) {
             new WriteCommandAction(project, file) {
               @Override
-              protected void run(Result result) throws Throwable {
+              protected void run(@NotNull Result result) throws Throwable {
                 if (call instanceof PsiLiteralExpression) {
                   call.replace(factory.createExpressionFromText("\"" + replacement + "\"", call));
                 }
@@ -255,7 +254,7 @@ public class UsedIconsListingAction extends AnAction {
           if (useScope.contains(file.getVirtualFile())) {
             new WriteCommandAction(project, file) {
               @Override
-              protected void run(Result result) throws Throwable {
+              protected void run(@NotNull Result result) throws Throwable {
                 annotation.getNode();
                 annotation.setDeclaredAttributeValue(
                   "icon",

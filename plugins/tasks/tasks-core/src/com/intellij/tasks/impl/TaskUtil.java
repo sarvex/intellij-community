@@ -1,17 +1,17 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package com.intellij.tasks.impl;
@@ -27,15 +27,13 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.tasks.Task;
 import com.intellij.tasks.TaskRepository;
-import com.intellij.tasks.TaskState;
-import com.intellij.tasks.impl.httpclient.ResponseUtil;
+import com.intellij.tasks.impl.httpclient.TaskResponseUtil;
 import com.intellij.util.text.DateFormatUtil;
 import org.apache.commons.httpclient.Header;
 import org.apache.commons.httpclient.HttpMethod;
 import org.apache.http.HttpResponse;
 import org.apache.http.protocol.HTTP;
 import org.jdom.Element;
-import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -74,7 +72,7 @@ public class TaskUtil {
 
   public static String formatTask(@NotNull Task task, String format) {
     return format
-      .replace("{id}", task.getId())
+      .replace("{id}", task.getPresentableId())
       .replace("{number}", task.getNumber())
       .replace("{project}", StringUtil.notNullize(task.getProject()))
       .replace("{summary}", task.getSummary());
@@ -92,7 +90,7 @@ public class TaskUtil {
   public static String getTrimmedSummary(Task task) {
     String text;
     if (task.isIssue()) {
-      text = task.getId() + ": " + task.getSummary();
+      text = task.getPresentableId() + ": " + task.getSummary();
     }
     else {
       text = task.getSummary();
@@ -130,7 +128,7 @@ public class TaskUtil {
     }
     String canonicalForm = String.format("%sT%s.%s%s", datePart, timePart, milliseconds, timezone);
     try {
-      return DateFormatUtil.ISO8601_DATE_FORMAT.parse(canonicalForm);
+      return DateFormatUtil.getIso8601Format().parse(canonicalForm);
     }
     catch (ParseException e) {
       return null;
@@ -138,7 +136,7 @@ public class TaskUtil {
   }
 
   public static String formatDate(@NotNull Date date) {
-    return DateFormatUtil.ISO8601_DATE_FORMAT.format(date);
+    return DateFormatUtil.getIso8601Format().format(date);
   }
 
   /**
@@ -248,7 +246,7 @@ public class TaskUtil {
   public static void prettyFormatResponseToLog(@NotNull Logger logger, @NotNull HttpMethod response) {
     if (logger.isDebugEnabled() && response.hasBeenUsed()) {
       try {
-        String content = ResponseUtil.getResponseContentAsString(response);
+        String content = TaskResponseUtil.getResponseContentAsString(response);
         Header header = response.getRequestHeader(HTTP.CONTENT_TYPE);
         String contentType = header == null ? "text/plain" : header.getElements()[0].getName().toLowerCase(Locale.ENGLISH);
         if (contentType.contains("xml")) {
@@ -270,7 +268,7 @@ public class TaskUtil {
   public static void prettyFormatResponseToLog(@NotNull Logger logger, @NotNull HttpResponse response) {
     if (logger.isDebugEnabled()) {
       try {
-        String content = ResponseUtil.getResponseContentAsString(response);
+        String content = TaskResponseUtil.getResponseContentAsString(response);
         org.apache.http.Header header = response.getEntity().getContentType();
         String contentType = header == null ? "text/plain" : header.getElements()[0].getName().toLowerCase(Locale.ENGLISH);
         if (contentType.contains("xml")) {
@@ -302,13 +300,5 @@ public class TaskUtil {
     catch (UnsupportedEncodingException e) {
       throw new AssertionError("UTF-8 is not supported");
     }
-  }
-
-  @Contract("null, _ -> false")
-  public static boolean isStateSupported(@Nullable TaskRepository repository, @NotNull TaskState state) {
-    if (repository == null || !repository.isSupported(TaskRepository.STATE_UPDATING)) {
-      return false;
-    }
-    return repository.getRepositoryType().getPossibleTaskStates().contains(state);
   }
 }

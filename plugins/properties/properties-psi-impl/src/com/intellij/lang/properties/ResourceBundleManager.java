@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,46 +17,68 @@ package com.intellij.lang.properties;
 
 import com.intellij.lang.properties.psi.PropertiesFile;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.components.*;
+import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.ServiceManager;
+import com.intellij.openapi.components.State;
+import com.intellij.openapi.components.Storage;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.NotNullLazyValue;
 import com.intellij.openapi.util.NullableComputable;
 import com.intellij.openapi.util.Pair;
-import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.util.Function;
+import com.intellij.util.SmartList;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
-import java.util.regex.Matcher;
 
 /**
  * @author Dmitry Batkovich
  */
-@State(
-  name = "ResourceBundleManager",
-  storages = {
-    @Storage(file = StoragePathMacros.PROJECT_FILE),
-    @Storage(file = StoragePathMacros.PROJECT_CONFIG_DIR + "/resourceBundles.xml", scheme = StorageScheme.DIRECTORY_BASED)
-  })
+@State(name = "ResourceBundleManager", storages = @Storage("resourceBundles.xml"))
 public class ResourceBundleManager implements PersistentStateComponent<ResourceBundleManagerState> {
   private final static Logger LOG = Logger.getInstance(ResourceBundleManager.class);
-  public final static Locale DEFAULT_LOCALE = new Locale("", "", "");
 
   private ResourceBundleManagerState myState = new ResourceBundleManagerState();
 
   public ResourceBundleManager(final PsiManager manager) {
     manager.addPsiTreeChangeListener(new PsiTreeChangeAdapter() {
       @Override
-      public void childMoved(@NotNull PsiTreeChangeEvent event) {
+      public void childMoved(@NotNull final PsiTreeChangeEvent event) {
         final PsiElement child = event.getChild();
         if (!(child instanceof PsiFile)) {
+          if (child instanceof PsiDirectory) {
+            if (event.getOldParent() instanceof PsiDirectory && event.getNewParent() instanceof PsiDirectory) {
+              final String fromDirUrl = ((PsiDirectory)event.getOldParent()).getVirtualFile().getUrl() + "/";
+              final NotNullLazyValue<String> toDirUrl = new NotNullLazyValue<String>() {
+                @NotNull
+                @Override
+                protected String compute() {
+                  return ((PsiDirectory)event.getNewParent()).getVirtualFile().getUrl() + "/";
+                }
+              };
+              for (String dissociatedFileUrl : new SmartList<String>(myState.getDissociatedFiles())) {
+                if (dissociatedFileUrl.startsWith(fromDirUrl)) {
+                  myState.getDissociatedFiles().remove(dissociatedFileUrl);
+                  myState.getDissociatedFiles().add(toDirUrl.getValue() + dissociatedFileUrl.substring(fromDirUrl.length()));
+                }
+              }
+              for (CustomResourceBundleState customResourceBundleState : myState.getCustomResourceBundles()) {
+                for (String fileUrl : new SmartList<String>(customResourceBundleState.getFileUrls())) {
+                  if (fileUrl.startsWith(fromDirUrl)) {
+                    customResourceBundleState.getFileUrls().remove(fileUrl);
+                    customResourceBundleState.getFileUrls().add(toDirUrl.getValue() + fileUrl.substring(fromDirUrl.length()));
+                  }
+                }
+              }
+            }
+          }
           return;
         }
         final PropertiesFile propertiesFile = PropertiesImplUtil.getPropertiesFile((PsiFile)child);
@@ -105,13 +127,30 @@ public class ResourceBundleManager implements PersistentStateComponent<ResourceB
       public void beforeChildRemoval(@NotNull PsiTreeChangeEvent event) {
         final PsiElement child = event.getChild();
         if (!(child instanceof PsiFile)) {
+          if (child instanceof PsiDirectory) {
+            final String deletedDirUrl = ((PsiDirectory)child).getVirtualFile().getUrl() + "/";
+            for (String dissociatedFileUrl : new SmartList<String>(myState.getDissociatedFiles())) {
+              if (dissociatedFileUrl.startsWith(deletedDirUrl)) {
+                myState.getDissociatedFiles().remove(dissociatedFileUrl);
+              }
+            }
+            for (CustomResourceBundleState customResourceBundleState : new SmartList<CustomResourceBundleState>(myState.getCustomResourceBundles())) {
+              for (String fileUrl : new ArrayList<String>(customResourceBundleState.getFileUrls())) {
+                if (fileUrl.startsWith(deletedDirUrl)) {
+                  customResourceBundleState.getFileUrls().remove(fileUrl);
+                }
+              }
+              if (customResourceBundleState.getFileUrls().size() < 2) {
+                myState.getCustomResourceBundles().remove(customResourceBundleState);
+              }
+            }
+          }
           return;
-        }
-        PropertiesFile file = PropertiesImplUtil.getPropertiesFile((PsiFile)child);
-        if (file == null) {
-          return;
-        }
-        final VirtualFile virtualFile = file.getVirtualFile();
+        };
+        PsiFile psiFile = (PsiFile)child;
+        if (!PropertiesImplUtil.canBePropertyFile(psiFile)) return;
+
+        final VirtualFile virtualFile = psiFile.getVirtualFile();
         final NotNullLazyValue<String> url = new NotNullLazyValue<String>() {
           @NotNull
           @Override
@@ -122,7 +161,7 @@ public class ResourceBundleManager implements PersistentStateComponent<ResourceB
         if (!myState.getDissociatedFiles().isEmpty()) {
           myState.getDissociatedFiles().remove(url.getValue());
         }
-        for (CustomResourceBundleState customResourceBundleState : myState.getCustomResourceBundles()) {
+        for (CustomResourceBundleState customResourceBundleState : new SmartList<CustomResourceBundleState>(myState.getCustomResourceBundles())) {
           final Set<String> urls = customResourceBundleState.getFileUrls();
           if (urls.remove(url.getValue())) {
             if (urls.size() < 2) {
@@ -159,38 +198,6 @@ public class ResourceBundleManager implements PersistentStateComponent<ResourceB
   }
 
   @NotNull
-  public Locale getLocale(final @NotNull VirtualFile propertiesFile) {
-    final String customResourceBundleName = getCustomResourceBundleName(propertiesFile);
-
-    String name = propertiesFile.getName();
-
-    if (!StringUtil.containsChar(name, '_')) {
-      return DEFAULT_LOCALE;
-    }
-
-    if (customResourceBundleName != null) {
-      name = name.substring(customResourceBundleName.length());
-    }
-
-    return extractLocale(name);
-  }
-
-  public static Locale extractLocale(final String suffix) {
-    final Matcher matcher = PropertiesUtil.LOCALE_PATTERN.matcher(suffix);
-    if (matcher.find()) {
-      final String rawLocale = matcher.group(1);
-      final String[] splittedRawLocale = rawLocale.split("_");
-      if (splittedRawLocale.length > 1 && splittedRawLocale[1].length() >= 2) {
-        final String language = splittedRawLocale[1];
-        final String country = splittedRawLocale.length > 2 ? splittedRawLocale[2] : "";
-        final String variant = splittedRawLocale.length > 3 ? splittedRawLocale[3] : "";
-        return new Locale(language, country, variant);
-      }
-    }
-    return DEFAULT_LOCALE;
-  }
-
-  @NotNull
   public String getBaseName(@NotNull final PsiFile file) {
     return getBaseName(file.getVirtualFile());
   }
@@ -215,6 +222,9 @@ public class ResourceBundleManager implements PersistentStateComponent<ResourceB
       LOG.assertTrue(state != null);
       myState.getCustomResourceBundles().remove(state);
     } else {
+      if (EmptyResourceBundle.getInstance() != resourceBundle) {
+        ((ResourceBundleImpl) resourceBundle).invalidate();
+      }
       for (final PropertiesFile propertiesFile : resourceBundle.getPropertiesFiles()) {
         final VirtualFile file = propertiesFile.getContainingFile().getVirtualFile();
         myState.getDissociatedFiles().add(file.getUrl());
@@ -248,12 +258,6 @@ public class ResourceBundleManager implements PersistentStateComponent<ResourceB
     }
     final String url = virtualFile.getUrl();
     return myState.getDissociatedFiles().contains(url) || getCustomResourceBundleState(virtualFile) != null;
-  }
-
-  @Nullable
-  private String getCustomResourceBundleName(final @NotNull VirtualFile virtualFile) {
-    final CustomResourceBundleState customResourceBundle = getCustomResourceBundleState(virtualFile);
-    return customResourceBundle == null ? null : customResourceBundle.getBaseName();
   }
 
   @Nullable

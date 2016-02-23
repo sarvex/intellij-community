@@ -23,19 +23,23 @@ import com.intellij.codeInsight.intention.IntentionAction;
 import com.intellij.codeInsight.lookup.Lookup;
 import com.intellij.codeInsight.lookup.LookupManager;
 import com.intellij.codeInsight.lookup.impl.LookupImpl;
+import com.intellij.codeInsight.template.Template;
 import com.intellij.codeInsight.template.TemplateManager;
 import com.intellij.codeInsight.template.impl.TemplateManagerImpl;
+import com.intellij.codeInsight.template.impl.TemplateSettings;
 import com.intellij.codeInsight.template.impl.TemplateState;
 import com.intellij.codeInsight.template.impl.actions.ListTemplatesAction;
 import com.intellij.ide.DataManager;
 import com.intellij.injected.editor.EditorWindow;
 import com.intellij.lang.surroundWith.Surrounder;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.application.Result;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.FileUtilRt;
@@ -91,7 +95,7 @@ public class CodeInsightTestUtil {
     }
     new WriteCommandAction(fixture.getProject()) {
       @Override
-      protected void run(Result result) throws Throwable {
+      protected void run(@NotNull Result result) {
         fixture.launchAction(intentionAction);
       }
     }.execute();
@@ -150,7 +154,7 @@ public class CodeInsightTestUtil {
     fixture.configureByFile(before);
     new WriteCommandAction(fixture.getProject()) {
       @Override
-      protected void run(Result result) throws Throwable {
+      protected void run(@NotNull Result result) throws Throwable {
         new ListTemplatesAction().actionPerformedImpl(fixture.getProject(), fixture.getEditor());
         final LookupImpl lookup = (LookupImpl)LookupManager.getActiveLookup(fixture.getEditor());
         assert lookup != null;
@@ -166,7 +170,7 @@ public class CodeInsightTestUtil {
     final List<SmartEnterProcessor> processors = SmartEnterProcessors.INSTANCE.forKey(fixture.getFile().getLanguage());
     new WriteCommandAction(fixture.getProject()) {
       @Override
-      protected void run(Result result) throws Throwable {
+      protected void run(@NotNull Result result) throws Throwable {
         final Editor editor = fixture.getEditor();
         for (SmartEnterProcessor processor : processors) {
           processor.process(getProject(), editor, fixture.getFile());
@@ -181,7 +185,7 @@ public class CodeInsightTestUtil {
     fixture.configureByFile(before);
     new WriteCommandAction(fixture.getProject()) {
       @Override
-      protected void run(Result result) throws Throwable {
+      protected void run(@NotNull Result result) throws Throwable {
         CodeStyleManager.getInstance(fixture.getProject()).reformat(fixture.getFile());
       }
     }.execute();
@@ -238,5 +242,16 @@ public class CodeInsightTestUtil {
     fixture.configureByFile(file);
     fixture.testAction(action);
     fixture.checkResultByFile(name + "_after." + extension);
+  }
+
+  public static void addTemplate(final Template template, Disposable parentDisposable) {
+    final TemplateSettings settings = TemplateSettings.getInstance();
+    settings.addTemplate(template);
+    Disposer.register(parentDisposable, new Disposable() {
+      @Override
+      public void dispose() {
+        settings.removeTemplate(template);
+      }
+    });
   }
 }

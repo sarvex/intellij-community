@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,11 @@
 package com.intellij.packaging.impl.artifacts;
 
 import com.intellij.compiler.server.BuildManager;
-import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.Result;
-import com.intellij.openapi.application.WriteAction;
-import com.intellij.openapi.components.*;
+import com.intellij.openapi.application.*;
+import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.ProjectComponent;
+import com.intellij.openapi.components.State;
+import com.intellij.openapi.components.Storage;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.ProjectLoadingErrorsNotifier;
 import com.intellij.openapi.project.Project;
@@ -49,14 +50,7 @@ import java.util.*;
 /**
  * @author nik
  */
-@State(
-  name = ArtifactManagerImpl.COMPONENT_NAME,
-  storages = {
-    @Storage(file = StoragePathMacros.PROJECT_FILE),
-    @Storage(file = StoragePathMacros.PROJECT_CONFIG_DIR + "/artifacts/", scheme = StorageScheme.DIRECTORY_BASED,
-      stateSplitter = ArtifactManagerStateSplitter.class)
-  }
-)
+@State(name = ArtifactManagerImpl.COMPONENT_NAME, storages = @Storage(value = "artifacts", stateSplitter = ArtifactManagerStateSplitter.class))
 public class ArtifactManagerImpl extends ArtifactManager implements ProjectComponent, PersistentStateComponent<ArtifactManagerState> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.packaging.impl.artifacts.ArtifactManagerImpl");
   @NonNls public static final String COMPONENT_NAME = "ArtifactManager";
@@ -193,9 +187,18 @@ public class ArtifactManagerImpl extends ArtifactManager implements ProjectCompo
 
   @Override
   public void loadState(ArtifactManagerState managerState) {
-    final List<ArtifactImpl> artifacts = new ArrayList<ArtifactImpl>();
-    for (ArtifactState state : managerState.getArtifacts()) {
-      artifacts.add(loadArtifact(state));
+    List<ArtifactState> artifactStates = managerState.getArtifacts();
+    final List<ArtifactImpl> artifacts = new ArrayList<ArtifactImpl>(artifactStates.size());
+    if (!artifactStates.isEmpty()) {
+      AccessToken token = ReadAction.start();
+      try {
+        for (ArtifactState state : artifactStates) {
+          artifacts.add(loadArtifact(state));
+        }
+      }
+      finally {
+        token.finish();
+      }
     }
 
     if (myLoaded) {
@@ -246,7 +249,7 @@ public class ArtifactManagerImpl extends ArtifactManager implements ProjectCompo
   private InvalidArtifact createInvalidArtifact(ArtifactState state, String errorMessage) {
     final InvalidArtifact artifact = new InvalidArtifact(state, errorMessage);
     ProjectLoadingErrorsNotifier.getInstance(myProject).registerError(new ArtifactLoadingErrorDescription(myProject, artifact));
-    UnknownFeaturesCollector.getInstance(myProject).registerUnknownFeature("com.intellij.packaging.artifacts.ArtifactType", state.getArtifactType());
+    UnknownFeaturesCollector.getInstance(myProject).registerUnknownFeature("com.intellij.packaging.artifacts.ArtifactType", state.getArtifactType(), "Artifact");
     return artifact;
   }
 

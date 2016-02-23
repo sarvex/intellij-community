@@ -21,6 +21,7 @@ import com.intellij.openapi.actionSystem.DataKey;
 import com.intellij.openapi.actionSystem.DataSink;
 import com.intellij.openapi.actionSystem.TypeSafeDataProvider;
 import com.intellij.openapi.components.ServiceManager;
+import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vcs.FileStatus;
 import com.intellij.openapi.vcs.FileStatusManager;
@@ -33,7 +34,7 @@ import com.intellij.usages.UsageGroup;
 import com.intellij.usages.UsageView;
 import com.intellij.usages.rules.UsageGroupingRule;
 import com.intellij.usages.rules.UsageInFile;
-import com.intellij.util.PlatformIcons;
+import com.intellij.util.IconUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -43,7 +44,7 @@ import java.io.File;
 /**
  * @author yole
  */
-public class DirectoryGroupingRule implements UsageGroupingRule {
+public class DirectoryGroupingRule implements UsageGroupingRule, DumbAware {
   public static DirectoryGroupingRule getInstance(Project project) {
     return ServiceManager.getService(project, DirectoryGroupingRule.class);
   }
@@ -82,18 +83,23 @@ public class DirectoryGroupingRule implements UsageGroupingRule {
 
   private class DirectoryGroup implements UsageGroup, TypeSafeDataProvider {
     private final VirtualFile myDir;
+    private Icon myIcon;
+
+    private DirectoryGroup(@NotNull VirtualFile dir) {
+      myDir = dir; 
+      update();
+    }
 
     @Override
     public void update() {
-    }
-
-    private DirectoryGroup(@NotNull VirtualFile dir) {
-      myDir = dir;
+      if (isValid()) {
+       myIcon = IconUtil.getIcon(myDir, 0, myProject);
+      }
     }
 
     @Override
     public Icon getIcon(boolean isOpen) {
-      return PlatformIcons.DIRECTORY_CLOSED_ICON;
+      return myIcon;
     }
 
     @Override

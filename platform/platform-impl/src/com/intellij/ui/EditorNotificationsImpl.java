@@ -17,11 +17,11 @@ package com.intellij.ui;
 
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.extensions.ExtensionPointName;
-import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.fileEditor.FileEditor;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.FileEditorManagerAdapter;
 import com.intellij.openapi.fileEditor.FileEditorManagerListener;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.util.ProgressIndicatorBase;
 import com.intellij.openapi.progress.util.ProgressIndicatorUtils;
@@ -31,7 +31,8 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.reference.SoftReference;
-import com.intellij.util.ConcurrencyUtil;
+import com.intellij.util.concurrency.BoundedTaskExecutor;
+import com.intellij.util.concurrency.SequentialTaskExecutor;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.MessageBusConnection;
 import com.intellij.util.ui.UIUtil;
@@ -39,11 +40,11 @@ import com.intellij.util.ui.update.MergingUpdateQueue;
 import com.intellij.util.ui.update.Update;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.ide.PooledThreadExecutor;
 
 import javax.swing.*;
 import java.lang.ref.WeakReference;
 import java.util.List;
-import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * @author peter
@@ -51,7 +52,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 public class EditorNotificationsImpl extends EditorNotifications {
   private static final ExtensionPointName<Provider> EXTENSION_POINT_NAME = ExtensionPointName.create("com.intellij.editorNotificationProvider");
   private static final Key<WeakReference<ProgressIndicator>> CURRENT_UPDATES = Key.create("CURRENT_UPDATES");
-  private final ThreadPoolExecutor myExecutor = ConcurrencyUtil.newSingleThreadExecutor("EditorNotifications executor");
+  private static final BoundedTaskExecutor ourExecutor = new SequentialTaskExecutor(PooledThreadExecutor.INSTANCE);
   private final MergingUpdateQueue myUpdateMerger;
 
   public EditorNotificationsImpl(Project project) {
@@ -99,10 +100,13 @@ public class EditorNotificationsImpl extends EditorNotifications {
 
         file.putUserData(CURRENT_UPDATES, new WeakReference<ProgressIndicator>(indicator));
         if (ApplicationManager.getApplication().isUnitTestMode()) {
-          task.computeInReadAction(indicator);
+          ReadTask.Continuation continuation = task.performInReadAction(indicator);
+          if (continuation != null) {
+            continuation.getAction().run();
+          }
         }
         else {
-          ProgressIndicatorUtils.scheduleWithWriteActionPriority(indicator, myExecutor, task);
+          ProgressIndicatorUtils.scheduleWithWriteActionPriority(indicator, ourExecutor, task);
         }
       }
     });
@@ -128,13 +132,17 @@ public class EditorNotificationsImpl extends EditorNotifications {
         return false;
       }
 
+      @Nullable
       @Override
-      public void computeInReadAction(@NotNull final ProgressIndicator indicator) {
-        if (isOutdated()) return;
+      public Continuation performInReadAction(@NotNull ProgressIndicator indicator) throws ProcessCanceledException {
+        if (isOutdated()) return null;
+
+        final List<Provider> providers = DumbService.getInstance(myProject).
+          filterByDumbAwareness(EXTENSION_POINT_NAME.getExtensions(myProject));
 
         final List<Runnable> updates = ContainerUtil.newArrayList();
         for (final FileEditor editor : editors) {
-          for (final Provider<?> provider : Extensions.getExtensions(EXTENSION_POINT_NAME, myProject)) {
+          for (final Provider<?> provider : providers) {
             final JComponent component = provider.createNotificationPanel(file, editor);
             updates.add(new Runnable() {
               @Override
@@ -145,7 +153,7 @@ public class EditorNotificationsImpl extends EditorNotifications {
           }
         }
 
-        UIUtil.invokeLaterIfNeeded(new Runnable() {
+        return new Continuation(new Runnable() {
           @Override
           public void run() {
             if (!isOutdated()) {

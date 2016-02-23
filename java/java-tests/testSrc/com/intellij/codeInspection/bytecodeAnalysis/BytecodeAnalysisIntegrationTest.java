@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import com.intellij.openapi.roots.ModifiableRootModel;
 import com.intellij.openapi.roots.ModuleRootModificationUtil;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.roots.libraries.LibraryTable;
-import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.registry.RegistryValue;
 import com.intellij.openapi.util.text.StringUtil;
@@ -39,11 +38,10 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PsiFormatUtil;
 import com.intellij.testFramework.PsiTestUtil;
 import com.intellij.testFramework.fixtures.JavaCodeInsightFixtureTestCase;
+import com.intellij.util.ArrayUtil;
 import com.intellij.util.AsynchConsumer;
-import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.Contract;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.java.decompiler.IdeaDecompiler;
 
@@ -56,54 +54,52 @@ import java.util.List;
  * @author lambdamix
  */
 public class BytecodeAnalysisIntegrationTest extends JavaCodeInsightFixtureTestCase {
-  public static final String ORG_JETBRAINS_ANNOTATIONS_CONTRACT = Contract.class.getName();
+  private static final String ORG_JETBRAINS_ANNOTATIONS_CONTRACT = Contract.class.getName();
 
   private MessageDigest myMessageDigest;
-  private List<String> diffs = new ArrayList<String>();
-  private boolean nullableMethodRegistryValue;
+  private List<String> myDiffs = new ArrayList<>();
+  private boolean myNullableMethodRegistryValue;
 
   @Override
   protected void setUp() throws Exception {
     super.setUp();
     myMessageDigest = BytecodeAnalysisConverter.getMessageDigest();
     RegistryValue registryValue = Registry.get(ProjectBytecodeAnalysis.NULLABLE_METHOD);
-    nullableMethodRegistryValue = registryValue.asBoolean();
+    myNullableMethodRegistryValue = registryValue.asBoolean();
     registryValue.setValue(true);
   }
 
   @Override
   protected void tearDown() throws Exception {
-    Registry.get(ProjectBytecodeAnalysis.NULLABLE_METHOD).setValue(nullableMethodRegistryValue);
-    super.tearDown();
-  }
-
-  @NotNull
-  private static String getLibDirPath() {
-    VirtualFile lib = LocalFileSystem.getInstance().refreshAndFindFileByPath(PathManagerEx.getTestDataPath() + "/../../../lib");
-    assertNotNull(lib);
-    return lib.getPath();
+    try {
+      Registry.get(ProjectBytecodeAnalysis.NULLABLE_METHOD).setValue(myNullableMethodRegistryValue);
+    }
+    finally {
+      super.tearDown();
+    }
   }
 
   private void setUpLibraries() {
-    PsiTestUtil.addLibrary(myModule, "velocity", getLibDirPath(), new String[]{"/velocity.jar!/"}, new String[]{});
+    String libDir = PathManagerEx.getCommunityHomePath() + "/lib";
+    PsiTestUtil.addLibrary(myModule, "velocity", libDir, new String[]{"/velocity.jar!/"}, ArrayUtil.EMPTY_STRING_ARRAY);
+    //PsiTestUtil.addLibrary(myModule, "velocity", libDir, "velocity.jar");
   }
 
   private void setUpExternalUpAnnotations() {
     String annotationsPath = PathManagerEx.getTestDataPath() + "/codeInspection/bytecodeAnalysis/annotations";
-    final VirtualFile annotationsDir = LocalFileSystem.getInstance().refreshAndFindFileByPath(annotationsPath);
+    VirtualFile annotationsDir = LocalFileSystem.getInstance().refreshAndFindFileByPath(annotationsPath);
     assertNotNull(annotationsDir);
 
     ModuleRootModificationUtil.updateModel(myModule, new AsynchConsumer<ModifiableRootModel>() {
       @Override
-      public void finished() {
-      }
+      public void finished() { }
 
       @Override
       public void consume(ModifiableRootModel modifiableRootModel) {
-        final LibraryTable libraryTable = modifiableRootModel.getModuleLibraryTable();
+        LibraryTable libraryTable = modifiableRootModel.getModuleLibraryTable();
         Library[] libs = libraryTable.getLibraries();
         for (Library library : libs) {
-          final Library.ModifiableModel libraryModel = library.getModifiableModel();
+          Library.ModifiableModel libraryModel = library.getModifiableModel();
           libraryModel.addRoot(annotationsDir, AnnotationOrderRootType.getInstance());
           libraryModel.commit();
         }
@@ -145,19 +141,9 @@ public class BytecodeAnalysisIntegrationTest extends JavaCodeInsightFixtureTestC
                    "private static&nbsp;boolean&nbsp;<b>toBoolean</b>(@org.jetbrains.annotations.Nullable&nbsp;String&nbsp;var0)</html>");
   }
 
-  private void checkHasGutter(final String expectedText) {
-    Collection<String> gutters = ContainerUtil.mapNotNull(myFixture.findAllGutters(), new Function<GutterMark, String>() {
-      @Override
-      public String fun(GutterMark mark) {
-        return mark.getTooltipText();
-      }
-    });
-    String contractMark = ContainerUtil.find(gutters, new Condition<String>() {
-      @Override
-      public boolean value(String mark) {
-        return mark.contains(expectedText);
-      }
-    });
+  private void checkHasGutter(String expectedText) {
+    Collection<String> gutters = ContainerUtil.mapNotNull(myFixture.findAllGutters(), GutterMark::getTooltipText);
+    String contractMark = ContainerUtil.find(gutters, mark -> mark.contains(expectedText));
     assertNotNull(StringUtil.join(gutters, "\n"), contractMark);
   }
 
@@ -165,14 +151,14 @@ public class BytecodeAnalysisIntegrationTest extends JavaCodeInsightFixtureTestC
     setUpLibraries();
     setUpExternalUpAnnotations();
 
-    final PsiPackage rootPackage = JavaPsiFacade.getInstance(getProject()).findPackage("");
+    PsiPackage rootPackage = JavaPsiFacade.getInstance(getProject()).findPackage("");
     assert rootPackage != null;
 
-    final GlobalSearchScope scope = GlobalSearchScope.allScope(getProject());
+    GlobalSearchScope scope = GlobalSearchScope.allScope(getProject());
     JavaRecursiveElementVisitor visitor = new JavaRecursiveElementVisitor() {
       @Override
       public void visitPackage(PsiPackage aPackage) {
-        // annotations are in classpaths, but we are not interested in inferred annotations for them
+        // annotations are in class paths, but we are not interested in inferred annotations for them
         if ("org.intellij.lang.annotations".equals(aPackage.getQualifiedName())) {
           return;
         }
@@ -188,11 +174,97 @@ public class BytecodeAnalysisIntegrationTest extends JavaCodeInsightFixtureTestC
     };
 
     rootPackage.accept(visitor);
-    assertEmpty(diffs);
+    assertEmpty(myDiffs);
+  }
+
+  @SuppressWarnings("unused")
+  public void _testExportInferredAnnotations() {
+    exportInferredAnnotations();
+  }
+
+  private void exportInferredAnnotations() {
+    setUpLibraries();
+    setUpExternalUpAnnotations();
+
+    PsiPackage rootPackage = JavaPsiFacade.getInstance(getProject()).findPackage("");
+    assert rootPackage != null;
+
+    GlobalSearchScope scope = GlobalSearchScope.allScope(getProject());
+    JavaRecursiveElementVisitor visitor = new JavaRecursiveElementVisitor() {
+      @Override
+      public void visitPackage(PsiPackage aPackage) {
+        // annotations are in class paths, but we are not interested in inferred annotations for them
+        if ("org.intellij.lang.annotations".equals(aPackage.getQualifiedName())) {
+          return;
+        }
+        for (PsiPackage subPackage : aPackage.getSubPackages(scope)) {
+          visitPackage(subPackage);
+        }
+        for (PsiClass aClass : aPackage.getClasses(scope)) {
+          processClass(aClass);
+          for (PsiClass innerClass : aClass.getInnerClasses()) {
+            processClass(innerClass);
+          }
+        }
+      }
+
+      private void processClass(PsiClass aClass) {
+        for (PsiMethod method : aClass.getMethods()) {
+          exportMethodAnnotations(method);
+        }
+        for (PsiClass innerClass : aClass.getInnerClasses()) {
+          processClass(innerClass);
+        }
+      }
+    };
+
+    rootPackage.accept(visitor);
+  }
+
+  private void exportMethodAnnotations(PsiMethod method) {
+    // @Contract
+    PsiAnnotation inferredContractAnnotation = findInferredAnnotation(method, ORG_JETBRAINS_ANNOTATIONS_CONTRACT);
+    if (inferredContractAnnotation != null) {
+      PsiNameValuePair[] attributes = inferredContractAnnotation.getParameterList().getAttributes();
+      ExternalAnnotationsManager.getInstance(myModule.getProject()).annotateExternally(method, ORG_JETBRAINS_ANNOTATIONS_CONTRACT, method.getContainingFile(), attributes);
+    }
+
+    {
+      // @NotNull method
+      PsiAnnotation inferredNotNullMethodAnnotation = findInferredAnnotation(method, AnnotationUtil.NOT_NULL);
+      if (inferredNotNullMethodAnnotation != null) {
+        ExternalAnnotationsManager.getInstance(myModule.getProject()).annotateExternally(method, AnnotationUtil.NOT_NULL, method.getContainingFile(), null);
+      }
+    }
+
+    {
+      // @Nullable method
+      PsiAnnotation inferredNullableMethodAnnotation = findInferredAnnotation(method, AnnotationUtil.NULLABLE);
+      if (inferredNullableMethodAnnotation != null) {
+        ExternalAnnotationsManager.getInstance(myModule.getProject()).annotateExternally(method, AnnotationUtil.NULLABLE, method.getContainingFile(), null);
+      }
+    }
+
+    for (PsiParameter parameter : method.getParameterList().getParameters()) {
+      {
+        // @NotNull parameter
+        PsiAnnotation inferredNotNull = findInferredAnnotation(parameter, AnnotationUtil.NOT_NULL);
+        if (inferredNotNull != null) {
+          ExternalAnnotationsManager.getInstance(myModule.getProject()).annotateExternally(parameter, AnnotationUtil.NOT_NULL, method.getContainingFile(), null);
+        }
+      }
+
+      {
+        // @Nullable parameter
+        PsiAnnotation inferredNullable = findInferredAnnotation(parameter, AnnotationUtil.NULLABLE);
+        if (inferredNullable != null) {
+          ExternalAnnotationsManager.getInstance(myModule.getProject()).annotateExternally(parameter, AnnotationUtil.NULLABLE, method.getContainingFile(), null);
+        }
+      }
+    }
   }
 
   private void checkMethodAnnotations(PsiMethod method) {
-
     if (ProjectBytecodeAnalysis.getKey(method, myMessageDigest) == null) {
       return;
     }
@@ -205,7 +277,7 @@ public class BytecodeAnalysisIntegrationTest extends JavaCodeInsightFixtureTestC
       String inferredNotNullMethodAnnotation = findInferredAnnotation(method, AnnotationUtil.NOT_NULL) == null ? "null" : "@NotNull";
 
       if (!externalNotNullMethodAnnotation.equals(inferredNotNullMethodAnnotation)) {
-        diffs.add(methodKey + ": " + externalNotNullMethodAnnotation + " != " + inferredNotNullMethodAnnotation);
+        myDiffs.add(methodKey + ": " + externalNotNullMethodAnnotation + " != " + inferredNotNullMethodAnnotation);
       }
     }
 
@@ -215,7 +287,7 @@ public class BytecodeAnalysisIntegrationTest extends JavaCodeInsightFixtureTestC
       String inferredNullableMethodAnnotation = findInferredAnnotation(method, AnnotationUtil.NULLABLE) == null ? "null" : "@Nullable";
 
       if (!externalNullableMethodAnnotation.equals(inferredNullableMethodAnnotation)) {
-        diffs.add(methodKey + ": " + externalNullableMethodAnnotation + " != " + inferredNullableMethodAnnotation);
+        myDiffs.add(methodKey + ": " + externalNullableMethodAnnotation + " != " + inferredNullableMethodAnnotation);
       }
     }
 
@@ -227,7 +299,7 @@ public class BytecodeAnalysisIntegrationTest extends JavaCodeInsightFixtureTestC
         String externalNotNull = findExternalAnnotation(parameter, AnnotationUtil.NOT_NULL) == null ? "null" : "@NotNull";
         String inferredNotNull = findInferredAnnotation(parameter, AnnotationUtil.NOT_NULL) == null ? "null" : "@NotNull";
         if (!externalNotNull.equals(inferredNotNull)) {
-          diffs.add(parameterKey + ": " + externalNotNull + " != " + inferredNotNull);
+          myDiffs.add(parameterKey + ": " + externalNotNull + " != " + inferredNotNull);
         }
       }
 
@@ -236,7 +308,7 @@ public class BytecodeAnalysisIntegrationTest extends JavaCodeInsightFixtureTestC
         String externalNullable = findExternalAnnotation(parameter, AnnotationUtil.NULLABLE) == null ? "null" : "@Nullable";
         String inferredNullable = findInferredAnnotation(parameter, AnnotationUtil.NULLABLE) == null ? "null" : "@Nullable";
         if (!externalNullable.equals(inferredNullable)) {
-          diffs.add(parameterKey + ": " + externalNullable + " != " + inferredNullable);
+          myDiffs.add(parameterKey + ": " + externalNullable + " != " + inferredNullable);
         }
       }
     }
@@ -251,9 +323,8 @@ public class BytecodeAnalysisIntegrationTest extends JavaCodeInsightFixtureTestC
       inferredContractAnnotation == null ? "null" : inferredContractAnnotation.getText();
 
     if (!externalContractAnnotationText.equals(inferredContractAnnotationText)) {
-      diffs.add(methodKey + ": " + externalContractAnnotationText + " != " + inferredContractAnnotationText);
+      myDiffs.add(methodKey + ": " + externalContractAnnotationText + " != " + inferredContractAnnotationText);
     }
-
   }
 
   @Nullable

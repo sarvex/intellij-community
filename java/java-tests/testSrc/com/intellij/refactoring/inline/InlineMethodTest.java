@@ -16,7 +16,7 @@
 package com.intellij.refactoring.inline;
 
 import com.intellij.JavaTestUtil;
-import com.intellij.codeInsight.TargetElementUtilBase;
+import com.intellij.codeInsight.TargetElementUtil;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.PsiElement;
@@ -185,6 +185,10 @@ public class InlineMethodTest extends LightRefactoringTestCase {
     doTest();
   }
 
+  public void testSubstitutionForWildcards() throws Exception {
+    doTest();
+  }
+
   public void testParamNameConflictsWithLocalVar() throws Exception {
     doTest();
   }
@@ -272,8 +276,32 @@ public class InlineMethodTest extends LightRefactoringTestCase {
     doTest();
   }
 
+  public void testStringPlusOverload() throws Exception {
+    doTest();
+  }
+  
   public void testReturnStatementWithoutBraces() throws Exception {
     doTestInlineThisOnly();
+  }
+
+  public void testUnresolvedArgPassedToSameNameParameter() throws Exception {
+    doTestInlineThisOnly();
+  }
+
+  public void testMakeTypesDenotable() throws Exception {
+    doTestInlineThisOnly();
+  }
+
+  public void testInlineIntoMethodRef() throws Exception {
+    doTestInlineThisOnly();
+  }
+
+  public void testInlineIntoConstructorRef() throws Exception {
+    doTestInlineThisOnly();
+  }
+
+  public void testSideEffectsInMethodRefQualifier() throws Exception {
+    doTestConflict("Inlined method is used in method reference with side effects in qualifier");
   }
 
   private void doTestInlineThisOnly() {
@@ -305,8 +333,8 @@ public class InlineMethodTest extends LightRefactoringTestCase {
   }
 
   private void performAction(final InlineOptions options, final boolean nonCode) {
-    PsiElement element = TargetElementUtilBase
-      .findTargetElement(myEditor, TargetElementUtilBase.ELEMENT_NAME_ACCEPTED | TargetElementUtilBase.REFERENCED_ELEMENT_ACCEPTED);
+    PsiElement element = TargetElementUtil
+      .findTargetElement(myEditor, TargetElementUtil.ELEMENT_NAME_ACCEPTED | TargetElementUtil.REFERENCED_ELEMENT_ACCEPTED);
     final PsiReference ref = myFile.findReferenceAt(myEditor.getCaretModel().getOffset());
     PsiReferenceExpression refExpr = ref instanceof PsiReferenceExpression ? (PsiReferenceExpression)ref : null;
     assertTrue(element instanceof PsiMethod);

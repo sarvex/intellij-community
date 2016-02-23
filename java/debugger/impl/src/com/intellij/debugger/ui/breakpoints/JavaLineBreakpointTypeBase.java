@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,7 +60,7 @@ public abstract class JavaLineBreakpointTypeBase<P extends JavaBreakpointPropert
   @Nullable
   @Override
   public final XBreakpointCustomPropertiesPanel<XLineBreakpoint<P>> createCustomRightPropertiesPanel(@NotNull Project project) {
-    return new JavaBreakpointFiltersPanel<P, XLineBreakpoint<P>>(project);
+    return new JavaBreakpointFiltersPanel<>(project);
   }
 
   @Nullable
@@ -81,10 +81,10 @@ public abstract class JavaLineBreakpointTypeBase<P extends JavaBreakpointPropert
   }
 
   @Override
-  public final boolean canPutAt(@NotNull final VirtualFile file, final int line, @NotNull Project project) {
+  public boolean canPutAt(@NotNull final VirtualFile file, final int line, @NotNull Project project) {
     final PsiFile psiFile = PsiManager.getInstance(project).findFile(file);
     // JSPX supports jvm debugging, but not in XHTML files
-    if (psiFile == null || psiFile.getVirtualFile().getFileType() == StdFileTypes.XHTML) {
+    if (psiFile == null || psiFile.getViewProvider().getFileType() == StdFileTypes.XHTML) {
       return false;
     }
 

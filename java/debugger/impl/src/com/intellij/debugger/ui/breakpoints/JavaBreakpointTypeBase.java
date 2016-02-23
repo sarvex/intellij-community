@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
 import com.intellij.psi.PsiClass;
-import com.intellij.psi.PsiFile;
 import com.intellij.xdebugger.XDebuggerUtil;
 import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.breakpoints.XBreakpoint;
@@ -51,7 +50,7 @@ public abstract class JavaBreakpointTypeBase<T extends JavaBreakpointProperties>
   @Nullable
   @Override
   public final XBreakpointCustomPropertiesPanel<XBreakpoint<T>> createCustomRightPropertiesPanel(@NotNull Project project) {
-    return new JavaBreakpointFiltersPanel<T, XBreakpoint<T>>(project);
+    return new JavaBreakpointFiltersPanel<>(project);
   }
 
   @Nullable
@@ -70,11 +69,7 @@ public abstract class JavaBreakpointTypeBase<T extends JavaBreakpointProperties>
         return ApplicationManager.getApplication().runReadAction(new Computable<XSourcePosition>() {
           @Override
           public XSourcePosition compute() {
-            PsiFile containingFile = aClass.getContainingFile();
-            if (containingFile != null && aClass.getTextOffset() >= 0) {
-              return XDebuggerUtil.getInstance().createPositionByOffset(containingFile.getVirtualFile(), aClass.getTextOffset());
-            }
-            return null;
+            return XDebuggerUtil.getInstance().createPositionByElement(aClass);
           }
         });
       }

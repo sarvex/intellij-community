@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,24 +17,27 @@ package com.intellij.openapi.application.impl;
 
 import com.intellij.BundleBase;
 import com.intellij.CommonBundle;
+import com.intellij.Patches;
+import com.intellij.diagnostic.LogEventException;
+import com.intellij.diagnostic.PerformanceWatcher;
 import com.intellij.diagnostic.ThreadDumper;
 import com.intellij.ide.*;
 import com.intellij.ide.plugins.IdeaPluginDescriptor;
-import com.intellij.ide.plugins.PluginManagerCore;
 import com.intellij.idea.IdeaApplication;
 import com.intellij.idea.Main;
 import com.intellij.idea.StartupUtil;
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.application.*;
 import com.intellij.openapi.application.ex.ApplicationEx;
 import com.intellij.openapi.command.CommandProcessor;
-import com.intellij.openapi.components.StateStorageException;
-import com.intellij.openapi.components.impl.ApplicationPathMacroManager;
+import com.intellij.openapi.components.ComponentConfig;
+import com.intellij.openapi.components.ServiceKt;
+import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.components.impl.PlatformComponentManagerImpl;
-import com.intellij.openapi.components.impl.stores.IApplicationStore;
-import com.intellij.openapi.components.impl.stores.IComponentStore;
+import com.intellij.openapi.components.impl.ServiceManagerImpl;
 import com.intellij.openapi.components.impl.stores.StoreUtil;
-import com.intellij.openapi.components.impl.stores.StoresFactory;
+import com.intellij.openapi.diagnostic.Attachment;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.ExtensionPointName;
 import com.intellij.openapi.extensions.Extensions;
@@ -46,7 +49,6 @@ import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.util.ProgressWindow;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
-import com.intellij.openapi.project.ex.ProjectEx;
 import com.intellij.openapi.project.ex.ProjectManagerEx;
 import com.intellij.openapi.project.impl.ProjectManagerImpl;
 import com.intellij.openapi.ui.DialogWrapper;
@@ -54,18 +56,19 @@ import com.intellij.openapi.ui.MessageDialogBuilder;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.CharsetToolkit;
-import com.intellij.openapi.wm.IdeFrame;
 import com.intellij.openapi.wm.WindowManager;
 import com.intellij.psi.PsiLock;
 import com.intellij.ui.Splash;
 import com.intellij.util.*;
+import com.intellij.util.concurrency.AppExecutorUtil;
+import com.intellij.util.concurrency.AppScheduledExecutorService;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.containers.Stack;
 import com.intellij.util.io.storage.HeavyProcessLatch;
 import com.intellij.util.ui.UIUtil;
-import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -77,6 +80,7 @@ import java.awt.*;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -98,11 +102,10 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
 
   private final EventDispatcher<ApplicationListener> myDispatcher = EventDispatcher.create(ApplicationListener.class);
 
-  private IApplicationStore myComponentStore;
-
   private final boolean myTestModeFlag;
   private final boolean myHeadlessMode;
   private final boolean myCommandLineMode;
+  private static volatile Boolean ourIsRunningFromSources;
 
   private final boolean myIsInternal;
   private final String myName;
@@ -119,16 +122,16 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
   private final Disposable myLastDisposable = Disposer.newDisposable(); // will be disposed last
 
   private final AtomicBoolean mySaveSettingsIsInProgress = new AtomicBoolean(false);
+  @SuppressWarnings("UseOfArchaicSystemPropertyAccessors")
+  private static final int ourDumpThreadsOnLongWriteActionWaiting = Integer.getInteger("dump.threads.on.long.write.action.waiting", 0);
 
   private final ExecutorService ourThreadExecutorsService = PooledThreadExecutor.INSTANCE;
-  private boolean myIsFiringLoadingEvent = false;
-  private boolean myLoaded = false;
-  @NonNls private static final String WAS_EVER_SHOWN = "was.ever.shown";
-
-  private Boolean myActive;
+  private boolean myLoaded;
+  private static final String WAS_EVER_SHOWN = "was.ever.shown";
 
   private static final int IS_EDT_FLAG = 1<<30; // we don't mess with sign bit since we want to do arithmetic
   private static final int IS_READ_LOCK_ACQUIRED_FLAG = 1<<29;
+
   private static class Status {
     // higher three bits are for IS_* flags
     // lower bits are for edtSafe counter
@@ -156,32 +159,11 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
       return false;
     }
 
-    @NonNls
     @Override
     public String toString() {
       return "ANY";
     }
   };
-
-  @Override
-  protected void bootstrapPicoContainer(@NotNull String name) {
-    super.bootstrapPicoContainer(name);
-    getPicoContainer().registerComponentImplementation(IComponentStore.class, StoresFactory.getApplicationStoreClass());
-    getPicoContainer().registerComponentImplementation(ApplicationPathMacroManager.class);
-  }
-
-  @NotNull
-  public synchronized IApplicationStore getStateStore() {
-    if (myComponentStore == null) {
-      myComponentStore = (IApplicationStore)getPicoContainer().getComponentInstance(IComponentStore.class);
-    }
-    return myComponentStore;
-  }
-
-  @Override
-  public void initializeComponent(@NotNull Object component, boolean service) {
-    getStateStore().initComponent(component, service);
-  }
 
   public ApplicationImpl(boolean isInternal,
                          boolean isUnitTestMode,
@@ -210,10 +192,8 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
     myTestModeFlag = isUnitTestMode;
     myHeadlessMode = isHeadless;
     myCommandLineMode = isCommandLine;
-
+    
     myDoNotSave = isUnitTestMode || isHeadless;
-
-    loadApplicationComponents();
 
     if (myTestModeFlag) {
       registerShutdownHook();
@@ -232,13 +212,8 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
               String currentDirectory = args.isEmpty() ? null : args.get(0);
               List<String> realArgs = args.isEmpty() ? args : args.subList(1, args.size());
               final Project project = CommandLineProcessor.processExternalCommandLine(realArgs, currentDirectory);
-              final JFrame frame;
-              if (project != null) {
-                frame = (JFrame)WindowManager.getInstance().getIdeFrame(project);
-              }
-              else {
-                frame = WindowManager.getInstance().findVisibleFrame();
-              }
+              JFrame frame = project == null ? WindowManager.getInstance().findVisibleFrame() :
+                             (JFrame)WindowManager.getInstance().getIdeFrame(project);
               if (frame != null) frame.requestFocus();
             }
           });
@@ -345,25 +320,6 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
     return BitUtil.isSet(status.flags, IS_READ_LOCK_ACQUIRED_FLAG);
   }
 
-  private void loadApplicationComponents() {
-    PluginManagerCore.initPlugins(mySplash);
-    IdeaPluginDescriptor[] plugins = PluginManagerCore.getPlugins();
-    for (IdeaPluginDescriptor plugin : plugins) {
-      if (!PluginManagerCore.shouldSkipPlugin(plugin)) {
-        loadComponentsConfiguration(plugin.getAppComponents(), plugin, false);
-      }
-    }
-  }
-
-  @Override
-  protected synchronized Object createComponent(@NotNull Class componentInterface) {
-    Object component = super.createComponent(componentInterface);
-    if (mySplash != null) {
-      mySplash.showProgress("", 0.65f + getPercentageOfComponentsLoaded() * 0.35f);
-    }
-    return component;
-  }
-
   @NotNull
   @Override
   protected MutablePicoContainer createPicoContainer() {
@@ -393,6 +349,13 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
   @Override
   public boolean isCommandLine() {
     return myCommandLineMode;
+  }
+
+  public static boolean isRunningFromSources() {
+    if (ourIsRunningFromSources == null) {
+      ourIsRunningFromSources = new File(PathManager.getHomePath(), ".idea").isDirectory();
+    }
+    return ourIsRunningFromSources;
   }
 
   @NotNull
@@ -483,29 +446,42 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
   }
 
   @Override
-  public void load(@Nullable String optionsPath) throws IOException {
-    load(PathManager.getConfigPath(), optionsPath == null ? PathManager.getOptionsPath() : optionsPath);
+  public void load() throws IOException {
+    load(null);
   }
 
-  public void load(@NotNull String configPath, @NotNull String optionsPath) throws IOException {
-    IApplicationStore store = getStateStore();
-    store.setOptionsPath(optionsPath);
-    store.setConfigPath(configPath);
-
-    myIsFiringLoadingEvent = true;
-    try {
-      fireBeforeApplicationLoaded();
-    }
-    finally {
-      myIsFiringLoadingEvent = false;
-    }
-
+  @Override
+  public void load(@Nullable final String configPath) {
     AccessToken token = HeavyProcessLatch.INSTANCE.processStarted("Loading application components");
     try {
-      store.load();
-    }
-    catch (StateStorageException e) {
-      throw new IOException(e.getMessage());
+      long t = System.currentTimeMillis();
+      init(mySplash == null ? null : new EmptyProgressIndicator() {
+        @Override
+        public void setFraction(double fraction) {
+          mySplash.showProgress("", (float)(0.65 + getPercentageOfComponentsLoaded() * 0.35));
+        }
+      }, new Runnable() {
+        @Override
+        public void run() {
+          // create ServiceManagerImpl at first to force extension classes registration
+          getPicoContainer().getComponentInstance(ServiceManagerImpl.class);
+
+          String effectiveConfigPath = FileUtilRt.toSystemIndependentName(configPath == null ? PathManager.getConfigPath() : configPath);
+          for (ApplicationLoadListener listener : ApplicationLoadListener.EP_NAME.getExtensions()) {
+            try {
+              listener.beforeApplicationLoaded(ApplicationImpl.this, effectiveConfigPath);
+            }
+            catch (Throwable e) {
+              LOG.error(e);
+            }
+          }
+
+          // we set it after beforeApplicationLoaded call, because app store can depends on stream provider state
+          ServiceKt.getStateStore(ApplicationImpl.this).setPath(effectiveConfigPath);
+        }
+      });
+      t = System.currentTimeMillis() - t;
+      LOG.info(getComponentConfigCount() + " application components initialized in " + t + " ms");
     }
     finally {
       token.finish();
@@ -513,6 +489,41 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
     myLoaded = true;
 
     createLocatorFile();
+  }
+
+  @Override
+  protected void createComponents(@Nullable final ProgressIndicator indicator) {
+    // we cannot wrap "init()" call because ProgressManager instance could be created only after component registration (our "componentsRegistered" callback)
+    Runnable task = new Runnable() {
+      @Override
+      public void run() {
+        ApplicationImpl.super.createComponents(indicator);
+      }
+    };
+
+
+    if (indicator == null) {
+      // no splash, no need to to use progress manager
+      task.run();
+    }
+    else {
+      ProgressManager progressManager = ServiceManager.getService(ProgressManager.class);
+      if (progressManager == null) {
+        // https://youtrack.jetbrains.com/issue/IDEA-134164
+        task.run();
+      }
+      else {
+        progressManager.runProcess(task, indicator);
+      }
+    }
+  }
+
+  @Override
+  @Nullable
+  protected ProgressIndicator getProgressIndicator() {
+    // could be called before full initialization
+    ProgressManager progressManager = (ProgressManager)getPicoContainer().getComponentInstance(ProgressManager.class.getName());
+    return progressManager == null ? null : progressManager.getProgressIndicator();
   }
 
   private static void createLocatorFile() {
@@ -532,25 +543,6 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
   }
 
   @Override
-  protected <T> T getComponentFromContainer(@NotNull final Class<T> interfaceClass) {
-    if (myIsFiringLoadingEvent) {
-      return null;
-    }
-    return super.getComponentFromContainer(interfaceClass);
-  }
-
-  private void fireBeforeApplicationLoaded() {
-    for (ApplicationLoadListener listener : ApplicationLoadListener.EP_NAME.getExtensions()) {
-      try {
-        listener.beforeApplicationLoaded(this);
-      }
-      catch (Exception e) {
-        LOG.error(e);
-      }
-    }
-  }
-
-  @Override
   public void dispose() {
     fireApplicationExiting();
 
@@ -558,10 +550,27 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
 
     disposeComponents();
 
-    ourThreadExecutorsService.shutdownNow();
-    myComponentStore = null;
+    AppScheduledExecutorService service = (AppScheduledExecutorService)AppExecutorUtil.getAppScheduledExecutorService();
+    service.shutdownAppScheduledExecutorService();
+
     super.dispose();
     Disposer.dispose(myLastDisposable); // dispose it last
+
+    if (gatherWriteActionStatistics) {
+      LOG.info(writeActionStatistics());
+      LOG.info(ActionUtil.ACTION_UPDATE_PAUSES.statistics());
+    }
+  }
+
+  @TestOnly
+  public String writeActionStatistics() {
+    return writePauses.statistics();
+  }
+
+  @NotNull
+  @Override
+  public ComponentConfig[] getMyComponentConfigsFromDescriptor(@NotNull IdeaPluginDescriptor plugin) {
+    return plugin.getAppComponents();
   }
 
   @Override
@@ -799,7 +808,7 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
    *  Note: there are possible scenarios when we get a quit notification at a moment when another
    *  quit message is shown. In that case, showing multiple messages sounds contra-intuitive as well
    */
-  private static volatile boolean exiting = false;
+  private static volatile boolean exiting;
 
   public void exit(final boolean force, final boolean exitConfirmed, final boolean allowListenersToCancel, final boolean restart) {
     if (!force && exiting) {
@@ -1050,7 +1059,6 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
     }
   }
 
-  @NonNls
   private static String describe(Thread o) {
     if (o == null) return "null";
     return o + " " + System.identityHashCode(o);
@@ -1059,6 +1067,8 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
   private static Thread getEventQueueThread() {
     EventQueue eventQueue = Toolkit.getDefaultToolkit().getSystemEventQueue();
     try {
+      // use sun.awt.AWTAccessor.EventQueueAccessor?
+      assert Patches.USE_REFLECTION_TO_ACCESS_JDK8;
       Method method = ReflectionUtil.getDeclaredMethod(EventQueue.class, "getDispatchThread");
       return (Thread)method.invoke(eventQueue);
     }
@@ -1096,12 +1106,13 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
 
   private static void assertIsDispatchThread(Status status, @NotNull String message) {
     if (isDispatchThread(status)) return;
-    throw new RuntimeException(message +
+    final Attachment dump = new Attachment("threadDump.txt", ThreadDumper.dumpThreadsToString());
+    throw new LogEventException(message,
               " EventQueue.isDispatchThread()="+EventQueue.isDispatchThread()+
               " isDispatchThread()="+isDispatchThread(getStatus())+
               " Toolkit.getEventQueue()="+Toolkit.getDefaultToolkit().getSystemEventQueue()+
               " Current thread: " + describe(Thread.currentThread())+
-              " SystemEventQueueThread: " + describe(getEventQueueThread()) +"\n"+ ThreadDumper.dumpThreadsToString()+"\n-----------");
+              " SystemEventQueueThread: " + describe(getEventQueueThread()), dump);
   }
 
   @Override
@@ -1174,38 +1185,18 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
     return true;
   }
 
-  public boolean tryToApplyActivationState(boolean active, Window window) {
-    final Component frame = UIUtil.findUltimateParent(window);
-
-    if (frame instanceof IdeFrame) {
-      final IdeFrame ideFrame = (IdeFrame)frame;
-      if (isActive() != active) {
-        myActive = active;
-        System.setProperty("idea.active", myActive.toString());
-        ApplicationActivationListener publisher = getMessageBus().syncPublisher(ApplicationActivationListener.TOPIC);
-        if (active) {
-          publisher.applicationActivated(ideFrame);
-        }
-        else {
-          publisher.applicationDeactivated(ideFrame);
-        }
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   @Override
   public boolean isActive() {
     if (isUnitTestMode()) return true;
 
-    if (myActive == null) {
-      Window active = KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
-      return active != null;
+    Window activeWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
+
+    if (ApplicationActivationStateManager.getState().isInactive()
+      && activeWindow != null) {
+      ApplicationActivationStateManager.updateState(activeWindow);
     }
 
-    return myActive;
+    return ApplicationActivationStateManager.getState().isActive();
   }
 
   @NotNull
@@ -1225,11 +1216,16 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
     return myWriteActionPending;
   }
 
-  private void startWrite(Class clazz) {
+  private final boolean gatherWriteActionStatistics = LOG.isDebugEnabled() || isUnitTestMode() || isInternal();
+  private final PausesStat writePauses = gatherWriteActionStatistics ? new PausesStat("Write action") : null;
+
+  private void startWrite(/*@NotNull*/ Class clazz) {
     assertIsDispatchThread(getStatus(), "Write access is allowed from event dispatch thread only");
     boolean writeActionPending = myWriteActionPending;
     myWriteActionPending = true;
-
+    if (gatherWriteActionStatistics && myWriteActionsStack.isEmpty()) {
+      writePauses.started();
+    }
     try {
       ActivityTracker.getInstance().inc();
       fireBeforeWriteActionStart(clazz);
@@ -1238,7 +1234,24 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
         if (!isWriteAccessAllowed()) {
           assertNoPsiLock();
         }
-        myLock.writeLock().lockInterruptibly();
+        if (!myLock.writeLock().tryLock()) {
+          final AtomicBoolean lockAcquired = new AtomicBoolean(false);
+          if (ourDumpThreadsOnLongWriteActionWaiting > 0) {
+            executeOnPooledThread(new Runnable() {
+              @Override
+              public void run() {
+                while (!lockAcquired.get()) {
+                  TimeoutUtil.sleep(ourDumpThreadsOnLongWriteActionWaiting);
+                  if (!lockAcquired.get()) {
+                    PerformanceWatcher.getInstance().dumpThreads("waiting", true);
+                  }
+                }
+              }
+            });
+          }
+          myLock.writeLock().lockInterruptibly();
+          lockAcquired.set(true);
+        }
       }
       catch (InterruptedException e) {
         throw new RuntimeInterruptedException(e);
@@ -1252,9 +1265,12 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
     fireWriteActionStarted(clazz);
   }
 
-  private void endWrite(Class clazz) {
+  private void endWrite(/*@NotNull*/ Class clazz) {
     try {
       myWriteActionsStack.pop();
+      if (gatherWriteActionStatistics && myWriteActionsStack.isEmpty()) {
+        writePauses.finished("write action ("+clazz+")");
+      }
       fireWriteActionFinished(clazz);
     }
     finally {
@@ -1264,14 +1280,17 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
 
   @NotNull
   @Override
-  public AccessToken acquireWriteActionLock(Class clazz) {
+  public AccessToken acquireWriteActionLock(/*@NotNull */Class clazz) {
+    if (clazz == null) {
+      LOG.warn("Parameter must be not null", new Throwable());
+    }
     return new WriteAccessToken(clazz);
   }
 
   private class WriteAccessToken extends AccessToken {
     private final Class clazz;
 
-    public WriteAccessToken(Class clazz) {
+    public WriteAccessToken(/*@NotNull*/ Class clazz) {
       this.clazz = clazz;
       startWrite(clazz);
       markThreadNameInStackTrace();
@@ -1417,7 +1436,7 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
 
     if (mySaveSettingsIsInProgress.compareAndSet(false, true)) {
       try {
-        StoreUtil.save(getStateStore(), null);
+        StoreUtil.save(ServiceKt.getStateStore(this), null);
       }
       finally {
         mySaveSettingsIsInProgress.set(false);
@@ -1433,8 +1452,7 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
 
     Project[] openProjects = ProjectManager.getInstance().getOpenProjects();
     for (Project openProject : openProjects) {
-      ProjectEx project = (ProjectEx)openProject;
-      project.save();
+      openProject.save();
     }
 
     saveSettings();
@@ -1481,7 +1499,6 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
     myDisposeInProgress = disposeInProgress;
   }
 
-  @NonNls
   @Override
   public String toString() {
     return "Application" +
@@ -1490,5 +1507,17 @@ public class ApplicationImpl extends PlatformComponentManagerImpl implements App
            (isInternal() ? " (Internal)" : "") +
            (isHeadlessEnvironment() ? " (Headless)" : "") +
            (isCommandLine() ? " (Command line)" : "");
+  }
+
+  @TestOnly
+  public void disableEventsUntil(@NotNull Disposable disposable) {
+    final List<ApplicationListener> listeners = new ArrayList<ApplicationListener>(myDispatcher.getListeners());
+    myDispatcher.getListeners().removeAll(listeners);
+    Disposer.register(disposable, new Disposable() {
+      @Override
+      public void dispose() {
+        myDispatcher.getListeners().addAll(listeners);
+      }
+    });
   }
 }

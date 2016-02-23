@@ -23,6 +23,7 @@ import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.testFramework.UsefulTestCase;
 import com.jetbrains.python.codeInsight.controlflow.ScopeOwner;
 import com.jetbrains.python.codeInsight.dataflow.scope.ScopeUtil;
+import com.jetbrains.python.documentation.docstrings.DocStringFormat;
 import com.jetbrains.python.fixtures.PyResolveTestCase;
 import com.jetbrains.python.psi.*;
 import com.jetbrains.python.psi.impl.PyPsiUtils;
@@ -508,6 +509,34 @@ public class PyResolveTest extends PyResolveTestCase {
   public void testReferenceInDocstring() {
     assertResolvesTo(PyClass.class, "datetime");
   }
+  
+  // PY-9795
+  public void testGoogleDocstringParamType() {
+    runWithDocStringFormat(DocStringFormat.GOOGLE, new Runnable() {
+      public void run() {
+        assertResolvesTo(PyClass.class, "datetime");
+      }
+    });
+  }
+  
+  // PY-9795
+  public void testGoogleDocstringReturnType() {
+    runWithDocStringFormat(DocStringFormat.GOOGLE, new Runnable() {
+      public void run() {
+        assertResolvesTo(PyClass.class, "MyClass");
+      }
+    });
+  }
+
+  // PY-16906
+  public void testGoogleDocstringModuleAttribute() {
+    runWithDocStringFormat(DocStringFormat.GOOGLE, new Runnable() {
+      @Override
+      public void run() {
+        assertResolvesTo(PyTargetExpression.class, "module_level_variable1");
+      }
+    });
+  }
 
   // PY-7541
   public void testLoopToUpperReassignment() {
@@ -570,5 +599,64 @@ public class PyResolveTest extends PyResolveTestCase {
   // PY-11401
   public void testResolveAttributesUsingOldStyleMROWhenUnresolvedAncestorsAndC3Fails() {
     assertResolvesTo(PyFunction.class, "foo");
+  }
+
+  // PY-15390
+  public void testMatMul() {
+    assertResolvesTo(PyFunction.class, "__matmul__");
+  }
+
+  // PY-15390
+  public void testRMatMul() {
+    assertResolvesTo(PyFunction.class, "__rmatmul__");
+  }
+
+  //PY-2478
+  public void testFormatStringKWArgs() {
+    PsiElement target = resolve();
+    assertTrue(target instanceof  PyKeywordArgument);
+    assertEquals("fst", ((PyKeywordArgument)target).getKeyword());
+  }
+
+  //PY-2478
+  public void testFormatPositionalArgs() {
+    PsiElement target = resolve();
+    assertTrue(target instanceof  PyReferenceExpression);
+    assertEquals("string", target.getText());
+  }
+
+  //PY-2478
+  public void testFormatArgsAndKWargs() {
+    PsiElement target = resolve();
+    assertTrue(target instanceof  PyStringLiteralExpression);
+  }
+
+  //PY-2478
+  public void testFormatArgsAndKWargs1() {
+    PsiElement target = resolve();
+    assertTrue(target instanceof  PyKeywordArgument);
+    assertEquals("kwd", ((PyKeywordArgument)target).getKeyword());
+  }
+
+  //PY-2478
+  public void testPercentPositionalArgs() {
+    PsiElement target = resolve();
+    assertTrue(target instanceof PyStringLiteralExpression);
+  }
+
+  //PY-2478
+  public void testPercentKeyWordArgs() {
+    PsiElement target = resolve();
+    assertTrue(target instanceof PyStringLiteralExpression);
+    assertEquals("kwg", ((PyStringLiteralExpression)target).getStringValue());
+  }
+
+  // PY-18254
+  public void testFunctionTypeComment() {
+    assertResolvesTo(PyClass.class, "MyClass");
+  }
+
+  public void testGlobalNotDefinedAtTopLevel() {
+    assertResolvesTo(PyTargetExpression.class, "foo");
   }
 }

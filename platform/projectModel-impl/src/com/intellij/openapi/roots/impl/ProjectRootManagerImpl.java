@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,11 @@
 
 package com.intellij.openapi.roots.impl;
 
+import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.components.ProjectComponent;
+import com.intellij.openapi.application.WriteAction;
+import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.State;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.module.Module;
@@ -30,9 +33,6 @@ import com.intellij.openapi.roots.ex.ProjectRootManagerEx;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.roots.libraries.LibraryTable;
 import com.intellij.openapi.util.EmptyRunnable;
-import com.intellij.openapi.util.InvalidDataException;
-import com.intellij.openapi.util.JDOMExternalizable;
-import com.intellij.openapi.util.WriteExternalException;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiManager;
@@ -46,14 +46,13 @@ import com.intellij.util.messages.MessageBusConnection;
 import org.jdom.Element;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.jps.model.module.JpsModuleSourceRootType;
 
 import java.util.*;
 
-/**
- * @author max
- */
-public class ProjectRootManagerImpl extends ProjectRootManagerEx implements ProjectComponent, JDOMExternalizable {
+@State(name = "ProjectRootManager")
+public class ProjectRootManagerImpl extends ProjectRootManagerEx implements PersistentStateComponent<Element> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.projectRoots.impl.ProjectRootManagerImpl");
 
   @NonNls public static final String PROJECT_JDK_NAME_ATTR = "project-jdk-name";
@@ -70,13 +69,13 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
 
   private final OrderRootsCache myRootsCache;
 
-  protected boolean myStartupActivityPerformed = false;
+  protected boolean myStartupActivityPerformed;
 
   private final RootProviderChangeListener myRootProviderChangeListener = new RootProviderChangeListener();
 
   protected class BatchSession {
-    private int myBatchLevel = 0;
-    private boolean myChanged = false;
+    private int myBatchLevel;
+    private boolean myChanged;
 
     private final boolean myFileTypes;
 
@@ -94,11 +93,17 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
     protected void levelDown() {
       myBatchLevel -= 1;
       if (myChanged && myBatchLevel == 0) {
+        AccessToken token = WriteAction.start();
         try {
           fireChange();
         }
         finally {
-          myChanged = false;
+          try {
+            myChanged = false;
+          }
+          finally {
+            token.finish();
+          }
         }
       }
     }
@@ -195,7 +200,7 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
   @NotNull
   @Override
   public OrderEnumerator orderEntries(@NotNull Collection<? extends Module> modules) {
-    return new ModulesOrderEnumerator(myProject, modules);
+    return new ModulesOrderEnumerator(modules);
   }
 
   @Override
@@ -206,7 +211,7 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
       final VirtualFile[] files = ModuleRootManager.getInstance(module).getContentRoots();
       ContainerUtil.addAll(result, files);
     }
-    result.add(myProject.getBaseDir());
+    ContainerUtil.addIfNotNull(myProject.getBaseDir(), result);
     return VfsUtilCore.toVirtualFileArray(result);
   }
 
@@ -266,29 +271,7 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
   }
 
   @Override
-  public void projectOpened() {
-  }
-
-  @Override
-  public void projectClosed() {
-  }
-
-  @Override
-  @NotNull
-  public String getComponentName() {
-    return "ProjectRootManager";
-  }
-
-  @Override
-  public void initComponent() {
-  }
-
-  @Override
-  public void disposeComponent() {
-  }
-
-  @Override
-  public void readExternal(Element element) throws InvalidDataException {
+  public void loadState(Element element) {
     for (ProjectExtension extension : Extensions.getExtensions(ProjectExtension.EP_NAME, myProject)) {
       extension.readExternal(element);
     }
@@ -296,8 +279,10 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
     myProjectSdkType = element.getAttributeValue(PROJECT_JDK_TYPE_ATTR);
   }
 
+  @Nullable
   @Override
-  public void writeExternal(Element element) throws WriteExternalException {
+  public Element getState() {
+    Element element = new Element("state");
     element.setAttribute(ATTRIBUTE_VERSION, "2");
     for (ProjectExtension extension : Extensions.getExtensions(ProjectExtension.EP_NAME, myProject)) {
       extension.writeExternal(element);
@@ -308,11 +293,17 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
     if (myProjectSdkType != null) {
       element.setAttribute(PROJECT_JDK_TYPE_ATTR, myProjectSdkType);
     }
+
+    if (element.getAttributes().size() == 1) {
+      // remove empty element to not write defaults
+      element.removeAttribute(ATTRIBUTE_VERSION);
+    }
+    return element;
   }
 
-  private boolean myMergedCallStarted = false;
-  private boolean myMergedCallHasRootChange = false;
-  private int myRootsChangesDepth = 0;
+  private boolean myMergedCallStarted;
+  private boolean myMergedCallHasRootChange;
+  private int myRootsChangesDepth;
 
   @Override
   public void mergeRootsChangesDuring(@NotNull Runnable runnable) {
@@ -371,7 +362,7 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
     return fileTypes ? myFileTypesChanged : myRootsChanged;
   }
 
-  protected boolean isFiringEvent = false;
+  protected boolean isFiringEvent;
 
   private boolean fireBeforeRootsChanged(boolean fileTypes) {
     ApplicationManager.getApplication().assertWriteAccessAllowed();
@@ -484,7 +475,7 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
     synchronized (myLibraryTableListenersLock) {
       LibraryTableMultiListener multiListener = myLibraryTableMultiListeners.get(libraryTable);
       if (multiListener == null) {
-        multiListener = new LibraryTableMultiListener(libraryTable);
+        multiListener = new LibraryTableMultiListener();
         libraryTable.addListener(multiListener);
         myLibraryTableMultiListeners.put(libraryTable, multiListener);
       }
@@ -511,12 +502,7 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
 
   private class LibraryTableMultiListener implements LibraryTable.Listener {
     private final Set<LibraryTable.Listener> myListeners = new LinkedHashSet<LibraryTable.Listener>();
-    private final LibraryTable myLibraryTable;
     private LibraryTable.Listener[] myListenersArray;
-
-    private LibraryTableMultiListener(LibraryTable libraryTable) {
-      myLibraryTable = libraryTable;
-    }
 
     private synchronized void addListener(LibraryTable.Listener listener) {
       myListeners.add(listener);
@@ -593,7 +579,7 @@ public class ProjectRootManagerImpl extends ProjectRootManagerEx implements Proj
 
   private class JdkTableMultiListener implements ProjectJdkTable.Listener {
     private final Set<ProjectJdkTable.Listener> myListeners = new LinkedHashSet<ProjectJdkTable.Listener>();
-    private MessageBusConnection listenerConnection;
+    private final MessageBusConnection listenerConnection;
     private ProjectJdkTable.Listener[] myListenersArray;
 
     private JdkTableMultiListener(Project project) {

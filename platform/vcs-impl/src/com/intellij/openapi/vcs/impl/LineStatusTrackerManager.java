@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,6 +59,7 @@ import com.intellij.util.Consumer;
 import com.intellij.util.concurrency.QueueProcessorRemovePartner;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.HashMap;
+import com.intellij.util.messages.MessageBusConnection;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -109,15 +110,29 @@ public class LineStatusTrackerManager implements ProjectComponent, LineStatusTra
       }
     });
 
-    project.getMessageBus().connect().subscribe(DocumentBulkUpdateListener.TOPIC, new DocumentBulkUpdateListener.Adapter() {
+    MessageBusConnection busConnection = project.getMessageBus().connect();
+    busConnection.subscribe(DocumentBulkUpdateListener.TOPIC, new DocumentBulkUpdateListener.Adapter() {
+      @Override
       public void updateStarted(@NotNull final Document doc) {
         final LineStatusTracker tracker = getLineStatusTracker(doc);
         if (tracker != null) tracker.startBulkUpdate();
       }
 
+      @Override
       public void updateFinished(@NotNull final Document doc) {
         final LineStatusTracker tracker = getLineStatusTracker(doc);
         if (tracker != null) tracker.finishBulkUpdate();
+      }
+    });
+    busConnection.subscribe(LineStatusTrackerSettingListener.TOPIC, new LineStatusTrackerSettingListener() {
+      @Override
+      public void settingsUpdated() {
+        synchronized (myLock) {
+          LineStatusTracker.Mode mode = getMode();
+          for (LineStatusTracker tracker : myLineStatusTrackers.values()) {
+            tracker.setMode(mode);
+          }
+        }
       }
     });
 
@@ -137,6 +152,7 @@ public class LineStatusTrackerManager implements ProjectComponent, LineStatusTra
     Disposer.register(myProject, myDisposable);
   }
 
+  @Override
   public void projectOpened() {
     StartupManager.getInstance(myProject).registerPreStartupActivity(new Runnable() {
       @Override
@@ -161,18 +177,22 @@ public class LineStatusTrackerManager implements ProjectComponent, LineStatusTra
     });
   }
 
+  @Override
   public void projectClosed() {
   }
 
+  @Override
   @NonNls
   @NotNull
   public String getComponentName() {
     return "LineStatusTrackerManager";
   }
 
+  @Override
   public void initComponent() {
   }
 
+  @Override
   public void disposeComponent() {
   }
 
@@ -300,11 +320,18 @@ public class LineStatusTrackerManager implements ProjectComponent, LineStatusTra
       if (myLineStatusTrackers.containsKey(document)) return;
       assert !myPartner.containsKey(document);
 
-      final LineStatusTracker tracker = LineStatusTracker.createOn(virtualFile, document, myProject);
+      final LineStatusTracker tracker = LineStatusTracker.createOn(virtualFile, document, myProject, getMode());
       myLineStatusTrackers.put(document, tracker);
 
       startAlarm(document, virtualFile);
     }
+  }
+
+  @NotNull
+  private static LineStatusTracker.Mode getMode() {
+    VcsApplicationSettings vcsApplicationSettings = VcsApplicationSettings.getInstance();
+    if (!vcsApplicationSettings.SHOW_LST_GUTTER_MARKERS) return LineStatusTracker.Mode.SILENT;
+    return vcsApplicationSettings.SHOW_WHITESPACES_IN_LST ? LineStatusTracker.Mode.SMART : LineStatusTracker.Mode.DEFAULT;
   }
 
   private void startAlarm(@NotNull final Document document, @NotNull final VirtualFile virtualFile) {
@@ -350,6 +377,7 @@ public class LineStatusTrackerManager implements ProjectComponent, LineStatusTra
 
       final String converted = StringUtil.convertLineSeparators(baseRevision.second);
       final Runnable runnable = new Runnable() {
+        @Override
         public void run() {
           synchronized (myLock) {
             if (LOG.isDebugEnabled()) {
@@ -382,16 +410,19 @@ public class LineStatusTrackerManager implements ProjectComponent, LineStatusTra
   }
 
   private class MyFileStatusListener implements FileStatusListener {
+    @Override
     public void fileStatusesChanged() {
       resetTrackers();
     }
 
+    @Override
     public void fileStatusChanged(@NotNull VirtualFile virtualFile) {
       resetTracker(virtualFile);
     }
   }
 
   private class MyEditorFactoryListener extends EditorFactoryAdapter {
+    @Override
     public void editorCreated(@NotNull EditorFactoryEvent event) {
       // note that in case of lazy loading of configurables, this event can happen
       // outside of EDT, so the EDT check mustn't be done here
@@ -405,6 +436,7 @@ public class LineStatusTrackerManager implements ProjectComponent, LineStatusTra
       }
     }
 
+    @Override
     public void editorReleased(@NotNull EditorFactoryEvent event) {
       final Editor editor = event.getEditor();
       if (editor.getProject() != null && editor.getProject() != myProject) return;
@@ -417,6 +449,7 @@ public class LineStatusTrackerManager implements ProjectComponent, LineStatusTra
   }
 
   private class MyVirtualFileListener extends VirtualFileAdapter {
+    @Override
     public void beforeContentsChange(@NotNull VirtualFileEvent event) {
       if (event.isFromRefresh()) {
         resetTracker(event.getFile());
@@ -425,6 +458,7 @@ public class LineStatusTrackerManager implements ProjectComponent, LineStatusTra
   }
 
   private class MyEditorColorsListener implements EditorColorsListener {
+    @Override
     public void globalSchemeChange(EditorColorsScheme scheme) {
       resetTrackers();
     }

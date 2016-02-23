@@ -18,10 +18,6 @@
       <keyboard-shortcut first-keystroke="shift DELETE"/>
       <keyboard-shortcut first-keystroke="alt X"/>
     </action>
-    <action id="EditorCodeBlockEndWithSelection">
-      <keyboard-shortcut first-keystroke="shift control CLOSE_BRACKET"/>
-      <keyboard-shortcut first-keystroke="shift control alt F"/>
-    </action>
     <action id="EditorSplitLine">
       <keyboard-shortcut first-keystroke="control O"/>
     </action>
@@ -161,7 +157,6 @@
     <action id="NextTab">
       <keyboard-shortcut first-keystroke="alt RIGHT"/>
       <keyboard-shortcut first-keystroke="control X" second-keystroke="N"/>
-      <keyboard-shortcut first-keystroke="control X" second-keystroke="O"/>
     </action>
     <action id="NextEditorTab">
       <keyboard-shortcut first-keystroke="alt shift RIGHT"/>
@@ -190,7 +185,6 @@
     <action id="EditorCodeBlockEnd">
       <keyboard-shortcut first-keystroke="control CLOSE_BRACKET"/>
       <keyboard-shortcut first-keystroke="control alt CLOSE_BRACKET"/>
-      <keyboard-shortcut first-keystroke="control alt B"/>
     </action>
     <action id="EditorNextWord">
       <keyboard-shortcut first-keystroke="control RIGHT"/>
@@ -205,19 +199,12 @@
       <keyboard-shortcut first-keystroke="control A"/>
       <keyboard-shortcut first-keystroke="alt M"/>
     </action>
-    <action id="EditorCodeBlockStartWithSelection">
-      <keyboard-shortcut first-keystroke="shift control OPEN_BRACKET"/>
-      <keyboard-shortcut first-keystroke="shift control alt B"/>
-    </action>
     <action id="EditorLeft">
       <keyboard-shortcut first-keystroke="LEFT"/>
       <keyboard-shortcut first-keystroke="control B"/>
     </action>
     <action id="CloseAllEditors">
       <keyboard-shortcut first-keystroke="control X" second-keystroke="control C"/>
-    </action>
-    <action id="CloseAllEditorsButActive">
-      <keyboard-shortcut first-keystroke="control 1"/>
     </action>
     <action id="Find">
       <keyboard-shortcut first-keystroke="control alt S"/>
@@ -232,7 +219,6 @@
     <action id="EditorCodeBlockStart">
       <keyboard-shortcut first-keystroke="control OPEN_BRACKET"/>
       <keyboard-shortcut first-keystroke="control alt OPEN_BRACKET"/>
-      <keyboard-shortcut first-keystroke="control alt F"/>
     </action>
     <action id="EmacsStyleIndent">
       <keyboard-shortcut first-keystroke="TAB"/>
@@ -255,14 +241,8 @@
     <action id="UnsplitAll">
       <keyboard-shortcut first-keystroke="control X" second-keystroke="1" />
     </action>
-    <action id="Unsplit">
-      <keyboard-shortcut first-keystroke="control 0"/>
-    </action>
-    <action id="ChangeSplitOrientation">
-      <keyboard-shortcut first-keystroke="control 5"/>
-    </action>
     <action id="NextSplitter">
-      <keyboard-shortcut first-keystroke="control X" second-keystrole="O"/>
+      <keyboard-shortcut first-keystroke="control X" second-keystroke="O"/>
     </action>
     <action id="Replace">
       <keyboard-shortcut first-keystroke="shift alt 5"/>
@@ -287,7 +267,33 @@
     <action id="CommentByLineComment">
       <keyboard-shortcut first-keystroke="alt SEMICOLON"/>
     </action>
-    
+    <action id="EditorForwardParagraph">
+      <keyboard-shortcut first-keystroke="control DOWN"/>
+    </action>
+    <action id="EditorBackwardParagraph">
+      <keyboard-shortcut first-keystroke="control UP"/>
+    </action>
+    <action id="EditorScrollToCenter">
+      <keyboard-shortcut first-keystroke="control L"/>
+    </action>
+    <action id="EditorEnter">
+      <keyboard-shortcut first-keystroke="ENTER"/>
+      <keyboard-shortcut first-keystroke="control M"/>
+    </action>
+    <action id="EditorChooseLookupItem">
+      <keyboard-shortcut first-keystroke="ENTER"/>
+      <keyboard-shortcut first-keystroke="control M"/>
+    </action>
+    <action id="NextTemplateVariable">
+      <keyboard-shortcut first-keystroke="TAB"/>
+      <keyboard-shortcut first-keystroke="ENTER"/>
+      <keyboard-shortcut first-keystroke="control M"/>
+    </action>
+    <action id="Console.Execute">
+      <keyboard-shortcut first-keystroke="ENTER"/>
+      <keyboard-shortcut first-keystroke="control M"/>
+    </action>
+
     <!--Disabled shortcuts-->
     <action id="CollapseAllRegions"/>
     <action id="ReformatCode"/>
@@ -301,5 +307,7 @@
     <action id="PreviousProjectWindow"/>
     <action id="Vcs.ShowMessageHistory"/>
     <action id="GotoImplementation"/>
+    <action id="EditorScrollUp"/>
+    <action id="EditorScrollDown"/>
   </keymap>
 </component>

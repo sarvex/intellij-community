@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,11 +40,11 @@ import java.util.Set;
 
 public class ClassWrapper {
 
-  private StructClass classStruct;
-  private Set<String> hiddenMembers = new HashSet<String>();
-  private VBStyleCollection<Exprent, String> staticFieldInitializers = new VBStyleCollection<Exprent, String>();
-  private VBStyleCollection<Exprent, String> dynamicFieldInitializers = new VBStyleCollection<Exprent, String>();
-  private VBStyleCollection<MethodWrapper, String> methods = new VBStyleCollection<MethodWrapper, String>();
+  private final StructClass classStruct;
+  private final Set<String> hiddenMembers = new HashSet<String>();
+  private final VBStyleCollection<Exprent, String> staticFieldInitializers = new VBStyleCollection<Exprent, String>();
+  private final VBStyleCollection<Exprent, String> dynamicFieldInitializers = new VBStyleCollection<Exprent, String>();
+  private final VBStyleCollection<MethodWrapper, String> methods = new VBStyleCollection<MethodWrapper, String>();
 
   public ClassWrapper(StructClass classStruct) {
     this.classStruct = classStruct;
@@ -91,7 +91,7 @@ public class ClassWrapper {
           else {
             MethodProcessorRunnable mtProc = new MethodProcessorRunnable(mt, varProc, DecompilerContext.getCurrentContext());
 
-            Thread mtThread = new Thread(mtProc);
+            Thread mtThread = new Thread(mtProc, "Java decompiler");
             long stopAt = System.currentTimeMillis() + maxSec * 1000;
 
             mtThread.start();

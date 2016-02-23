@@ -262,7 +262,12 @@ public class MemberChooser<T extends ClassMember> extends DialogWrapper implemen
         selectionPaths.add(new TreePath(((DefaultMutableTreeNode)treeNode).getPath()));
       }
     }
-    myTree.setSelectionPaths(selectionPaths.toArray(new TreePath[selectionPaths.size()]));
+    final TreePath[] paths = selectionPaths.toArray(new TreePath[selectionPaths.size()]);
+    myTree.setSelectionPaths(paths);
+
+    if (paths.length > 0) {
+      TreeUtil.showRowCentered(myTree, myTree.getRowForPath(paths[0]), true, true);
+    }
   }
 
 
@@ -521,7 +526,7 @@ public class MemberChooser<T extends ClassMember> extends DialogWrapper implemen
   }
 
   public boolean isCopyJavadoc() {
-    return myCopyJavadocCheckbox.isSelected();
+    return myCopyJavadocCheckbox != null && myCopyJavadocCheckbox.isSelected();
   }
 
   public boolean isInsertOverrideAnnotation() {
@@ -683,8 +688,8 @@ public class MemberChooser<T extends ClassMember> extends DialogWrapper implemen
   @Override
   public void dispose() {
     PropertiesComponent instance = PropertiesComponent.getInstance();
-    instance.setValue(PROP_SORTED, Boolean.toString(isAlphabeticallySorted()));
-    instance.setValue(PROP_SHOWCLASSES, Boolean.toString(myShowClasses));
+    instance.setValue(PROP_SORTED, isAlphabeticallySorted());
+    instance.setValue(PROP_SHOWCLASSES, myShowClasses);
 
     if (myCopyJavadocCheckbox != null) {
       instance.setValue(PROP_COPYJAVADOC, Boolean.toString(myCopyJavadocCheckbox.isSelected()));
@@ -733,6 +738,9 @@ public class MemberChooser<T extends ClassMember> extends DialogWrapper implemen
       mySelectedElements = new LinkedHashSet<T>();
       for (MemberNode selectedNode : mySelectedNodes) {
         mySelectedElements.add((T)selectedNode.getDelegate());
+      }
+      if (!myAllowEmptySelection) {
+        setOKActionEnabled(!mySelectedElements.isEmpty());
       }
     }
   }

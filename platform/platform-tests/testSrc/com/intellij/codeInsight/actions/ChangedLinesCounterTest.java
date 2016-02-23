@@ -17,7 +17,6 @@ package com.intellij.codeInsight.actions;
 
 import com.intellij.openapi.editor.Document;
 import com.intellij.psi.PsiFile;
-import com.intellij.testFramework.PlatformTestCase;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.fixtures.LightPlatformCodeInsightFixtureTestCase;
 import org.junit.Assert;
@@ -25,10 +24,6 @@ import org.junit.Assert;
 import java.io.File;
 
 public class ChangedLinesCounterTest extends LightPlatformCodeInsightFixtureTestCase {
-
-  static {
-    PlatformTestCase.initPlatformLangPrefix();
-  }
 
   @Override
   protected String getTestDataPath() {
@@ -52,7 +47,7 @@ public class ChangedLinesCounterTest extends LightPlatformCodeInsightFixtureTest
     file = myFixture.getFile();
     Document document = myFixture.getDocument(file);
 
-    int linesChanged = FormatChangedTextUtil.calculateChangedLinesNumber(document, revisionContent);
+    int linesChanged = FormatChangedTextUtil.getInstance().calculateChangedLinesNumber(document, revisionContent);
     Assert.assertTrue(linesChanged > 0);
     Assert.assertEquals(expectedLinesChanged, linesChanged);
   }

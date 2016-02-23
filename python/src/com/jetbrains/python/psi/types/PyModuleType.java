@@ -86,9 +86,9 @@ public class PyModuleType implements PyType { // Modules don't descend from obje
     if (overridingMember != null) {
       return ResolveResultList.to(overridingMember);
     }
-    final PsiElement attribute = myModule.getElementNamed(name);
-    if (attribute != null) {
-      return ResolveResultList.to(attribute);
+    final List<RatedResolveResult> attributes = myModule.multiResolveName(name);
+    if (!attributes.isEmpty()) {
+      return attributes;
     }
     if (PyUtil.isPackage(myModule)) {
       final List<PyImportElement> importElements = new ArrayList<PyImportElement>();
@@ -105,6 +105,10 @@ public class PyModuleType implements PyType { // Modules don't descend from obje
         }
         if (!inSameFile(location, myModule)) {
           importElements.addAll(myModule.getImportTargets());
+        }
+        final List<PyFromImportStatement> imports = myModule.getFromImports();
+        for (PyFromImportStatement anImport : imports) {
+          Collections.addAll(importElements, anImport.getImportElements());
         }
       }
       final List<? extends RatedResolveResult> implicitMembers = resolveImplicitPackageMember(name, importElements);
@@ -158,8 +162,7 @@ public class PyModuleType implements PyType { // Modules don't descend from obje
               final PsiElement subModule = ResolveImportUtil.resolveChild(myModule, name, myModule, false, true);
               if (subModule != null) {
                 final ResolveResultList results = new ResolveResultList();
-                results.add(new ImportedResolveResult(subModule, RatedResolveResult.RATE_NORMAL,
-                                                      Collections.<PsiElement>singletonList(importElement)));
+                results.add(new ImportedResolveResult(subModule, RatedResolveResult.RATE_NORMAL, importElement));
                 return results;
               }
             }
@@ -183,6 +186,18 @@ public class PyModuleType implements PyType { // Modules don't descend from obje
         final QualifiedName implicitSubModuleQName = importedQName.append(visibleName);
         if (implicitSubModuleQName != null) {
           importedQNames.add(implicitSubModuleQName);
+        }
+      }
+      else {
+        final List<PsiElement> elements = ResolveImportUtil.resolveFromImportStatementSource(fromImportStatement, element.getImportedQName());
+        for (PsiElement psiElement : elements) {
+          if (psiElement instanceof PsiFile) {
+            final VirtualFile virtualFile = ((PsiFile)psiElement).getVirtualFile();
+            final QualifiedName qName = QualifiedNameFinder.findShortestImportableQName(element, virtualFile);
+            if (qName != null) {
+              importedQNames.add(qName);
+            }
+          }
         }
       }
     }
@@ -372,7 +387,8 @@ public class PyModuleType implements PyType { // Modules don't descend from obje
                                                                               @NotNull PsiElement location,
                                                                               @Nullable final Set<String> existingNames) {
 
-    return ContainerUtil.mapNotNull(collectImportedSubmodules(pyPackage, location),
+    final List<PsiElement> elements = collectImportedSubmodules(pyPackage, location);
+    return elements != null ? ContainerUtil.mapNotNull(elements,
                                     new Function<PsiElement, LookupElement>() {
                                       @Override
                                       public LookupElement fun(PsiElement element) {
@@ -384,10 +400,10 @@ public class PyModuleType implements PyType { // Modules don't descend from obje
                                         }
                                         return null;
                                       }
-                                    });
+                                    }) : Collections.<LookupElement>emptyList();
   }
 
-  @NotNull
+  @Nullable
   public static List<PsiElement> collectImportedSubmodules(@NotNull PsiFileSystemItem pyPackage, @NotNull PsiElement location) {
     final PsiElement parentAnchor;
     if (pyPackage instanceof PyFile && PyUtil.isPackage(((PyFile)pyPackage))) {
@@ -397,7 +413,7 @@ public class PyModuleType implements PyType { // Modules don't descend from obje
       parentAnchor = pyPackage;
     }
     else {
-      throw new IllegalArgumentException("Package argument should be either standard Python package or namespace package");
+      return null;
     }
 
     final ScopeOwner scopeOwner = ScopeUtil.getScopeOwner(location);

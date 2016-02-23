@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ import com.intellij.openapi.project.ProjectCoreUtil;
 import com.intellij.openapi.roots.*;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Condition;
-import com.intellij.openapi.util.Conditions;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.util.text.TrigramBuilder;
@@ -46,11 +45,15 @@ import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileFilter;
 import com.intellij.openapi.vfs.VirtualFileVisitor;
-import com.intellij.psi.*;
+import com.intellij.psi.PsiBinaryFile;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiManager;
 import com.intellij.psi.impl.cache.CacheManager;
 import com.intellij.psi.impl.cache.impl.id.IdIndex;
 import com.intellij.psi.impl.search.PsiSearchHelperImpl;
 import com.intellij.psi.search.*;
+import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.usageView.UsageInfo;
 import com.intellij.usages.FindUsagesProcessPresentation;
 import com.intellij.usages.UsageLimitUtil;
@@ -64,7 +67,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
-import java.util.regex.Pattern;
 
 /**
  * @author peter
@@ -76,21 +78,22 @@ class FindInProjectTask {
   private final FindModel myFindModel;
   private final Project myProject;
   private final PsiManager myPsiManager;
-  @Nullable private final PsiDirectory myPsiDirectory;
+  @Nullable private final VirtualFile myDirectory;
   private final ProjectFileIndex myProjectFileIndex;
   private final FileIndex myFileIndex;
   private final Condition<VirtualFile> myFileMask;
   private final ProgressIndicator myProgress;
   @Nullable private final Module myModule;
   private final Set<VirtualFile> myLargeFiles = ContainerUtil.newTroveSet();
+  private final Set<VirtualFile> myFilesToScanInitially;
   private boolean myWarningShown;
+  private final String myStringToFindInIndices;
 
-  FindInProjectTask(@NotNull final FindModel findModel,
-                    @NotNull final Project project,
-                    @Nullable final PsiDirectory psiDirectory) {
+  FindInProjectTask(@NotNull final FindModel findModel, @NotNull final Project project, @NotNull Set<VirtualFile> filesToScanInitially) {
     myFindModel = findModel;
     myProject = project;
-    myPsiDirectory = psiDirectory;
+    myFilesToScanInitially = filesToScanInitially;
+    myDirectory = FindInProjectUtil.getDirectory(findModel);
     myPsiManager = PsiManager.getInstance(project);
 
     final String moduleName = findModel.getModuleName();
@@ -103,22 +106,28 @@ class FindInProjectTask {
     myProjectFileIndex = ProjectRootManager.getInstance(project).getFileIndex();
     myFileIndex = myModule == null ? myProjectFileIndex : ModuleRootManager.getInstance(myModule).getFileIndex();
 
-    final String filter = findModel.getFileFilter();
-    final Pattern pattern = FindInProjectUtil.createFileMaskRegExp(filter);
+    final Condition<String> patternCondition = FindInProjectUtil.createFileMaskCondition(findModel.getFileFilter());
 
-    //noinspection unchecked
-    myFileMask = pattern == null ? Conditions.<VirtualFile>alwaysTrue() : new Condition<VirtualFile>() {
+    myFileMask = new Condition<VirtualFile>() {
       @Override
       public boolean value(VirtualFile file) {
-        return file != null && pattern.matcher(file.getName()).matches();
+        return file != null && patternCondition.value(file.getName());
       }
     };
 
     final ProgressIndicator progress = ProgressManager.getInstance().getProgressIndicator();
     myProgress = progress != null ? progress : new EmptyProgressIndicator();
+
+    String stringToFind = myFindModel.getStringToFind();
+
+    if (myFindModel.isRegularExpressions()) {
+      stringToFind = FindInProjectUtil.buildStringToFindForIndicesFromRegExp(stringToFind, myProject);
+    }
+
+    myStringToFindInIndices = stringToFind;
   }
 
-  public void findUsages(@NotNull final Processor<UsageInfo> consumer, @NotNull FindUsagesProcessPresentation processPresentation) {
+  public void findUsages(@NotNull final Processor<UsageInfo> consumer, @NotNull final FindUsagesProcessPresentation processPresentation) {
     try {
       myProgress.setIndeterminate(true);
       myProgress.setText("Scanning indexed files...");
@@ -223,14 +232,13 @@ class FindInProjectTask {
       myProgress.setText(text);
       myProgress.setText2(FindBundle.message("find.searching.for.string.in.file.occurrences.progress", count));
 
-      PsiFile psiFile = findFile(virtualFile);
+      PsiFile psiFile = ApplicationManager.getApplication().runReadAction(new Computable<PsiFile>() {
+        @Override
+        public PsiFile compute() {
+          return findFile(virtualFile);
+        }
+      });
       if (psiFile == null) continue;
-
-      if (!(psiFile instanceof PsiBinaryFile)) {
-        PsiFile sourceFile = (PsiFile)psiFile.getNavigationElement();
-        if (sourceFile != null) psiFile = sourceFile;
-        if (psiFile.getFileType().isBinary()) continue;
-      }
 
       int countInFile = FindInProjectUtil.processUsagesInFile(psiFile, myFindModel, new Processor<UsageInfo>() {
         @Override
@@ -265,16 +273,17 @@ class FindInProjectTask {
     }
   }
 
+  // must return non-binary files
   @NotNull
   private Collection<VirtualFile> collectFilesInScope(@NotNull final Set<VirtualFile> alreadySearched, final boolean skipIndexed) {
     SearchScope customScope = myFindModel.isCustomScope() ? myFindModel.getCustomScope() : null;
-    final GlobalSearchScope globalCustomScope = toGlobal(customScope);
+    final GlobalSearchScope globalCustomScope = customScope == null ? null : toGlobal(customScope);
 
     final ProjectFileIndex fileIndex = ProjectFileIndex.SERVICE.getInstance(myProject);
-    final boolean hasTrigrams = hasTrigrams(myFindModel.getStringToFind());
+    final boolean hasTrigrams = hasTrigrams(myStringToFindInIndices);
 
     class EnumContentIterator implements ContentIterator {
-      final Set<VirtualFile> myFiles = new LinkedHashSet<VirtualFile>();
+      private final Set<VirtualFile> myFiles = new LinkedHashSet<VirtualFile>();
 
       @Override
       public boolean processFile(@NotNull final VirtualFile virtualFile) {
@@ -293,7 +302,12 @@ class FindInProjectTask {
               return;
             }
 
-            if (!alreadySearched.contains(virtualFile)) myFiles.add(virtualFile);
+            PsiFile psiFile = findFile(virtualFile);
+            VirtualFile sourceVirtualFile = PsiUtilCore.getVirtualFile(psiFile);
+
+            if (sourceVirtualFile != null && !alreadySearched.contains(sourceVirtualFile)) {
+              myFiles.add(sourceVirtualFile);
+            }
           }
 
           private final FileBasedIndexImpl fileBasedIndex = (FileBasedIndexImpl)FileBasedIndex.getInstance();
@@ -328,12 +342,13 @@ class FindInProjectTask {
         iterator.processFile(file);
       }
     }
-    else if (myPsiDirectory != null) {
+    else if (myDirectory != null) {
+      final boolean checkExcluded = !ProjectFileIndex.SERVICE.getInstance(myProject).isExcluded(myDirectory);
       VirtualFileVisitor.Option limit = VirtualFileVisitor.limit(myFindModel.isWithSubdirectories() ? -1 : 1);
-      VfsUtilCore.visitChildrenRecursively(myPsiDirectory.getVirtualFile(), new VirtualFileVisitor(limit) {
+      VfsUtilCore.visitChildrenRecursively(myDirectory, new VirtualFileVisitor(limit) {
         @Override
         public boolean visitFile(@NotNull VirtualFile file) {
-          if (myProjectFileIndex.isExcluded(file)) return false;
+          if (checkExcluded && myProjectFileIndex.isExcluded(file)) return false;
           iterator.processFile(file);
           return true;
         }
@@ -370,9 +385,9 @@ class FindInProjectTask {
     return true;
   }
 
-  @Nullable
-  private GlobalSearchScope toGlobal(@Nullable final SearchScope scope) {
-    if (scope instanceof GlobalSearchScope || scope == null) {
+  @NotNull
+  private GlobalSearchScope toGlobal(@NotNull final SearchScope scope) {
+    if (scope instanceof GlobalSearchScope) {
       return (GlobalSearchScope)scope;
     }
     return ApplicationManager.getApplication().runReadAction(new Computable<GlobalSearchScope>() {
@@ -384,26 +399,30 @@ class FindInProjectTask {
   }
 
   @NotNull
-  private static Set<VirtualFile> getLocalScopeFiles(@NotNull LocalSearchScope scope) {
-    Set<VirtualFile> files = new LinkedHashSet<VirtualFile>();
-    for (PsiElement element : scope.getScope()) {
-      PsiFile file = element.getContainingFile();
-      if (file != null) {
-        ContainerUtil.addIfNotNull(files, file.getVirtualFile());
+  private static Set<VirtualFile> getLocalScopeFiles(@NotNull final LocalSearchScope scope) {
+    return ApplicationManager.getApplication().runReadAction(new Computable<Set<VirtualFile>>() {
+      @Override
+      public Set<VirtualFile> compute() {
+        Set<VirtualFile> files = new LinkedHashSet<VirtualFile>();
+        for (PsiElement element : scope.getScope()) {
+          PsiFile file = element.getContainingFile();
+          if (file != null) {
+            ContainerUtil.addIfNotNull(files, file.getVirtualFile());
+            ContainerUtil.addIfNotNull(files, file.getNavigationElement().getContainingFile().getVirtualFile());
+          }
+        }
+        return files;
       }
-    }
-    return files;
+    });
   }
 
   private boolean canRelyOnIndices() {
     if (DumbService.isDumb(myProject)) return false;
 
-    if (myFindModel.isRegularExpressions()) return false;
-
     // a local scope may be over a non-indexed file
     if (myFindModel.getCustomScope() instanceof LocalSearchScope) return false;
 
-    String text = myFindModel.getStringToFind();
+    String text = myStringToFindInIndices;
     if (StringUtil.isEmptyOrSpaces(text)) return false;
 
     if (hasTrigrams(text)) return true;
@@ -427,14 +446,20 @@ class FindInProjectTask {
 
   @NotNull
   private Set<VirtualFile> getFilesForFastWordSearch() {
-    String stringToFind = myFindModel.getStringToFind();
+    String stringToFind = myStringToFindInIndices;
+
     if (stringToFind.isEmpty() || DumbService.getInstance(myProject).isDumb()) {
       return Collections.emptySet();
     }
 
-    GlobalSearchScope scope = toGlobal(FindInProjectUtil.getScopeFromModel(myProject, myFindModel));
-
     final Set<VirtualFile> resultFiles = new LinkedHashSet<VirtualFile>();
+    for(VirtualFile file:myFilesToScanInitially) {
+      if (myFileMask.value(file)) {
+        resultFiles.add(file);
+      }
+    }
+
+    final GlobalSearchScope scope = toGlobal(FindInProjectUtil.getScopeFromModel(myProject, myFindModel));
 
     if (TrigramIndex.ENABLED) {
       final Set<Integer> keys = ContainerUtil.newTroveSet();
@@ -448,12 +473,10 @@ class FindInProjectTask {
 
       if (!keys.isEmpty()) {
         final List<VirtualFile> hits = new ArrayList<VirtualFile>();
-        final GlobalSearchScope finalScope = scope;
         ApplicationManager.getApplication().runReadAction(new Runnable() {
           @Override
           public void run() {
-            FileBasedIndex.getInstance().getFilesWithKey(TrigramIndex.INDEX_ID, keys, new CommonProcessors.CollectProcessor<VirtualFile>(hits),
-                                                         finalScope);
+            FileBasedIndex.getInstance().getFilesWithKey(TrigramIndex.INDEX_ID, keys, new CommonProcessors.CollectProcessor<VirtualFile>(hits), scope);
           }
         });
 
@@ -492,12 +515,14 @@ class FindInProjectTask {
   }
 
   private PsiFile findFile(@NotNull final VirtualFile virtualFile) {
-    return ApplicationManager.getApplication().runReadAction(new Computable<PsiFile>() {
-      @Override
-      public PsiFile compute() {
-        return myPsiManager.findFile(virtualFile);
+    PsiFile psiFile = myPsiManager.findFile(virtualFile);
+    if (psiFile != null && !(psiFile instanceof PsiBinaryFile)) {
+      PsiFile sourceFile = (PsiFile)psiFile.getNavigationElement();
+      if (sourceFile != null) psiFile = sourceFile;
+      if (psiFile.getFileType().isBinary()) {
+        psiFile = null;
       }
-    });
+    }
+    return psiFile;
   }
-
 }

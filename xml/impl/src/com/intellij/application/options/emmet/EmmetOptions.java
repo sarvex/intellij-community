@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,10 @@ package com.intellij.application.options.emmet;
 
 import com.intellij.codeInsight.template.emmet.filters.ZenCodingFilter;
 import com.intellij.codeInsight.template.impl.TemplateSettings;
-import com.intellij.openapi.components.*;
+import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.ServiceManager;
+import com.intellij.openapi.components.State;
+import com.intellij.openapi.components.Storage;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.xmlb.XmlSerializerUtil;
 import org.jetbrains.annotations.NotNull;
@@ -27,7 +30,7 @@ import java.util.Set;
 
 @State(
   name = "EmmetOptions",
-  storages = @Storage(file = StoragePathMacros.APP_CONFIG + "/emmet.xml")
+  storages = @Storage("emmet.xml")
 )
 public class EmmetOptions implements PersistentStateComponent<EmmetOptions> {
   private boolean myEmmetEnabled = true;
@@ -35,6 +38,7 @@ public class EmmetOptions implements PersistentStateComponent<EmmetOptions> {
   private boolean myPreviewEnabled = false;
   private Set<String> myFiltersEnabledByDefault = ContainerUtil.newHashSet();
   private boolean myHrefAutoDetectEnabled = true;
+  private boolean myAddEditPointAtTheEndOfTemplate = false;
 
   @NotNull
   public Set<String> getFiltersEnabledByDefault() {
@@ -79,6 +83,14 @@ public class EmmetOptions implements PersistentStateComponent<EmmetOptions> {
 
   public boolean isHrefAutoDetectEnabled() {
     return myHrefAutoDetectEnabled;
+  }
+
+  public boolean isAddEditPointAtTheEndOfTemplate() {
+    return myAddEditPointAtTheEndOfTemplate;
+  }
+
+  public void setAddEditPointAtTheEndOfTemplate(boolean addEditPointAtTheEndOfTemplate) {
+    myAddEditPointAtTheEndOfTemplate = addEditPointAtTheEndOfTemplate;
   }
 
   @Nullable

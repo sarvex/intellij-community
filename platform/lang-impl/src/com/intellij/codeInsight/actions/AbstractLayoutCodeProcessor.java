@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import com.intellij.lang.LanguageFormatting;
 import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.application.ApplicationBundle;
-import com.intellij.openapi.application.ApplicationBundle;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.command.CommandProcessor;
@@ -34,15 +33,14 @@ import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.util.ProgressWindow;
-import com.intellij.openapi.project.IndexNotReadyException;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.project.ProjectCoreUtil;
-import com.intellij.openapi.project.ProjectUtil;
+import com.intellij.openapi.project.*;
 import com.intellij.openapi.roots.GeneratedSourcesFilter;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.ui.ex.MessagesEx;
+import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileFilter;
 import com.intellij.psi.PsiBundle;
 import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiDocumentManager;
@@ -60,6 +58,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 
@@ -80,7 +79,7 @@ public abstract class AbstractLayoutCodeProcessor {
   private boolean myProcessChangedTextOnly;
 
   protected AbstractLayoutCodeProcessor myPreviousCodeProcessor;
-  private List<FileFilter> myFilters = ContainerUtil.newArrayList();
+  private List<VirtualFileFilter> myFilters = ContainerUtil.newArrayList();
 
   private LayoutCodeInfoCollector myInfoCollector;
 
@@ -201,7 +200,7 @@ public abstract class AbstractLayoutCodeProcessor {
     }
   }
 
-  public void addFileFilter(@NotNull FileFilter filter) {
+  public void addFileFilter(@NotNull VirtualFileFilter filter) {
     myFilters.add(filter);
   }
 
@@ -322,13 +321,14 @@ public abstract class AbstractLayoutCodeProcessor {
       return;
     }
 
-    final Runnable[] resultRunnable = new Runnable[1];
+    final Ref<FutureTask<Boolean>> writeActionRunnable = new Ref<FutureTask<Boolean>>();
     Runnable readAction = new Runnable() {
       @Override
       public void run() {
         if (!checkFileWritable(file)) return;
         try{
-          resultRunnable[0] = preprocessFile(file, myProcessChangedTextOnly);
+          FutureTask<Boolean> writeTask = preprocessFile(file, myProcessChangedTextOnly);
+          writeActionRunnable.set(writeTask);
         }
         catch(IncorrectOperationException e){
           LOG.error(e);
@@ -338,8 +338,16 @@ public abstract class AbstractLayoutCodeProcessor {
     Runnable writeAction = new Runnable() {
       @Override
       public void run() {
-        if (resultRunnable[0] != null) {
-          resultRunnable[0].run();
+        if (writeActionRunnable.isNull()) return;
+        FutureTask<Boolean> task = writeActionRunnable.get();
+        task.run();
+        try {
+          task.get();
+        }
+        catch (CancellationException ignored) {
+        }
+        catch (Exception e) {
+          LOG.error(e);
         }
       }
     };
@@ -404,12 +412,7 @@ public abstract class AbstractLayoutCodeProcessor {
 
     if (ProjectCoreUtil.isProjectOrWorkspaceFile(virtualFile)) return false;
 
-    for (GeneratedSourcesFilter filter : GeneratedSourcesFilter.EP_NAME.getExtensions()) {
-      if (filter.isGeneratedSource(virtualFile, file.getProject())) {
-        return false;
-      }
-    }
-    return true;
+    return !GeneratedSourcesFilter.isGeneratedSourceByAnyFilter(virtualFile, file.getProject());
   }
 
   private void runLayoutCodeProcess(final Runnable readAction, final Runnable writeAction, final boolean globalAction) {
@@ -539,7 +542,12 @@ public abstract class AbstractLayoutCodeProcessor {
           ApplicationManager.getApplication().runWriteAction(new Runnable() {
             @Override
             public void run() {
-              performFileProcessing(file);
+              DumbService.getInstance(myProject).withAlternativeResolveEnabled(new Runnable() {
+                @Override
+                public void run() {
+                  performFileProcessing(file);
+                }
+              });
             }
           });
         }
@@ -600,7 +608,7 @@ public abstract class AbstractLayoutCodeProcessor {
       return false;
     }
 
-    for (FileFilter filter : myFilters) {
+    for (VirtualFileFilter filter : myFilters) {
       if (!filter.accept(file.getVirtualFile())) {
         return false;
       }
@@ -615,14 +623,6 @@ public abstract class AbstractLayoutCodeProcessor {
       TextRange range = TextRange.create(selectionModel.getSelectionStart(), selectionModel.getSelectionEnd());
       ranges.add(range);
     }
-    else if (selectionModel.hasBlockSelection()) {
-      int[] starts = selectionModel.getBlockSelectionStarts();
-      int[] ends = selectionModel.getBlockSelectionEnds();
-      for (int i = 0; i < starts.length; i++) {
-        ranges.add(TextRange.create(starts[i], ends[i]));
-      }
-    }
-
     return ranges;
   }
 

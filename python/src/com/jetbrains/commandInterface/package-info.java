@@ -33,12 +33,12 @@
  *     <li>{@link com.jetbrains.commandInterface.command}  contains classes to describe commands, arguments and options.
  *     It is up to you where to obtain list of available commands, but you should implement {@link com.jetbrains.commandInterface.command.Command}
  *     first, and create list of it with arguments and options. See package info for more details</li>
- *     <li>{@link com.jetbrains.commandInterface.gnuCommandLine} is language based on
+ *     <li>{@link com.jetbrains.commandInterface.commandLine} is language based on
  *     <a href="http://www.gnu.org/software/libc/manual/html_node/Argument-Syntax.html">GNU</a> command line representation.
  *     It has PSI, so it parses command lines into tree of PsiElements. But this package <strong>is not only for parsing</strong>:
  *     If you provide list of
- *     {@link com.jetbrains.commandInterface.command.Command commands} to {@link com.jetbrains.commandInterface.gnuCommandLine.psi.CommandLineFile}
- *      (see {@link com.jetbrains.commandInterface.gnuCommandLine.psi.CommandLineFile#setCommands(java.util.List)}), it will inject references
+ *     {@link com.jetbrains.commandInterface.command.Command commands} to {@link com.jetbrains.commandInterface.commandLine.psi.CommandLineFile}
+ *      (see {@link com.jetbrains.commandInterface.commandLine.psi.CommandLineFile#setCommandsAndDefaultExecutor(java.util.List, com.jetbrains.commandInterface.command.CommandExecutor)}}), it will inject references
  *      (to provide autocompletion) and activate inspection to validate options and arguments. </li>
  *      <li>{@link com.jetbrains.commandInterface.console} displays console-like interface at the bottom of the screen to give user
  *      ability to wotk with your command-line.</li>
@@ -48,7 +48,7 @@
  *   <ol>
  *     <li>Implement {@link com.jetbrains.commandInterface.command.Command}</li>
  *     <li>Create list of {@link com.jetbrains.commandInterface.command.Command commands}</li>
- *     <li>Provide it to {@link com.jetbrains.commandInterface.console.CommandLineConsole#createConsole(com.intellij.openapi.module.Module, java.lang.String, java.util.List)}</li>
+ *     <li>Provide it to {@link com.jetbrains.commandInterface.console.CommandLineConsoleApi#createConsole(com.intellij.openapi.module.Module, java.lang.String, java.util.List)}</li>
  *   </ol>
  * @author Ilya.Kazakevich
  */

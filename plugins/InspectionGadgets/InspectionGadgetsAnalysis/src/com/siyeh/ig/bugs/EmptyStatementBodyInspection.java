@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2013 Dave Griffith, Bas Leijdekkers
+ * Copyright 2003-2015 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,11 @@ package com.siyeh.ig.bugs;
 import com.intellij.codeInspection.ui.MultipleCheckboxOptionsPanel;
 import com.intellij.openapi.util.WriteExternalException;
 import com.intellij.psi.*;
+import com.intellij.psi.util.FileTypeUtils;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.siyeh.InspectionGadgetsBundle;
 import com.siyeh.ig.BaseInspection;
 import com.siyeh.ig.BaseInspectionVisitor;
-import com.intellij.psi.util.FileTypeUtils;
 import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 
@@ -75,6 +76,11 @@ public class EmptyStatementBodyInspection extends BaseInspection {
   }
 
   @Override
+  public boolean shouldInspect(PsiFile file) {
+    return !FileTypeUtils.isInServerPageFile(file);
+  }
+
+  @Override
   public BaseInspectionVisitor buildVisitor() {
     return new EmptyStatementVisitor();
   }
@@ -106,9 +112,6 @@ public class EmptyStatementBodyInspection extends BaseInspection {
     }
 
     private void checkLoopStatement(PsiLoopStatement statement) {
-      if (FileTypeUtils.isInServerPageFile(statement)) {
-        return;
-      }
       final PsiStatement body = statement.getBody();
       if (body == null || !isEmpty(body)) {
         return;
@@ -119,9 +122,6 @@ public class EmptyStatementBodyInspection extends BaseInspection {
     @Override
     public void visitIfStatement(@NotNull PsiIfStatement statement) {
       super.visitIfStatement(statement);
-      if (FileTypeUtils.isInServerPageFile(statement)) {
-        return;
-      }
       final PsiStatement thenBranch = statement.getThenBranch();
       if (thenBranch != null && isEmpty(thenBranch)) {
         registerStatementError(statement);
@@ -140,9 +140,6 @@ public class EmptyStatementBodyInspection extends BaseInspection {
     @Override
     public void visitSwitchStatement(PsiSwitchStatement statement) {
       super.visitSwitchStatement(statement);
-      if (FileTypeUtils.isInServerPageFile(statement)) {
-        return;
-      }
       final PsiCodeBlock body = statement.getBody();
       if (body == null || !isEmpty(body)) {
         return;
@@ -153,16 +150,11 @@ public class EmptyStatementBodyInspection extends BaseInspection {
     private boolean isEmpty(PsiElement element) {
       if (!commentsAreContent && element instanceof PsiComment) {
         return true;
-      } else if (element instanceof PsiEmptyStatement) {
-        if (commentsAreContent) {
-          final PsiElement[] children = element.getChildren();
-          for (PsiElement child : children) {
-            if (child instanceof PsiComment) {
-              return false;
-            }
-          }
-        }
-        return true;
+      }
+      else if (element instanceof PsiEmptyStatement) {
+        return !commentsAreContent ||
+               PsiTreeUtil.getChildOfType(element, PsiComment.class) == null &&
+               !(PsiTreeUtil.skipSiblingsBackward(element, PsiWhiteSpace.class) instanceof PsiComment);
       }
       else if (element instanceof PsiWhiteSpace) {
         return true;

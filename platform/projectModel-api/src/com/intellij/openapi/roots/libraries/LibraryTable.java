@@ -49,15 +49,22 @@ public interface LibraryTable {
 
   boolean isEditable();
 
+  /**
+   * Returns the interface which allows to create or removed libraries from the table.
+   * <strong>The returned model must be either committed {@link ModifiableModel#commit()} or disposed {@link com.intellij.openapi.util.Disposer#dispose(Disposable)}</strong>
+   *
+   * @return the modifiable library table model.
+   */
+  @NotNull
   ModifiableModel getModifiableModel();
 
-  void addListener(Listener listener);
+  void addListener(@NotNull Listener listener);
   
-  void addListener(Listener listener, Disposable parentDisposable);
+  void addListener(@NotNull Listener listener, @NotNull Disposable parentDisposable);
 
-  void removeListener(Listener listener);
+  void removeListener(@NotNull Listener listener);
 
-  interface ModifiableModel {
+  interface ModifiableModel extends Disposable {
     Library createLibrary(String name);
 
     Library createLibrary(String name, @Nullable PersistentLibraryKind type);

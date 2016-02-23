@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -130,7 +130,7 @@ public class AppEngineUploader {
 
         final PsiFile file = application.getXmlTag().getContainingFile();
         new WriteCommandAction(project, file) {
-          protected void run(final Result result) {
+          protected void run(@NotNull final Result result) {
             application.setStringValue(name);
           }
         }.execute();
@@ -184,9 +184,8 @@ public class AppEngineUploader {
   }
 
   private void startUploadingProcess() {
-    final Process process;
-    final GeneralCommandLine commandLine;
 
+    final ProcessHandler processHandler;
     try {
       JavaParameters parameters = new JavaParameters();
       parameters.configureByModule(myAppEngineFacet.getModule(), JavaParameters.JDK_ONLY);
@@ -208,20 +207,19 @@ public class AppEngineUploader {
       else {
         programParameters.add("--email=" + myAuthData.getEmail());
         programParameters.add("--passin");
+        programParameters.add("--no_cookies");
       }
-      programParameters.add("--no_cookies");
       programParameters.add("update");
       programParameters.add(FileUtil.toSystemDependentName(myArtifact.getOutputPath()));
 
-      commandLine = CommandLineBuilder.createFromJavaParameters(parameters);
-      process = commandLine.createProcess();
+      final GeneralCommandLine commandLine = CommandLineBuilder.createFromJavaParameters(parameters);
+      processHandler = new OSProcessHandler(commandLine);
     }
     catch (ExecutionException e) {
       myCallback.errorOccurred("Cannot start uploading: " + e.getMessage());
       return;
     }
 
-    final ProcessHandler processHandler = new OSProcessHandler(process, commandLine.getCommandLineString());
     processHandler.addProcessListener(new MyProcessListener(processHandler, null, myLoggingHandler));
     myLoggingHandler.attachToProcess(processHandler);
     processHandler.startNotify();

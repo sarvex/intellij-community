@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2014 Dave Griffith, Bas Leijdekkers
+ * Copyright 2006-2015 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,12 @@ package com.siyeh.ig.security;
 import com.intellij.codeInspection.ProblemDescriptor;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
+import com.intellij.psi.util.FileTypeUtils;
 import com.siyeh.InspectionGadgetsBundle;
 import com.siyeh.ig.BaseInspection;
 import com.siyeh.ig.BaseInspectionVisitor;
-import com.intellij.psi.util.FileTypeUtils;
 import com.siyeh.ig.InspectionGadgetsFix;
+import com.siyeh.ig.psiutils.ControlFlowUtils;
 import com.siyeh.ig.psiutils.MethodUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -55,7 +56,7 @@ public class DesignForExtensionInspection extends BaseInspection {
 
   private static class MakeMethodFinalFix extends InspectionGadgetsFix {
 
-    private String myMethodName;
+    private final String myMethodName;
 
     public MakeMethodFinalFix(String methodName) {
       myMethodName = methodName;
@@ -86,6 +87,11 @@ public class DesignForExtensionInspection extends BaseInspection {
   }
 
   @Override
+  public boolean shouldInspect(PsiFile file) {
+    return !FileTypeUtils.isInServerPageFile(file); // IDEADEV-25538
+  }
+
+  @Override
   public BaseInspectionVisitor buildVisitor() {
     return new DesignForExtensionVisitor();
   }
@@ -94,10 +100,6 @@ public class DesignForExtensionInspection extends BaseInspection {
 
     @Override
     public void visitMethod(PsiMethod method) {
-      if (FileTypeUtils.isInServerPageFile(method)) {
-        // IDEADEV-25538
-        return;
-      }
       super.visitMethod(method);
       if (method.isConstructor()) {
         return;
@@ -122,11 +124,7 @@ public class DesignForExtensionInspection extends BaseInspection {
         return;
       }
       final PsiCodeBlock body = method.getBody();
-      if (body == null) {
-        return;
-      }
-      final PsiStatement[] statements = body.getStatements();
-      if (statements.length == 0) {
+      if (ControlFlowUtils.isEmptyCodeBlock(body)) {
         return;
       }
       registerMethodError(method, method);

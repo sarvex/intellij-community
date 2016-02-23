@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.Processor;
-import com.intellij.util.io.fs.IFile;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -49,20 +48,8 @@ public class MockLocalFileSystem extends LocalFileSystem {
 
   @Override
   @Nullable
-  public VirtualFile findFileByIoFile(@NotNull final IFile file) {
-    return myDelegate.findFileByPath(FileUtil.toSystemIndependentName(file.getPath()));
-  }
-
-  @Override
-  @Nullable
   public VirtualFile refreshAndFindFileByIoFile(@NotNull final File file) {
     return findFileByIoFile(file);
-  }
-
-  @Override
-  @Nullable
-  public VirtualFile refreshAndFindFileByIoFile(@NotNull final IFile ioFile) {
-    return findFileByIoFile(ioFile);
   }
 
   @Override
@@ -92,6 +79,7 @@ public class MockLocalFileSystem extends LocalFileSystem {
     throw new UnsupportedOperationException("Not implemented in " + getClass().getName());
   }
 
+  @NotNull
   @Override
   public Set<WatchRequest> replaceWatchedRoots(@NotNull Collection<WatchRequest> watchRequests,
                                                @Nullable Collection<String> recursiveRoots,

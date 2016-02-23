@@ -23,7 +23,7 @@ import com.jetbrains.python.PyTokenTypes;
 import com.jetbrains.python.codeInsight.editorActions.smartEnter.PySmartEnterProcessor;
 import com.jetbrains.python.psi.PyArgumentList;
 import com.jetbrains.python.psi.PyClass;
-import com.jetbrains.python.psi.PyUtil;
+import com.jetbrains.python.psi.impl.PyPsiUtils;
 import org.jetbrains.annotations.NotNull;
 
 import static com.jetbrains.python.psi.PyUtil.sure;
@@ -40,16 +40,20 @@ public class PyClassFixer extends PyFixer<PyClass> {
   }
 
   public void doApply(@NotNull Editor editor, @NotNull PySmartEnterProcessor processor, @NotNull PyClass pyClass) throws IncorrectOperationException {
-    final PsiElement colon = PyUtil.getFirstChildOfType(pyClass, PyTokenTypes.COLON);
+    final PsiElement colon = PyPsiUtils.getFirstChildOfType(pyClass, PyTokenTypes.COLON);
     if (colon == null) {
       final PyArgumentList argList = PsiTreeUtil.getChildOfType(pyClass, PyArgumentList.class);
-      final int offset = sure(argList).getTextRange().getEndOffset();
+      final int colonOffset = sure(argList).getTextRange().getEndOffset();
       String textToInsert = ":";
       if (pyClass.getNameNode() == null) {
-        processor.registerUnresolvedError(argList.getTextRange().getEndOffset() + 1);
-        textToInsert = " :";
+        int newCaretOffset = argList.getTextOffset();
+        if (argList.getTextLength() == 0) {
+          newCaretOffset += 1;
+          textToInsert = " :";
+        }
+        processor.registerUnresolvedError(newCaretOffset);
       }
-      editor.getDocument().insertString(offset, textToInsert);
+      editor.getDocument().insertString(colonOffset, textToInsert);
     }
   }
 }

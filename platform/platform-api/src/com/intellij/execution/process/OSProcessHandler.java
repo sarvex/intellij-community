@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,8 @@ package com.intellij.execution.process;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.execution.configurations.PtyCommandLine;
-import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.openapi.vfs.encoding.EncodingManager;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -31,40 +29,39 @@ import java.util.concurrent.Future;
 
 public class OSProcessHandler extends BaseOSProcessHandler {
   private static final Logger LOG = Logger.getInstance("#com.intellij.execution.process.OSProcessHandler");
-  private boolean myHasPty = false;
 
+  private boolean myHasPty;
   private boolean myDestroyRecursively = true;
 
   public OSProcessHandler(@NotNull GeneralCommandLine commandLine) throws ExecutionException {
-    this(commandLine.createProcess(), commandLine.getCommandLineString(), CharsetToolkit.UTF8_CHARSET);
+    this(commandLine.createProcess(), commandLine.getCommandLineString(), commandLine.getCharset());
     setHasPty(commandLine instanceof PtyCommandLine);
   }
 
-  public OSProcessHandler(@NotNull final Process process) {
+  /** @deprecated use {@link #OSProcessHandler(Process, String)} or any other ctor (to be removed in IDEA 17) */
+  @Deprecated
+  public OSProcessHandler(@NotNull Process process) {
     this(process, null);
   }
 
-  public OSProcessHandler(@NotNull final Process process, @Nullable final String commandLine) {
+  /**
+   * {@code commandLine} must not be not empty (for correct thread attribution in the stacktrace)
+   */
+  public OSProcessHandler(@NotNull Process process, /*@NotNull*/ String commandLine) {
     this(process, commandLine, EncodingManager.getInstance().getDefaultCharset());
   }
 
-  public OSProcessHandler(@NotNull final Process process, @Nullable final String commandLine, @Nullable final Charset charset) {
+  /**
+   * {@code commandLine} must not be not empty (for correct thread attribution in the stacktrace)
+   */
+  public OSProcessHandler(@NotNull Process process, /*@NotNull*/ String commandLine, @Nullable Charset charset) {
     super(process, commandLine, charset);
   }
 
-  protected OSProcessHandler(@NotNull final OSProcessHandler base) {
-    this(base.myProcess, base.myCommandLine);
-  }
-
+  @NotNull
   @Override
-  protected Future<?> executeOnPooledThread(Runnable task) {
-    final Application application = ApplicationManager.getApplication();
-
-    if (application != null) {
-      return application.executeOnPooledThread(task);
-    }
-
-    return super.executeOnPooledThread(task);
+  protected Future<?> executeOnPooledThread(@NotNull Runnable task) {
+    return super.executeOnPooledThread(task);  // to maintain binary compatibility?
   }
 
   protected boolean shouldDestroyProcessRecursively() {
@@ -95,19 +92,47 @@ public class OSProcessHandler extends BaseOSProcessHandler {
   }
 
   /**
-   * Kill the whole process tree.
+   * Kills the whole process tree asynchronously.
+   * As a potentially time-consuming operation, it's executed asynchronously on a pooled thread.
    *
    * @param process Process
-   * @return True if process tree has been successfully killed.
    */
-  protected boolean killProcessTree(@NotNull Process process) {
+  protected void killProcessTree(@NotNull final Process process) {
+    if (ApplicationManager.getApplication().isUnitTestMode()) {
+      killProcessTreeSync(process);
+    }
+    else {
+      executeOnPooledThread(new Runnable() {
+        @Override
+        public void run() {
+          killProcessTreeSync(process);
+        }
+      });
+    }
+  }
+
+  private void killProcessTreeSync(@NotNull Process process) {
     LOG.debug("killing process tree");
     final boolean destroyed = OSProcessManager.getInstance().killProcessTree(process);
     if (!destroyed) {
-      LOG.warn("Cannot kill process tree. Trying to destroy process using Java API. Cmdline:\n" + myCommandLine);
-      process.destroy();
+      if (isTerminated(process)) {
+        LOG.warn("Process has been already terminated: " + myCommandLine);
+      }
+      else {
+        LOG.warn("Cannot kill process tree. Trying to destroy process using Java API. Cmdline:\n" + myCommandLine);
+        process.destroy();
+      }
     }
-    return destroyed;
+  }
+
+  private static boolean isTerminated(@NotNull Process process) {
+    try {
+      process.exitValue();
+      return true;
+    }
+    catch (IllegalThreadStateException e) {
+      return false;
+    }
   }
 
   /**

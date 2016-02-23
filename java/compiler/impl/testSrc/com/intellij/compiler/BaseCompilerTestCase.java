@@ -1,3 +1,18 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.compiler;
 
 import com.intellij.ProjectTopics;
@@ -23,18 +38,16 @@ import com.intellij.openapi.vfs.newvfs.NewVirtualFile;
 import com.intellij.packaging.artifacts.Artifact;
 import com.intellij.packaging.artifacts.ArtifactManager;
 import com.intellij.packaging.impl.compiler.ArtifactCompileScope;
-import com.intellij.testFramework.ModuleTestCase;
-import com.intellij.testFramework.PlatformTestCase;
-import com.intellij.testFramework.PsiTestUtil;
-import com.intellij.testFramework.VfsTestUtil;
+import com.intellij.testFramework.*;
 import com.intellij.util.ParameterizedRunnable;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.io.TestFileSystemBuilder;
 import com.intellij.util.ui.UIUtil;
 import gnu.trove.THashSet;
-import junit.framework.Assert;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.jps.util.JpsPathUtil;
+import org.junit.Assert;
 
 import javax.swing.*;
 import java.io.File;
@@ -74,15 +87,18 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
 
   @Override
   protected void tearDown() throws Exception {
-    for (Artifact artifact : getArtifactManager().getArtifacts()) {
-      final String outputPath = artifact.getOutputPath();
-      if (!StringUtil.isEmpty(outputPath)) {
-        FileUtil.delete(new File(FileUtil.toSystemDependentName(outputPath)));
+    try {
+      for (Artifact artifact : getArtifactManager().getArtifacts()) {
+        final String outputPath = artifact.getOutputPath();
+        if (!StringUtil.isEmpty(outputPath)) {
+          FileUtil.delete(new File(FileUtil.toSystemDependentName(outputPath)));
+        }
       }
+      CompilerTestUtil.disableExternalCompiler(getProject());
     }
-    CompilerTestUtil.disableExternalCompiler(getProject());
-
-    super.tearDown();
+    finally {
+      super.tearDown();
+    }
   }
 
   protected ArtifactManager getArtifactManager() {
@@ -109,7 +125,8 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
       throw new RuntimeException(e);
     }
     new WriteAction() {
-      protected void run(final Result result) {
+      @Override
+      protected void run(@NotNull final Result result) {
         VirtualFile virtualDir = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(target);
         assertNotNull(target.getAbsolutePath() + " not found", virtualDir);
         virtualDir.refresh(false, true);
@@ -124,7 +141,7 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
   protected Module addModule(final String moduleName, final @Nullable VirtualFile sourceRoot, final @Nullable VirtualFile testRoot) {
     return new WriteAction<Module>() {
       @Override
-      protected void run(final Result<Module> result) {
+      protected void run(@NotNull final Result<Module> result) {
         final Module module = createModule(moduleName);
         if (sourceRoot != null) {
           PsiTestUtil.addSourceContentToRoots(module, sourceRoot, false);
@@ -263,7 +280,7 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
             }
           }
         };
-        myProject.save();
+        PlatformTestUtil.saveProject(myProject);
         CompilerTestUtil.saveApplicationSettings();
         action.run(callback);
       }
@@ -271,7 +288,7 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
 
     final long start = System.currentTimeMillis();
     while (!semaphore.waitFor(10)) {
-      if (System.currentTimeMillis() - start > 60 * 1000) {
+      if (System.currentTimeMillis() - start > 5 * 60 * 1000) {
         throw new RuntimeException("timeout");
       }
       if (SwingUtilities.isEventDispatchThread()) {
@@ -283,15 +300,6 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
     }
 
     return result.get();
-  }
-
-  private Set<String> getRelativePaths(String[] paths) {
-    final Set<String> set = new THashSet<String>();
-    final String basePath = myProject.getBaseDir().getPath();
-    for (String path : paths) {
-      set.add(StringUtil.trimStart(StringUtil.trimStart(FileUtil.toSystemIndependentName(path), basePath), "/"));
-    }
-    return set;
   }
 
   protected void changeFile(VirtualFile file) {
@@ -313,7 +321,7 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
   protected void deleteFile(final VirtualFile file) {
     new WriteAction() {
       @Override
-      protected void run(final Result result) {
+      protected void run(@NotNull final Result result) {
         try {
           file.delete(this);
         }
@@ -347,7 +355,7 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
     PlatformTestCase.myFilesToDelete.add(moduleFile);
     return new WriteAction<Module>() {
       @Override
-      protected void run(Result<Module> result) throws Throwable {
+      protected void run(@NotNull Result<Module> result) throws Throwable {
         Module module = ModuleManager.getInstance(myProject)
           .newModule(FileUtil.toSystemIndependentName(moduleFile.getAbsolutePath()), getModuleType().getId());
         module.getModuleFile();
@@ -356,10 +364,6 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
     }.execute().getResultObject();
   }
 
-  @Override
-  protected boolean isRunInWriteAction() {
-    return false;
-  }
 
   protected static void assertOutput(Module module, TestFileSystemBuilder item) {
     assertOutput(module, item, false);
@@ -408,7 +412,7 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
     }
   }
 
-  protected class CompilationLog {
+  protected static class CompilationLog {
     private final Set<String> myGeneratedPaths;
     private final boolean myExternalBuildUpToDate;
     private final CompilerMessage[] myErrors;
@@ -438,7 +442,7 @@ public abstract class BaseCompilerTestCase extends ModuleTestCase {
       return myWarnings;
     }
 
-    private void assertSet(String name, Set<String> actual, String[] expected) {
+    private static void assertSet(String name, Set<String> actual, String[] expected) {
       for (String path : expected) {
         if (!actual.remove(path)) {
           Assert.fail("'" + path + "' is not " + name + ". " + name + ": " + new HashSet<String>(actual));

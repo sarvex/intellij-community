@@ -1,7 +1,24 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.jetbrains.idea.svn.commandLine;
 
 import com.intellij.openapi.application.PathManager;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.util.ObjectUtils;
 import com.intellij.util.text.DateFormatUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -22,6 +39,8 @@ import java.util.List;
  * @author Konstantin Kolosovsky.
  */
 public class CommandUtil {
+
+  private static final Logger LOG = Logger.getInstance(CommandUtil.class);
 
   /**
    * Puts given value to parameters if condition is satisfied
@@ -53,6 +72,11 @@ public class CommandUtil {
   }
 
   public static void put(@NotNull List<String> parameters, @NotNull String path, @Nullable SVNRevision pegRevision) {
+    parameters.add(format(path, pegRevision));
+  }
+
+  @NotNull
+  public static String format(@NotNull String path, @Nullable SVNRevision pegRevision) {
     StringBuilder builder = new StringBuilder(path);
 
     boolean hasAtSymbol = path.contains("@");
@@ -69,7 +93,7 @@ public class CommandUtil {
       builder.append(format(pegRevision));
     }
 
-    parameters.add(builder.toString());
+    return builder.toString();
   }
 
   public static void put(@NotNull List<String> parameters, @NotNull SvnTarget target) {
@@ -81,12 +105,6 @@ public class CommandUtil {
       put(parameters, target);
     } else {
       parameters.add(target.getPathOrUrlString());
-    }
-  }
-
-  public static void put(@NotNull List<String> parameters, @NotNull File... paths) {
-    for (File path : paths) {
-      put(parameters, path);
     }
   }
 
@@ -120,7 +138,7 @@ public class CommandUtil {
 
   @NotNull
   public static String format(@NotNull SVNRevision revision) {
-    return revision.getDate() != null ? "{" + DateFormatUtil.ISO8601_DATE_FORMAT.format(revision.getDate()) + "}" : revision.toString();
+    return revision.getDate() != null ? "{" + DateFormatUtil.getIso8601Format().format(revision.getDate()) + "}" : revision.toString();
   }
 
   public static void put(@NotNull List<String> parameters, @Nullable DiffOptions diffOptions) {
@@ -209,11 +227,23 @@ public class CommandUtil {
     return contentsStatus;
   }
 
-  public static File correctUpToExistingParent(File base) {
-    while (base != null) {
-      if (base.exists() && base.isDirectory()) return base;
-      base = base.getParentFile();
+  @Nullable
+  public static File findExistingParent(@Nullable File file) {
+    while (file != null) {
+      if (file.exists() && file.isDirectory()) return file;
+      file = file.getParentFile();
     }
     return null;
+  }
+
+  @NotNull
+  public static File requireExistingParent(@NotNull File file) {
+    File result = findExistingParent(file);
+
+    if (result == null) {
+      LOG.error("Existing parent not found for " + file.getAbsolutePath());
+    }
+
+    return ObjectUtils.assertNotNull(result);
   }
 }

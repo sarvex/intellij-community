@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,14 +19,12 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.util.Comparing;
-import com.intellij.openapi.util.Pair;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.ColoredTextContainer;
 import com.intellij.ui.SimpleTextAttributes;
-import com.intellij.util.NotNullFunction;
 import com.intellij.util.ThreeState;
+import com.intellij.util.ui.tree.TreeUtil;
 import com.intellij.xdebugger.XDebugSession;
 import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.frame.*;
@@ -38,6 +36,7 @@ import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import com.intellij.xdebugger.impl.ui.XDebuggerUIConstants;
 import com.intellij.xdebugger.impl.ui.tree.ValueMarkup;
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree;
+import com.intellij.xdebugger.settings.XDebuggerSettingsManager;
 import gnu.trove.TObjectLongHashMap;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -46,20 +45,12 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.awt.event.MouseEvent;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * @author nik
  */
 public class XValueNodeImpl extends XValueContainerNode<XValue> implements XValueNode, XCompositeNode, XValueNodePresentationConfigurator.ConfigurableXValueNode, RestorableStateNode {
-  public static final Comparator<XValueNodeImpl> COMPARATOR = new Comparator<XValueNodeImpl>() {
-    @Override
-    public int compare(XValueNodeImpl o1, XValueNodeImpl o2) {
-      return StringUtil.naturalCompare(o1.getName(), o2.getName());
-    }
-  };
+  public static final Comparator<XValueNodeImpl> COMPARATOR = (o1, o2) -> StringUtil.naturalCompare(o1.getName(), o2.getName());
 
   private static final int MAX_NAME_LENGTH = 100;
 
@@ -99,35 +90,22 @@ public class XValueNodeImpl extends XValueContainerNode<XValue> implements XValu
   }
 
   @Override
-  public void setPresentation(@Nullable Icon icon,
-                              @NonNls @Nullable String type,
-                              @NonNls @NotNull String value,
-                              @Nullable NotNullFunction<String, String> valuePresenter,
-                              boolean hasChildren) {
-    XValueNodePresentationConfigurator.setPresentation(icon, type, value, valuePresenter, hasChildren, this);
-  }
-
-  @Override
   public void setPresentation(@Nullable Icon icon, @NotNull XValuePresentation presentation, boolean hasChildren) {
     XValueNodePresentationConfigurator.setPresentation(icon, presentation, hasChildren, this);
   }
 
   @Override
-  public void setPresentation(@Nullable Icon icon,
-                              @NonNls @Nullable String type,
-                              @NonNls @NotNull String separator,
-                              @NonNls @NotNull String value,
-                              final @Nullable NotNullFunction<String, String> valuePresenter,
-                              boolean hasChildren) {
-    XValueNodePresentationConfigurator.setPresentation(icon, type, separator, valuePresenter, hasChildren, this);
-  }
-
-  @Override
   public void applyPresentation(@Nullable Icon icon, @NotNull XValuePresentation valuePresentation, boolean hasChildren) {
+    // extra check for obsolete nodes - tree root was changed
+    // too dangerous to put this into isObsolete - it is called from anywhere, not only EDT
+    if (isObsolete()) return;
+    XDebuggerTreeNode root = getTree().getRoot();
+    if (root != null && !TreeUtil.isAncestor(root, this)) return;
+
     setIcon(icon);
     myValuePresentation = valuePresentation;
     myRawValue = XValuePresentationUtil.computeValueText(valuePresentation);
-    if (Registry.is("ide.debugger.inline")) {
+    if (XDebuggerSettingsManager.getInstance().getDataViewSettings().isShowValuesInline()) {
       updateInlineDebuggerData();
     }
     updateText();
@@ -146,44 +124,31 @@ public class XValueNodeImpl extends XValueContainerNode<XValue> implements XValu
 
       final XInlineDebuggerDataCallback callback = new XInlineDebuggerDataCallback() {
         @Override
-        public void computed(@NotNull VirtualFile file, @NotNull Document document, int line) {
-          final Map<Pair<VirtualFile, Integer>, Set<XValueNodeImpl>> map = myTree.getProject().getUserData(XVariablesView.DEBUG_VARIABLES);
+        public void computed(XSourcePosition position) {
+          if (position == null) return;
+          VirtualFile file = position.getFile();
+          // filter out values from other files
+          if (!Comparing.equal(debuggerPosition.getFile(), file)) {
+            return;
+          }
+          final Document document = FileDocumentManager.getInstance().getDocument(file);
+          if (document == null) return;
+
+          XVariablesView.InlineVariablesInfo data = myTree.getProject().getUserData(XVariablesView.DEBUG_VARIABLES);
           final TObjectLongHashMap<VirtualFile> timestamps = myTree.getProject().getUserData(XVariablesView.DEBUG_VARIABLES_TIMESTAMPS);
-          if (map == null || timestamps == null) {
+          if (data == null || timestamps == null) {
             return;
           }
 
-          Pair<VirtualFile, Integer> key = Pair.create(file, line);
-          Set<XValueNodeImpl> presentations = new LinkedHashSet<XValueNodeImpl>();
-          Set<XValueNodeImpl> old = map.put(key, presentations);
+          data.put(file, position, XValueNodeImpl.this);
           timestamps.put(file, document.getModificationStamp());
-          presentations.add(XValueNodeImpl.this);
-          if (old != null) {
-            presentations.addAll(old);
-          }
+
           myTree.updateEditor();
         }
       };
 
       if (getValueContainer().computeInlineDebuggerData(callback) == ThreeState.UNSURE) {
-        class ValueDeclaration implements XInlineSourcePosition {
-          @Override
-          public void setSourcePosition(@Nullable XSourcePosition sourcePosition) {
-            final Map<Pair<VirtualFile, Integer>, Set<XValueNodeImpl>> map =
-              myTree.getProject().getUserData(XVariablesView.DEBUG_VARIABLES);
-            final TObjectLongHashMap<VirtualFile> timestamps = myTree.getProject().getUserData(XVariablesView.DEBUG_VARIABLES_TIMESTAMPS);
-            if (map == null || timestamps == null || sourcePosition == null) return;
-            VirtualFile file = sourcePosition.getFile();
-            if (!Comparing.equal(debuggerPosition.getFile(), sourcePosition.getFile())) return;
-            final Document doc = FileDocumentManager.getInstance().getDocument(file);
-            if (doc == null) return;
-            int line = sourcePosition.getLine();
-            callback.computed(file, doc, line);
-          }
-        }
-        class NearestValuePosition extends ValueDeclaration implements XNearestSourcePosition {}
-        getValueContainer().computeSourcePosition(new ValueDeclaration());
-        getValueContainer().computeSourcePosition(new NearestValuePosition());
+        getValueContainer().computeSourcePosition(callback::computed);
       }
     }
     catch (Exception ignore) {
@@ -192,12 +157,9 @@ public class XValueNodeImpl extends XValueContainerNode<XValue> implements XValu
 
   @Override
   public void setFullValueEvaluator(@NotNull final XFullValueEvaluator fullValueEvaluator) {
-    invokeNodeUpdate(new Runnable() {
-      @Override
-      public void run() {
-        myFullValueEvaluator = fullValueEvaluator;
-        fireNodeChanged();
-      }
+    invokeNodeUpdate(() -> {
+      myFullValueEvaluator = fullValueEvaluator;
+      fireNodeChanged();
     });
   }
 

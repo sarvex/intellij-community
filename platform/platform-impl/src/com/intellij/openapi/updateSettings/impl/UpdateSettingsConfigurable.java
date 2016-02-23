@@ -20,13 +20,17 @@ import com.intellij.ide.IdeBundle;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.application.ApplicationInfo;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ex.ApplicationInfoEx;
 import com.intellij.openapi.options.BaseConfigurable;
 import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.options.SearchableConfigurable;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.updateSettings.UpdateStrategyCustomization;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.ui.CollectionComboBoxModel;
+import com.intellij.ui.JBColor;
+import com.intellij.ui.components.JBLabel;
 import com.intellij.util.net.NetUtils;
 import com.intellij.util.text.DateFormatUtil;
 import org.jetbrains.annotations.NotNull;
@@ -35,23 +39,30 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.util.Arrays;
 
 /**
  * @author pti
  */
 public class UpdateSettingsConfigurable extends BaseConfigurable implements SearchableConfigurable, Configurable.NoScroll {
-  private UpdatesSettingsPanel myUpdatesSettingsPanel;
-  private boolean myCheckNowEnabled = true;
+  private final UpdateSettings mySettings;
+  private final boolean myCheckNowEnabled;
+  private UpdatesSettingsPanel myPanel;
 
-  public void setCheckNowEnabled(boolean enabled) {
-    myCheckNowEnabled = enabled;
+  @SuppressWarnings("unused")
+  public UpdateSettingsConfigurable() {
+    this(true);
+  }
+
+  public UpdateSettingsConfigurable(boolean checkNowEnabled) {
+    mySettings = UpdateSettings.getInstance();
+    myCheckNowEnabled = checkNowEnabled;
   }
 
   @Override
   public JComponent createComponent() {
-    myUpdatesSettingsPanel = new UpdatesSettingsPanel();
-    myUpdatesSettingsPanel.myCheckNow.setVisible(myCheckNowEnabled);
-    return myUpdatesSettingsPanel.myPanel;
+    myPanel = new UpdatesSettingsPanel(myCheckNowEnabled);
+    return myPanel.myPanel;
   }
 
   @Override
@@ -79,11 +90,15 @@ public class UpdateSettingsConfigurable extends BaseConfigurable implements Sear
 
   @Override
   public void apply() throws ConfigurationException {
-    UpdateSettings settings = UpdateSettings.getInstance();
+    if (myPanel.myUseSecureConnection.isSelected() && !NetUtils.isSniEnabled()) {
+      boolean tooOld = !SystemInfo.isJavaVersionAtLeast("1.7");
+      String message = IdeBundle.message(tooOld ? "update.sni.not.available.error" : "update.sni.disabled.error");
+      throw new ConfigurationException(message);
+    }
 
-    boolean wasEnabled = settings.isCheckNeeded();
-    settings.setCheckNeeded(myUpdatesSettingsPanel.myCheckForUpdates.isSelected());
-    if (wasEnabled != settings.isCheckNeeded()) {
+    boolean wasEnabled = mySettings.isCheckNeeded();
+    mySettings.setCheckNeeded(myPanel.myCheckForUpdates.isSelected());
+    if (wasEnabled != mySettings.isCheckNeeded()) {
       UpdateCheckerComponent checker = ApplicationManager.getApplication().getComponent(UpdateCheckerComponent.class);
       if (checker != null) {
         if (wasEnabled) {
@@ -95,51 +110,53 @@ public class UpdateSettingsConfigurable extends BaseConfigurable implements Sear
       }
     }
 
-    settings.setUpdateChannelType(myUpdatesSettingsPanel.getSelectedChannelType().getCode());
-    settings.setSecureConnection(myUpdatesSettingsPanel.myUseSecureConnection.isSelected());
+    mySettings.setSelectedChannelStatus(myPanel.getSelectedChannelType());
+    mySettings.setSecureConnection(myPanel.myUseSecureConnection.isSelected());
   }
 
   @Override
   public void reset() {
-    UpdateSettings settings = UpdateSettings.getInstance();
-    myUpdatesSettingsPanel.myCheckForUpdates.setSelected(settings.isCheckNeeded());
-    myUpdatesSettingsPanel.myUseSecureConnection.setSelected(settings.isSecureConnection());
-    myUpdatesSettingsPanel.updateLastCheckedLabel();
-    myUpdatesSettingsPanel.setSelectedChannelType(ChannelStatus.fromCode(settings.getUpdateChannelType()));
+    myPanel.myCheckForUpdates.setSelected(mySettings.isCheckNeeded());
+    myPanel.myUseSecureConnection.setSelected(mySettings.isSecureConnection());
+    myPanel.updateLastCheckedLabel();
+    myPanel.setSelectedChannelType(mySettings.getSelectedChannelStatus());
   }
 
   @Override
   public boolean isModified() {
-    if (myUpdatesSettingsPanel == null) {
+    if (myPanel == null) {
       return false;
     }
 
-    UpdateSettings settings = UpdateSettings.getInstance();
-    if (settings.isCheckNeeded() != myUpdatesSettingsPanel.myCheckForUpdates.isSelected() ||
-        settings.isSecureConnection() != myUpdatesSettingsPanel.myUseSecureConnection.isSelected()) {
+    if (mySettings.isCheckNeeded() != myPanel.myCheckForUpdates.isSelected() ||
+        mySettings.isSecureConnection() != myPanel.myUseSecureConnection.isSelected()) {
       return true;
     }
 
-    Object channel = myUpdatesSettingsPanel.myUpdateChannels.getSelectedItem();
-    return channel != null && !channel.equals(ChannelStatus.fromCode(settings.getUpdateChannelType()));
+    Object channel = myPanel.myUpdateChannels.getSelectedItem();
+    return channel != null && !channel.equals(mySettings.getSelectedChannelStatus());
   }
 
   @Override
   public void disposeUIResources() {
-    myUpdatesSettingsPanel = null;
+    myPanel = null;
   }
 
   private static class UpdatesSettingsPanel {
+    private final UpdateSettings mySettings;
     private JPanel myPanel;
-    private JButton myCheckNow;
     private JCheckBox myCheckForUpdates;
+    private JComboBox myUpdateChannels;
+    private JButton myCheckNow;
+    private JBLabel myChannelWarning;
+    private JCheckBox myUseSecureConnection;
     private JLabel myBuildNumber;
     private JLabel myVersionNumber;
     private JLabel myLastCheckedDate;
-    private JComboBox myUpdateChannels;
-    private JCheckBox myUseSecureConnection;
 
-    public UpdatesSettingsPanel() {
+    public UpdatesSettingsPanel(boolean checkNowEnabled) {
+      mySettings = UpdateSettings.getInstance();
+
       ApplicationInfo appInfo = ApplicationInfo.getInstance();
       String majorVersion = appInfo.getMajorVersion();
       String versionNumber = "";
@@ -155,40 +172,48 @@ public class UpdateSettingsConfigurable extends BaseConfigurable implements Sear
       myVersionNumber.setText(appInfo.getVersionName() + " " + versionNumber);
       myBuildNumber.setText(appInfo.getBuild().asString());
 
-      myCheckNow.addActionListener(new ActionListener() {
-        @Override
-        public void actionPerformed(ActionEvent e) {
-          Project project = CommonDataKeys.PROJECT.getData(DataManager.getInstance().getDataContext(myCheckNow));
-          UpdateSettings settings = new UpdateSettings();
-          settings.loadState(UpdateSettings.getInstance().getState());
-          settings.setUpdateChannelType(getSelectedChannelType().getCode());
-          settings.setSecureConnection(myUseSecureConnection.isSelected());
-          UpdateChecker.updateAndShowResult(project, settings);
-          updateLastCheckedLabel();
-        }
-      });
-
       LabelTextReplacingUtil.replaceText(myPanel);
 
-      UpdateSettings settings = UpdateSettings.getInstance();
-      //noinspection unchecked
-      myUpdateChannels.setModel(new CollectionComboBoxModel(ChannelStatus.all(), ChannelStatus.fromCode(settings.getUpdateChannelType())));
-
-      if (!NetUtils.isSniEnabled()) {
-        myUseSecureConnection.setEnabled(false);
-        boolean tooOld = !SystemInfo.isJavaVersionAtLeast("1.7");
-        String message = IdeBundle.message(tooOld ? "update.sni.not.available.notification" : "update.sni.disabled.notification");
-        myUseSecureConnection.setToolTipText(message);
+      if (checkNowEnabled) {
+        myCheckNow.addActionListener(new ActionListener() {
+          @Override
+          public void actionPerformed(ActionEvent e) {
+            Project project = CommonDataKeys.PROJECT.getData(DataManager.getInstance().getDataContext(myCheckNow));
+            UpdateSettings settings = new UpdateSettings();
+            settings.loadState(mySettings.getState());
+            settings.setSelectedChannelStatus(getSelectedChannelType());
+            settings.setSecureConnection(myUseSecureConnection.isSelected());
+            UpdateChecker.updateAndShowResult(project, settings);
+            updateLastCheckedLabel();
+          }
+        });
       }
+      else {
+        myCheckNow.setVisible(false);
+      }
+
+      final ChannelStatus current = mySettings.getSelectedChannelStatus();
+      //noinspection unchecked
+      myUpdateChannels.setModel(new CollectionComboBoxModel<ChannelStatus>(Arrays.asList(ChannelStatus.values()), current));
+      myUpdateChannels.setEnabled(
+        !ApplicationInfoEx.getInstanceEx().isEAP() || !UpdateStrategyCustomization.getInstance().forceEapUpdateChannelForEapBuilds());
+      myUpdateChannels.addActionListener(new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+          boolean lessStable = current.compareTo(getSelectedChannelType()) > 0;
+          myChannelWarning.setVisible(lessStable);
+        }
+      });
+      myChannelWarning.setForeground(JBColor.RED);
     }
 
     private void updateLastCheckedLabel() {
-      long time = UpdateSettings.getInstance().getLastTimeChecked();
+      long time = mySettings.getLastTimeChecked();
       myLastCheckedDate.setText(time == 0 ? IdeBundle.message("updates.last.check.never") : DateFormatUtil.formatPrettyDateTime(time));
     }
 
     public ChannelStatus getSelectedChannelType() {
-      return (ChannelStatus) myUpdateChannels.getSelectedItem();
+      return (ChannelStatus)myUpdateChannels.getSelectedItem();
     }
 
     public void setSelectedChannelType(ChannelStatus channelType) {

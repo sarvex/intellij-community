@@ -49,21 +49,29 @@ public final class CallerMethodsTreeStructure extends HierarchyTreeStructure {
     PsiMember enclosingElement = ((CallHierarchyNodeDescriptor)descriptor).getEnclosingElement();
     HierarchyNodeDescriptor nodeDescriptor = getBaseDescriptor();
 
-    if (isLocalOrAnonymousClass(enclosingElement)) {
-      enclosingElement = CallHierarchyNodeDescriptor.getEnclosingElement(enclosingElement.getParent());
-    } else if (enclosingElement instanceof PsiMethod) {
+    if (enclosingElement instanceof PsiMethod) {
       PsiClass clazz = enclosingElement.getContainingClass();
       if (isLocalOrAnonymousClass(clazz)) {
-        enclosingElement = CallHierarchyNodeDescriptor.getEnclosingElement(clazz.getParent());
+        PsiElement parent = clazz.getParent();
+        PsiElement grandParent = parent instanceof PsiNewExpression ? parent.getParent() : null;
+        if (grandParent instanceof PsiExpressionList) {
+          // for created anonymous class that immediately passed as argument use instantiation point as next call point (IDEA-73312)
+          enclosingElement = CallHierarchyNodeDescriptor.getEnclosingElement(grandParent);
+        }
       }
     }
+
     if (!(enclosingElement instanceof PsiMethod) || nodeDescriptor == null) {
       return ArrayUtil.EMPTY_OBJECT_ARRAY;
     }
-    final PsiMethod method = (PsiMethod)enclosingElement;
+
     final PsiMethod baseMethod = (PsiMethod)((CallHierarchyNodeDescriptor)nodeDescriptor).getTargetElement();
+    if (baseMethod == null) {
+      return ArrayUtil.EMPTY_OBJECT_ARRAY;
+    }
     final SearchScope searchScope = getSearchScope(myScopeType, baseMethod.getContainingClass());
 
+    final PsiMethod method = (PsiMethod)enclosingElement;
     final PsiClass originalClass = method.getContainingClass();
     assert originalClass != null;
     final PsiClassType originalType = JavaPsiFacade.getElementFactory(myProject).createType(originalClass);

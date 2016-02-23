@@ -36,6 +36,7 @@ public class ContractCheckTest extends LightCodeInsightFixtureTestCase {
   public void testDelegationWithUnknownArgument() { doTest(); }
   public void testEqualsUnknownValue() { doTest(); }
   public void testMissingFail() { doTest(); }
+  public void testExceptionWhenDeclaredNotNull() { doTest(); }
   public void testCheckSuperContract() { doTest(); }
   public void testNestedCallsMayThrow() { doTest(); }
 
@@ -43,4 +44,6 @@ public class ContractCheckTest extends LightCodeInsightFixtureTestCase {
   public void testVarargInferred() { doTest(); }
   public void testDoubleParameter() { doTest(); }
   public void testReturnPrimitiveArray() { doTest(); }
+
+  public void testPassingVarargsToDelegate() { doTest(); }
 }

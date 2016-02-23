@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,10 @@ import com.intellij.history.integration.TestVirtualFile;
 import com.intellij.history.integration.ui.actions.LocalHistoryAction;
 import com.intellij.history.integration.ui.actions.ShowHistoryAction;
 import com.intellij.history.integration.ui.actions.ShowSelectionHistoryAction;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.AnAction;
+import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.CommonDataKeys;
+import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.EditorFactory;
@@ -39,18 +42,22 @@ public class LocalHistoryActionsTest extends LocalHistoryUITestCase {
   @Override
   protected void setUpInWriteAction() throws Exception {
     super.setUpInWriteAction();
-    f = myRoot.createChildData(null, "f.txt");
+    f = createChildData(myRoot, "f.txt");
 
     document = FileDocumentManager.getInstance().getDocument(f);
     document.setText("foo");
 
-    editor = getEditorFactory().createEditor(document);
+    editor = getEditorFactory().createEditor(document, myProject);
   }
 
   @Override
   protected void tearDown() throws Exception {
-    getEditorFactory().releaseEditor(editor);
-    super.tearDown();
+    try {
+      getEditorFactory().releaseEditor(editor);
+    }
+    finally {
+      super.tearDown();
+    }
   }
 
   private static EditorFactory getEditorFactory() {
@@ -63,8 +70,8 @@ public class LocalHistoryActionsTest extends LocalHistoryUITestCase {
     assertStatus(a, f, true);
     assertStatus(a, null, false);
 
-    assertStatus(a, myRoot.createChildData(null, "f.hprof"), false);
-    assertStatus(a, myRoot.createChildData(null, "f.xxx"), false);
+    assertStatus(a, createChildData(myRoot, "f.hprof"), false);
+    assertStatus(a, createChildData(myRoot, "f.xxx"), false);
   }
 
   public void testLocalHistoryActionDisabledWithoutProject() throws IOException {
@@ -131,6 +138,6 @@ public class LocalHistoryActionsTest extends LocalHistoryUITestCase {
         return null;
       }
     };
-    return new AnActionEvent(null, dc, "", a.getTemplatePresentation(), ActionManager.getInstance(), -1);
+    return AnActionEvent.createFromAnAction(a, null, "", dc);
   }
 }

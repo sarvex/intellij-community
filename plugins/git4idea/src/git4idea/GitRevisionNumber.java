@@ -40,6 +40,8 @@ public class GitRevisionNumber implements ShortVcsRevisionNumber {
    */
   public static final String NOT_COMMITTED_HASH = StringUtil.repeat("0", 40);
 
+  public static final GitRevisionNumber HEAD = new GitRevisionNumber("HEAD");
+
   /**
    * the revision number (40 character hashcode, tag, or reference). In some cases incomplete hashcode could be used.
    */
@@ -218,11 +220,18 @@ public class GitRevisionNumber implements ShortVcsRevisionNumber {
   }
 
   @NotNull
-  public static GitRevisionNumber parseRevlistOutputAsRevisionNumber(@NotNull GitSimpleHandler h, @NotNull String output) {
-    StringTokenizer tokenizer = new StringTokenizer(output, "\n\r \t", false);
-    LOG.assertTrue(tokenizer.hasMoreTokens(), "No required tokens in the output: \n" + output);
-    Date timestamp = GitUtil.parseTimestampWithNFEReport(tokenizer.nextToken(), h, output);
-    return new GitRevisionNumber(tokenizer.nextToken(), timestamp);
+  public static GitRevisionNumber parseRevlistOutputAsRevisionNumber(@NotNull GitSimpleHandler h, @NotNull String output)
+    throws VcsException
+  {
+    try {
+      StringTokenizer tokenizer = new StringTokenizer(output, "\n\r \t", false);
+      LOG.assertTrue(tokenizer.hasMoreTokens(), "No required tokens in the output: \n" + output);
+      Date timestamp = GitUtil.parseTimestampWithNFEReport(tokenizer.nextToken(), h, output);
+      return new GitRevisionNumber(tokenizer.nextToken(), timestamp);
+    }
+    catch (Exception e) {
+      throw new VcsException("Couldn't parse the output: ["  + output + "]", e);
+    }
   }
 
   @Override

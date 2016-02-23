@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@ import com.intellij.lang.properties.references.I18nUtil;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
-import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.*;
@@ -49,7 +48,7 @@ public class JavaI18nUtil extends I18nUtil {
     @Override
     public void createProperty(final Project project, final Collection<PropertiesFile> propertiesFiles, final String key, final String value,
                                final PsiExpression[] parameters) throws IncorrectOperationException {
-      JavaI18nUtil.createProperty(project, propertiesFiles, key, value);
+      I18nUtil.createProperty(project, propertiesFiles, key, value);
     }
   };
 
@@ -68,8 +67,7 @@ public class JavaI18nUtil extends I18nUtil {
     return psiElement.getTextRange();
   }
 
-  public static boolean mustBePropertyKey(@NotNull Project project,
-                                          @NotNull PsiExpression expression,
+  public static boolean mustBePropertyKey(@NotNull PsiExpression expression,
                                           @NotNull Map<String, Object> annotationAttributeValues) {
     final PsiElement parent = expression.getParent();
     if (parent instanceof PsiVariable) {
@@ -78,15 +76,14 @@ public class JavaI18nUtil extends I18nUtil {
         return processAnnotationAttributes(annotationAttributeValues, annotation);
       }
     }
-    return isPassedToAnnotatedParam(project, expression, AnnotationUtil.PROPERTY_KEY, annotationAttributeValues, null);
+    return isPassedToAnnotatedParam(expression, AnnotationUtil.PROPERTY_KEY, annotationAttributeValues, null);
   }
 
-  public static boolean isPassedToAnnotatedParam(@NotNull Project project,
-                                                 @NotNull PsiExpression expression,
-                                                 final String annFqn,
-                                                 @Nullable Map<String, Object> annotationAttributeValues,
-                                                 @Nullable final Set<PsiModifierListOwner> nonNlsTargets) {
-    expression = getToplevelExpression(project, expression);
+  static boolean isPassedToAnnotatedParam(@NotNull PsiExpression expression,
+                                          final String annFqn,
+                                          @Nullable Map<String, Object> annotationAttributeValues,
+                                          @Nullable final Set<PsiModifierListOwner> nonNlsTargets) {
+    expression = getTopLevelExpression(expression);
     final PsiElement parent = expression.getParent();
 
     if (!(parent instanceof PsiExpressionList)) return false;
@@ -117,61 +114,24 @@ public class JavaI18nUtil extends I18nUtil {
     return false;
   }
 
-  private static final Key<ParameterizedCachedValue<PsiExpression, Pair<Project, PsiExpression>>> TOP_LEVEL_EXPRESSION = Key.create("TOP_LEVEL_EXPRESSION");
-  private static final ParameterizedCachedValueProvider<PsiExpression, Pair<Project, PsiExpression>> TOP_LEVEL_PROVIDER =
-    new ParameterizedCachedValueProvider<PsiExpression, Pair<Project, PsiExpression>>() {
-      @Override
-      public CachedValueProvider.Result<PsiExpression> compute(Pair<Project, PsiExpression> pair) {
-        PsiExpression param = pair.second;
-        Project project = pair.first;
-        PsiExpression topLevel = getTopLevel(project, param);
-        ParameterizedCachedValue<PsiExpression, Pair<Project, PsiExpression>> cachedValue = param.getUserData(TOP_LEVEL_EXPRESSION);
-        assert cachedValue != null;
-        int i = 0;
-        for (PsiElement element = param; element != topLevel; element = element.getParent(), i++) {
-          if (i % 10 == 0) {   // optimization: store up link to the top level expression in each 10nth element
-            element.putUserData(TOP_LEVEL_EXPRESSION, cachedValue);
-          }
-        }
-        return CachedValueProvider.Result.create(topLevel, PsiManager.getInstance(project).getModificationTracker());
-      }
-    };
-
   @NotNull
-  public static PsiExpression getToplevelExpression(@NotNull final Project project, @NotNull final PsiExpression expression) {
-    if (expression instanceof PsiBinaryExpression || expression.getParent() instanceof PsiBinaryExpression) {  //can be large, cache
-      return CachedValuesManager.getManager(project).getParameterizedCachedValue(expression, TOP_LEVEL_EXPRESSION, TOP_LEVEL_PROVIDER, true,
-                                                                                 Pair.create(project, expression));
-    }
-    return getTopLevel(project, expression);
-  }
-
-  @NotNull
-  private static PsiExpression getTopLevel(Project project, @NotNull PsiExpression expression) {
-    int i = 0;
+  static PsiExpression getTopLevelExpression(@NotNull PsiExpression expression) {
     while (expression.getParent() instanceof PsiExpression) {
-      i++;
       final PsiExpression parent = (PsiExpression)expression.getParent();
       if (parent instanceof PsiConditionalExpression &&
           ((PsiConditionalExpression)parent).getCondition() == expression) break;
       expression = parent;
       if (expression instanceof PsiAssignmentExpression) break;
-      if (i > 10 && expression instanceof PsiBinaryExpression) {
-        ParameterizedCachedValue<PsiExpression, Pair<Project, PsiExpression>> value = expression.getUserData(TOP_LEVEL_EXPRESSION);
-        if (value != null && value.hasUpToDateValue()) {
-          return getToplevelExpression(project, expression); // optimization: use caching for big hierarchies
-        }
-      }
     }
     return expression;
   }
 
-  public static boolean isMethodParameterAnnotatedWith(final PsiMethod method,
-                                                       final int idx,
-                                                       @Nullable Collection<PsiMethod> processed,
-                                                       final String annFqn,
-                                                       @Nullable Map<String, Object> annotationAttributeValues,
-                                                       @Nullable final Set<PsiModifierListOwner> nonNlsTargets) {
+  static boolean isMethodParameterAnnotatedWith(final PsiMethod method,
+                                                final int idx,
+                                                @Nullable Collection<PsiMethod> processed,
+                                                final String annFqn,
+                                                @Nullable Map<String, Object> annotationAttributeValues,
+                                                @Nullable final Set<PsiModifierListOwner> nonNlsTargets) {
     if (processed != null) {
       if (processed.contains(method)) return false;
     }
@@ -227,13 +187,13 @@ public class JavaI18nUtil extends I18nUtil {
     return true;
   }
 
-  public static boolean isValidPropertyReference(@NotNull Project project,
-                                                 @NotNull PsiExpression expression,
-                                                 @NotNull String key,
-                                                 @NotNull Ref<String> outResourceBundle) {
+  static boolean isValidPropertyReference(@NotNull Project project,
+                                          @NotNull PsiExpression expression,
+                                          @NotNull String key,
+                                          @NotNull Ref<String> outResourceBundle) {
     final HashMap<String, Object> annotationAttributeValues = new HashMap<String, Object>();
     annotationAttributeValues.put(AnnotationUtil.PROPERTY_KEY_RESOURCE_BUNDLE_PARAMETER, null);
-    if (mustBePropertyKey(project, expression, annotationAttributeValues)) {
+    if (mustBePropertyKey(expression, annotationAttributeValues)) {
       final Object resourceBundleName = annotationAttributeValues.get(AnnotationUtil.PROPERTY_KEY_RESOURCE_BUNDLE_PARAMETER);
       if (!(resourceBundleName instanceof PsiExpression)) {
         return false;
@@ -272,7 +232,7 @@ public class JavaI18nUtil extends I18nUtil {
   }
 
   @Nullable
-  public static ResourceBundle resolveResourceBundleByKey(final @NotNull String key, final @NotNull Project project) {
+  private static ResourceBundle resolveResourceBundleByKey(@NotNull final String key, @NotNull final Project project) {
     final Ref<ResourceBundle> bundleRef = Ref.create();
     final boolean r = PropertiesReferenceManager.getInstance(project).processAllPropertiesFiles(new PropertiesFileProcessor() {
       @Override
@@ -293,7 +253,7 @@ public class JavaI18nUtil extends I18nUtil {
     return r ? bundleRef.get() : null;
   }
 
-  public static boolean isPropertyRef(final PsiExpression expression, final String key, final String resourceBundleName) {
+  static boolean isPropertyRef(final PsiExpression expression, final String key, final String resourceBundleName) {
     if (resourceBundleName == null) {
       return !PropertiesImplUtil.findPropertiesByKey(expression.getProject(), key).isEmpty();
     }
@@ -360,10 +320,9 @@ public class JavaI18nUtil extends I18nUtil {
    * <i>Class {0} info: Class {0} extends class {1} and implements interface {2}</i>
    * number of parameters is 3.
    *
-   * @param propertyValue
    * @return number of parameters from single property or 0 for wrong format
    */
-  public static int getPropertyValuePlaceholdersCount(final @NotNull String propertyValue) {
+  public static int getPropertyValuePlaceholdersCount(@NotNull final String propertyValue) {
     try {
       return new MessageFormat(propertyValue).getFormatsByArgumentIndex().length;
     } catch (final IllegalArgumentException e) {
@@ -382,11 +341,11 @@ public class JavaI18nUtil extends I18nUtil {
    * @param expression i18n literal
    * @return number of parameters
    */
-  public static int getPropertyValueParamsMaxCount(final @NotNull PsiExpression expression) {
+  public static int getPropertyValueParamsMaxCount(@NotNull final PsiExpression expression) {
     return getPropertyValueParamsMaxCount(expression, null);
   }
 
-  public static int getPropertyValueParamsMaxCount(final @NotNull PsiExpression expression, final @Nullable String resourceBundleName) {
+  private static int getPropertyValueParamsMaxCount(@NotNull final PsiExpression expression, @Nullable final String resourceBundleName) {
     final SortedSet<Integer> paramsCount = getPropertyValueParamsCount(expression, resourceBundleName);
     if (paramsCount.isEmpty()) {
       return -1;
@@ -395,7 +354,7 @@ public class JavaI18nUtil extends I18nUtil {
   }
 
   @NotNull
-  public static SortedSet<Integer> getPropertyValueParamsCount(final @NotNull PsiExpression expression, final @Nullable String resourceBundleName) {
+  static SortedSet<Integer> getPropertyValueParamsCount(@NotNull final PsiExpression expression, @Nullable final String resourceBundleName) {
     final PsiLiteralExpression literalExpression;
     if (expression instanceof PsiLiteralExpression) {
       literalExpression = (PsiLiteralExpression)expression;

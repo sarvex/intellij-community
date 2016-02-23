@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,15 @@
 
 package com.intellij.application.options.editor;
 
-import com.intellij.application.options.OptionId;
-import com.intellij.application.options.OptionsApplicabilityFilter;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzerSettings;
 import com.intellij.ide.ui.LafManager;
 import com.intellij.ide.ui.UISettings;
 import com.intellij.openapi.application.ApplicationBundle;
 import com.intellij.openapi.editor.ex.EditorSettingsExternalizable;
 import com.intellij.openapi.extensions.ExtensionPointName;
-import com.intellij.openapi.options.*;
+import com.intellij.openapi.options.CompositeConfigurable;
+import com.intellij.openapi.options.ConfigurationException;
+import com.intellij.openapi.options.UnnamedConfigurable;
 import com.intellij.openapi.options.ex.ConfigurableWrapper;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
@@ -36,7 +36,7 @@ import java.awt.event.ActionListener;
 import java.util.List;
 
 /**
- * To provide additional options in Editor | Appearance section register implementation of {@link com.intellij.openapi.options.UnnamedConfigurable} in the plugin.xml:
+ * To provide additional options in Editor | Appearance section register implementation of {@link UnnamedConfigurable} in the plugin.xml:
  * <p/>
  * &lt;extensions defaultExtensionNs="com.intellij"&gt;<br>
  * &nbsp;&nbsp;&lt;editorAppearanceConfigurable instance="class-name"/&gt;<br>
@@ -60,12 +60,19 @@ public class EditorAppearanceConfigurable extends CompositeConfigurable<UnnamedC
   private JTextField myBlinkIntervalField;
   private JPanel myAddonPanel;
   private JCheckBox myCbShowMethodSeparators;
-  private JCheckBox myAntialiasingInEditorCheckBox;
+  //private JCheckBox myAntialiasingInEditorCheckBox;
   private JCheckBox myShowCodeLensInEditorCheckBox;
-  private JCheckBox myCbShowIconsInGutter;
   private JCheckBox myShowVerticalIndentGuidesCheckBox;
+  private JCheckBox myShowBreadcrumbsCheckBox;
+  //private JCheckBox myUseLCDRendering;
 
   public EditorAppearanceConfigurable() {
+    //myAntialiasingInEditorCheckBox.addActionListener(new ActionListener() {
+    //  @Override
+    //  public void actionPerformed(ActionEvent e) {
+    //    myUseLCDRendering.setEnabled(myAntialiasingInEditorCheckBox.isSelected());
+    //  }
+    //});
     myCbBlinkCaret.addActionListener(
     new ActionListener() {
       @Override
@@ -74,9 +81,6 @@ public class EditorAppearanceConfigurable extends CompositeConfigurable<UnnamedC
       }
     }
     );
-    if (!OptionsApplicabilityFilter.isApplicable(OptionId.ICONS_IN_GUTTER)) {
-      myCbShowIconsInGutter.setVisible(false);
-    }
     myCbShowWhitespaces.addActionListener(new ActionListener() {
       @Override
       public void actionPerformed(ActionEvent e) {
@@ -108,9 +112,10 @@ public class EditorAppearanceConfigurable extends CompositeConfigurable<UnnamedC
     myInnerWhitespacesCheckBox.setSelected(editorSettings.isInnerWhitespacesShown());
     myTrailingWhitespacesCheckBox.setSelected(editorSettings.isTrailingWhitespacesShown());
     myShowVerticalIndentGuidesCheckBox.setSelected(editorSettings.isIndentGuidesShown());
-    myAntialiasingInEditorCheckBox.setSelected(UISettings.getInstance().ANTIALIASING_IN_EDITOR);
+    myShowBreadcrumbsCheckBox.setSelected(editorSettings.isBreadcrumbsShown());
+    //myAntialiasingInEditorCheckBox.setSelected(UISettings.getInstance().ANTIALIASING_IN_EDITOR);
+    //myUseLCDRendering.setSelected(UISettings.getInstance().USE_LCD_RENDERING_IN_EDITOR);
     myShowCodeLensInEditorCheckBox.setSelected(UISettings.getInstance().SHOW_EDITOR_TOOLTIP);
-    myCbShowIconsInGutter.setSelected(DaemonCodeAnalyzerSettings.getInstance().SHOW_SMALL_ICONS_IN_GUTTER);
 
     updateWhitespaceCheckboxesState();
 
@@ -124,7 +129,7 @@ public class EditorAppearanceConfigurable extends CompositeConfigurable<UnnamedC
     try {
       editorSettings.setBlinkPeriod(Integer.parseInt(myBlinkIntervalField.getText()));
     }
-    catch (NumberFormatException e) {
+    catch (NumberFormatException ignore) {
     }
 
     editorSettings.setBlockCursor(myCbBlockCursor.isSelected());
@@ -139,23 +144,37 @@ public class EditorAppearanceConfigurable extends CompositeConfigurable<UnnamedC
     EditorOptionsPanel.reinitAllEditors();
 
     DaemonCodeAnalyzerSettings.getInstance().SHOW_METHOD_SEPARATORS = myCbShowMethodSeparators.isSelected();
-    DaemonCodeAnalyzerSettings.getInstance().SHOW_SMALL_ICONS_IN_GUTTER = myCbShowIconsInGutter.isSelected();
 
     UISettings uiSettings = UISettings.getInstance();
     boolean uiSettingsModified = false;
-    if (uiSettings.ANTIALIASING_IN_EDITOR != myAntialiasingInEditorCheckBox.isSelected()) {
-      uiSettings.ANTIALIASING_IN_EDITOR = myAntialiasingInEditorCheckBox.isSelected();
-      uiSettingsModified = true;
-    }
+    boolean lafSettingsModified = false;
+    //if (uiSettings.ANTIALIASING_IN_EDITOR != myAntialiasingInEditorCheckBox.isSelected()) {
+    //  uiSettings.ANTIALIASING_IN_EDITOR = myAntialiasingInEditorCheckBox.isSelected();
+    //  uiSettingsModified = true;
+    //}
+
+    //if (uiSettings.USE_LCD_RENDERING_IN_EDITOR != myUseLCDRendering.isSelected()) {
+    //  uiSettings.USE_LCD_RENDERING_IN_EDITOR = myUseLCDRendering.isSelected();
+    //  uiSettingsModified = true;
+    //}
+
     if (uiSettings.SHOW_EDITOR_TOOLTIP != myShowCodeLensInEditorCheckBox.isSelected()) {
       uiSettings.SHOW_EDITOR_TOOLTIP = myShowCodeLensInEditorCheckBox.isSelected();
       uiSettingsModified = true;
+      lafSettingsModified = true;
     }
-    if (uiSettingsModified) {
-      LafManager.getInstance().repaintUI();
-      uiSettings.fireUISettingsChanged();
+    
+    if(editorSettings.isBreadcrumbsShown() != myShowBreadcrumbsCheckBox.isSelected()) {
+      editorSettings.setBreadcrumbsShown(myShowBreadcrumbsCheckBox.isSelected());
+      uiSettingsModified = true;
     }
 
+    if (lafSettingsModified) {
+      LafManager.getInstance().repaintUI();
+    }
+    if (uiSettingsModified) {
+      uiSettings.fireUISettingsChanged();
+    }
     EditorOptionsPanel.restartDaemons();
 
     super.apply();
@@ -179,9 +198,10 @@ public class EditorAppearanceConfigurable extends CompositeConfigurable<UnnamedC
     isModified |= isModified(myTrailingWhitespacesCheckBox, editorSettings.isTrailingWhitespacesShown());
     isModified |= isModified(myShowVerticalIndentGuidesCheckBox, editorSettings.isIndentGuidesShown());
     isModified |= isModified(myCbShowMethodSeparators, DaemonCodeAnalyzerSettings.getInstance().SHOW_METHOD_SEPARATORS);
-    isModified |= isModified(myCbShowIconsInGutter, DaemonCodeAnalyzerSettings.getInstance().SHOW_SMALL_ICONS_IN_GUTTER);
-    isModified |= myAntialiasingInEditorCheckBox.isSelected() != UISettings.getInstance().ANTIALIASING_IN_EDITOR;
+    //isModified |= myAntialiasingInEditorCheckBox.isSelected() != UISettings.getInstance().ANTIALIASING_IN_EDITOR;
+    //isModified |= myUseLCDRendering.isSelected() != UISettings.getInstance().USE_LCD_RENDERING_IN_EDITOR;
     isModified |= myShowCodeLensInEditorCheckBox.isSelected() != UISettings.getInstance().SHOW_EDITOR_TOOLTIP;
+    isModified |= myShowBreadcrumbsCheckBox.isSelected() != editorSettings.isBreadcrumbsShown();
 
     return isModified;
   }
@@ -214,8 +234,11 @@ public class EditorAppearanceConfigurable extends CompositeConfigurable<UnnamedC
   @Override
   public JComponent createComponent() {
     for (UnnamedConfigurable provider : getConfigurables()) {
-      myAddonPanel.add(provider.createComponent(), new GridBagConstraints(0, GridBagConstraints.RELATIVE, 1, 1, 0, 0, GridBagConstraints.NORTHWEST,
-                                                                            GridBagConstraints.NONE, new Insets(0,0,15,0), 0,0));
+      JComponent component = provider.createComponent();
+      if (component != null) {
+        myAddonPanel.add(component, new GridBagConstraints(0, GridBagConstraints.RELATIVE, 1, 1, 0, 0, GridBagConstraints.NORTHWEST,
+                                                           GridBagConstraints.NONE, new Insets(0, 0, 15, 0), 0, 0));
+      }
     }
     return myRootPanel;
   }

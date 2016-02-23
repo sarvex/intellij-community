@@ -21,7 +21,7 @@ import re
 import _bdd_utils
 from distutils import version
 from behave import __version__ as behave_version
-
+from _jb_utils import VersionAgnosticUtils
 _MAX_STEPS_SEARCH_FEATURES = 5000  # Do not look for features in folder that has more that this number of children
 _FEATURES_FOLDER = 'features'  # "features" folder name.
 
@@ -136,21 +136,18 @@ class _BehaveRunner(_bdd_utils.BddRunner):
         :param element feature/suite/step
         """
         element.location.file = element.location.filename  # To preserve _bdd_utils contract
+        utils = VersionAgnosticUtils()
         if isinstance(element, Step):
             # Process step
-            step_name = "{0} {1}".format(element.keyword, element.name)
+            step_name = u"{0} {1}".format(utils.to_unicode(element.keyword), utils.to_unicode(element.name))
             if is_started:
                 self._test_started(step_name, element.location)
             elif element.status == 'passed':
                 self._test_passed(step_name, element.duration)
             elif element.status == 'failed':
-                try:
-                    trace = traceback.format_exc()
-                except Exception:
-                    trace = "".join(traceback.format_tb(element.exc_traceback))
-                if trace in str(element.error_message):
-                    trace = None  # No reason to duplicate output (see PY-13647)
-                self._test_failed(step_name, element.error_message, trace)
+                trace = utils.to_unicode("".join(traceback.format_tb(element.exc_traceback)))
+                error_message = u"{0}: ".format(type(element.exception).__name__) + utils.to_unicode(element.exception)
+                self._test_failed(step_name, error_message, trace, duration=element.duration)
             elif element.status == 'undefined':
                 self._test_undefined(step_name, element.location)
             else:
@@ -235,6 +232,9 @@ if __name__ == "__main__":
 
     command_args = list(filter(None, sys.argv[1:]))
     if command_args:
+        if "--junit" in command_args:
+            raise Exception("--junit report type for Behave is unsupported in PyCharm. \n "
+            "See: https://youtrack.jetbrains.com/issue/PY-14219")
         _bdd_utils.fix_win_drive(command_args[0])
     (base_dir, scenario_names, what_to_run) = _bdd_utils.get_what_to_run_by_env(os.environ)
 
@@ -267,5 +267,3 @@ if __name__ == "__main__":
     if what_to_run and not my_config.paths:
         raise Exception("Nothing to run in {0}".format(what_to_run))
     _BehaveRunner(my_config, base_dir).run()
-
-

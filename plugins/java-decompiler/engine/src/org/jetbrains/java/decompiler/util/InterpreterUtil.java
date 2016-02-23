@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 package org.jetbrains.java.decompiler.util;
 
 import org.jetbrains.java.decompiler.main.DecompilerContext;
-import org.jetbrains.java.decompiler.main.TextBuffer;
 import org.jetbrains.java.decompiler.main.extern.IFernflowerPreferences;
 
 import java.io.*;
@@ -121,25 +120,6 @@ public class InterpreterUtil {
     return first == null ? second == null : first.equals(second);
   }
 
-  public static boolean equalObjectArrays(Object[] first, Object[] second) {
-    if (first == null || second == null) {
-      return equalObjects(first, second);
-    }
-    else {
-      if (first.length != second.length) {
-        return false;
-      }
-
-      for (int i = 0; i < first.length; i++) {
-        if (!equalObjects(first[i], second[i])) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
   public static boolean equalLists(List<?> first, List<?> second) {
     if (first == null) {
       return second == null;
@@ -173,6 +153,10 @@ public class InterpreterUtil {
   }
 
   public static String makeUniqueKey(String name, String descriptor) {
-    return name + " " + descriptor;
+    return name + ' ' + descriptor;
+  }
+
+  public static String makeUniqueKey(String name, String descriptor1, String descriptor2) {
+    return name + ' ' + descriptor1 + ' ' + descriptor2;
   }
 }

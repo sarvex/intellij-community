@@ -123,6 +123,42 @@ public class SmartType18CompletionTest extends LightFixtureCompletionTestCase {
     doTest(false);
   }
 
+  public void testSimpleMethodReference() throws Exception {
+    doTest(true);
+  }
+
+  public void testNoLambdaSuggestionForGenericsFunctionalInterfaceMethod() throws Exception {
+    configureByFile("/" + getTestName(false) + ".java");
+    assertEmpty(myItems);
+  }
+
+public void testConvertToObjectStream() {
+    configureByTestName();
+    myFixture.complete(CompletionType.SMART, 2);
+  myFixture.type('\n');
+    checkResultByFile("/" + getTestName(false) + "-out.java");
+  }
+
+  public void testConvertToDoubleStream() {
+    configureByTestName();
+    myFixture.complete(CompletionType.SMART, 2);
+    myFixture.type('\n');
+    checkResultByFile("/" + getTestName(false) + "-out.java");
+  }
+
+  public void testInferFromReturnTypeWhenCompleteInsideArgList() {
+    configureByTestName();
+    myFixture.complete(CompletionType.SMART, 1);
+    myFixture.type('\n');
+    checkResultByFile("/" + getTestName(false) + "-out.java");
+  }
+
+  public void testCollectorsToList() {
+    doTest(false);
+  }
+
+  public void testCollectionsEmptyMap() { doTest(true); }
+
   private void doTest() {
     doTest(true);
   }

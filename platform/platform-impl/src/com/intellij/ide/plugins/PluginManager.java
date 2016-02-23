@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ import com.intellij.notification.Notifications;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ApplicationNamesInfo;
-import com.intellij.openapi.components.ComponentConfig;
+import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.PluginId;
 import com.intellij.openapi.extensions.impl.PicoPluginExtensionInitializationException;
@@ -44,6 +44,7 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.event.HyperlinkEvent;
+import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -97,6 +98,15 @@ public class PluginManager extends PluginManagerCore {
     };
 
     new Thread(threadGroup, runnable, "Idea Main Thread").start();
+  }
+
+  /**
+   * @return file with list of once installed plugins if it exists, null otherwise
+   */
+  @Nullable
+  public static File getOnceInstalledIfExists() {
+    File onceInstalledFile = new File(PathManager.getConfigPath(), INSTALLED_TXT);
+    return onceInstalledFile.isFile() ? onceInstalledFile : null;
   }
 
   public static void processException(Throwable t) {
@@ -214,7 +224,7 @@ public class PluginManager extends PluginManagerCore {
     return null;
   }
 
-  public static void handleComponentError(Throwable t, @Nullable String componentClassName, @Nullable ComponentConfig config) {
+  public static void handleComponentError(Throwable t, @Nullable String componentClassName, @Nullable PluginId pluginId) {
     Application app = ApplicationManager.getApplication();
     if (app != null && app.isUnitTestMode()) {
       if (t instanceof Error) throw (Error)t;
@@ -226,10 +236,6 @@ public class PluginManager extends PluginManagerCore {
       throw (StartupAbortedException)t;
     }
 
-    PluginId pluginId = null;
-    if (config != null) {
-      pluginId = config.getPluginId();
-    }
     if (pluginId == null || CORE_PLUGIN_ID.equals(pluginId.getIdString())) {
       if (componentClassName != null) {
         pluginId = getPluginByClassName(componentClassName);

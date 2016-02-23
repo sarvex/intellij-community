@@ -37,7 +37,7 @@ import git4idea.repo.GitRepository;
 import git4idea.repo.GitRepositoryManager;
 import git4idea.util.GitUIUtil;
 import git4idea.util.LocalChangesWouldBeOverwrittenHelper;
-import git4idea.util.UntrackedFilesNotifier;
+import git4idea.util.GitUntrackedFilesHelper;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,7 +77,7 @@ abstract class GitMergeAction extends GitRepositoryAction {
     final Computable<GitLineHandler> handlerProvider = dialogState.handlerProvider;
     final Label beforeLabel = LocalHistory.getInstance().putSystemLabel(project, "Before update");
 
-    new Task.Backgroundable(project, dialogState.progressTitle, false) {
+    new Task.Backgroundable(project, dialogState.progressTitle, true) {
       @Override
       public void run(@NotNull ProgressIndicator indicator) {
         final GitRepositoryManager repositoryManager = GitUtil.getRepositoryManager(project);
@@ -86,6 +86,7 @@ abstract class GitMergeAction extends GitRepositoryAction {
           new GitLocalChangesWouldBeOverwrittenDetector(selectedRoot, MERGE);
         final GitUntrackedFilesOverwrittenByOperationDetector untrackedFilesDetector =
           new GitUntrackedFilesOverwrittenByOperationDetector(selectedRoot);
+        final GitSimpleEventDetector mergeConflict = new GitSimpleEventDetector(GitSimpleEventDetector.Event.MERGE_CONFLICT);
 
         AccessToken token = DvcsUtil.workingTreeChangeStarted(project);
         try {
@@ -95,6 +96,7 @@ abstract class GitMergeAction extends GitRepositoryAction {
               GitLineHandler handler = handlerProvider.compute();
               handler.addLineListener(localChangesDetector);
               handler.addLineListener(untrackedFilesDetector);
+              handler.addLineListener(mergeConflict);
               return handler;
             }
           });
@@ -107,7 +109,8 @@ abstract class GitMergeAction extends GitRepositoryAction {
             return;
           }
           final GitRevisionNumber currentRev = new GitRevisionNumber(revision);
-          handleResult(result, project, localChangesDetector, untrackedFilesDetector, repository, currentRev, affectedRoots, beforeLabel);
+          handleResult(result, project, mergeConflict, localChangesDetector, untrackedFilesDetector,
+                       repository, currentRev, affectedRoots, beforeLabel);
         }
         finally {
           DvcsUtil.workingTreeChangeFinished(project, token);
@@ -117,12 +120,18 @@ abstract class GitMergeAction extends GitRepositoryAction {
     }.queue();
   }
 
-  private void handleResult(GitCommandResult result, Project project, GitLocalChangesWouldBeOverwrittenDetector localChangesDetector, 
-                            GitUntrackedFilesOverwrittenByOperationDetector untrackedFilesDetector, GitRepository repository, 
-                            GitRevisionNumber currentRev, Set<VirtualFile> affectedRoots, Label beforeLabel) {
+  private void handleResult(GitCommandResult result,
+                            Project project,
+                            GitSimpleEventDetector mergeConflictDetector,
+                            GitLocalChangesWouldBeOverwrittenDetector localChangesDetector,
+                            GitUntrackedFilesOverwrittenByOperationDetector untrackedFilesDetector,
+                            GitRepository repository,
+                            GitRevisionNumber currentRev,
+                            Set<VirtualFile> affectedRoots,
+                            Label beforeLabel) {
     GitRepositoryManager repositoryManager = GitUtil.getRepositoryManager(project);
     VirtualFile root = repository.getRoot();
-    if (result.success()) {
+    if (result.success() || mergeConflictDetector.hasHappened()) {
       VfsUtil.markDirtyAndRefresh(false, true, false, root);
       List<VcsException> exceptions = new ArrayList<VcsException>();
       GitMergeUtil.showUpdates(this, project, exceptions, root, currentRev, beforeLabel, getActionName(), ActionInfo.UPDATE);
@@ -134,8 +143,8 @@ abstract class GitMergeAction extends GitRepositoryAction {
                                                                  localChangesDetector.getRelativeFilePaths());
     }
     else if (untrackedFilesDetector.wasMessageDetected()) {
-      UntrackedFilesNotifier.notifyUntrackedFilesOverwrittenBy(project, root, untrackedFilesDetector.getRelativeFilePaths(),
-                                                               getActionName(), null);
+      GitUntrackedFilesHelper.notifyUntrackedFilesOverwrittenBy(project, root, untrackedFilesDetector.getRelativeFilePaths(),
+                                                                getActionName(), null);
     }
     else {
       GitUIUtil.notifyError(project, "Git " + getActionName() + " Failed", result.getErrorOutputAsJoinedString(), true, null);

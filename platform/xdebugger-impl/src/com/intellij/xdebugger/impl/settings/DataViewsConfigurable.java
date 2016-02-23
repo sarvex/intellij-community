@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.intellij.xdebugger.XDebuggerBundle;
 import com.intellij.xdebugger.settings.DebuggerSettingsCategory;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class DataViewsConfigurable extends SubCompositeConfigurable implements Configurable.NoScroll {
   @NotNull
@@ -45,9 +46,15 @@ class DataViewsConfigurable extends SubCompositeConfigurable implements Configur
     return DebuggerSettingsCategory.DATA_VIEWS;
   }
 
+  @Nullable
+  @Override
+  public String getHelpTopic() {
+    return "reference.idesettings.debugger.dataviews";
+  }
+
   @NotNull
   @Override
   protected XDebuggerDataViewSettings getSettings() {
-    return XDebuggerSettingsManager.getInstanceImpl().getDataViewSettings();
+    return XDebuggerSettingManagerImpl.getInstanceImpl().getDataViewSettings();
   }
 }

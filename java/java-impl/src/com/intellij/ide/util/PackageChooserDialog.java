@@ -79,7 +79,7 @@ public class PackageChooserDialog extends PackageChooser {
   private Module myModule;
   private EditorTextField myPathEditor;
 
-  private Alarm myAlarm = new Alarm(getDisposable()); 
+  private final Alarm myAlarm = new Alarm(getDisposable());
 
   public PackageChooserDialog(String title, @NotNull Module module) {
     super(module.getProject(), true);
@@ -202,7 +202,7 @@ public class PackageChooserDialog extends PackageChooser {
 
   private void toggleShowPathComponent(JPanel northPanel, TextFieldAction fieldAction) {
     boolean toShowTextField = !isPathShowing();
-    PropertiesComponent.getInstance().setValue(FileChooserDialogImpl.FILE_CHOOSER_SHOW_PATH_PROPERTY, Boolean.toString(toShowTextField));
+    PropertiesComponent.getInstance().setValue(FileChooserDialogImpl.FILE_CHOOSER_SHOW_PATH_PROPERTY, toShowTextField, true);
     myPathEditor.setVisible(toShowTextField);
     fieldAction.update();
     northPanel.revalidate();

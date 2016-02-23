@@ -50,11 +50,6 @@ public abstract class IntegrationTestCase extends PlatformTestCase {
   protected VirtualFile myRoot;
   protected IdeaGateway myGateway;
 
-  @SuppressWarnings({"JUnitTestCaseWithNonTrivialConstructors"})
-  public IntegrationTestCase() {
-    PlatformTestCase.initPlatformLangPrefix();
-  }
-
   // let it be as if someone (e.g. dumb mode indexing) has loaded the content so it's available to local history
   protected static void loadContent(VirtualFile f) throws IOException {
     f.contentsToByteArray();
@@ -119,7 +114,7 @@ public abstract class IntegrationTestCase extends PlatformTestCase {
   }
 
   protected void setContent(VirtualFile f, String content, long timestamp) throws IOException {
-    f.setBinaryContent(content.getBytes(CharsetToolkit.UTF8_CHARSET), -1, timestamp);
+    setBinaryContent(f, content.getBytes(CharsetToolkit.UTF8_CHARSET), -1, timestamp,this);
   }
 
   protected String createFileExternally(String name) throws IOException {
@@ -149,7 +144,12 @@ public abstract class IntegrationTestCase extends PlatformTestCase {
   protected void setDocumentTextFor(VirtualFile f, String text) {
     Document document = FileDocumentManager.getInstance().getDocument(f);
     assertNotNull(f.getPath(), document);
-    document.setText(text);
+    ApplicationManager.getApplication().runWriteAction(new Runnable() {
+      @Override
+      public void run() {
+        document.setText(text);
+      }
+    });
   }
 
   protected LocalHistoryFacade getVcs() {

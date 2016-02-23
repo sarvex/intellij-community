@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
  */
 package com.intellij.usages.impl.rules;
 
-import com.intellij.openapi.roots.GeneratedSourcesFilter;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.GeneratedSourcesFilter;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.usageView.UsageInfo;
 import com.intellij.usageView.UsageViewBundle;
@@ -34,16 +34,18 @@ import org.jetbrains.annotations.NotNull;
  * @author max
  */
 public class NonCodeUsageGroupingRule implements UsageGroupingRule {
-  private final GeneratedSourcesFilter[] myGeneratedSourcesFilters;
   private final Project myProject;
 
   public NonCodeUsageGroupingRule(Project project) {
     myProject = project;
-    myGeneratedSourcesFilters = GeneratedSourcesFilter.EP_NAME.getExtensions();
   }
 
   private static class CodeUsageGroup extends UsageGroupBase {
     private static final UsageGroup INSTANCE = new CodeUsageGroup();
+
+    private CodeUsageGroup() {
+      super(0);
+    }
 
     @Override
     @NotNull
@@ -55,18 +57,14 @@ public class NonCodeUsageGroupingRule implements UsageGroupingRule {
       //noinspection HardCodedStringLiteral
       return "CodeUsages";
     }
-
-    @Override
-    public int compareTo(@NotNull UsageGroup usageGroup) {
-      if (usageGroup instanceof DynamicUsageGroup) {
-        return -1;
-      }
-      return usageGroup == this ? 0 : 1;
-    }
   }
 
   private static class UsageInGeneratedCodeGroup extends UsageGroupBase {
     public static final UsageGroup INSTANCE = new UsageInGeneratedCodeGroup();
+
+    private UsageInGeneratedCodeGroup() {
+      super(3);
+    }
 
     @Override
     @NotNull
@@ -77,20 +75,19 @@ public class NonCodeUsageGroupingRule implements UsageGroupingRule {
     public String toString() {
       return "UsagesInGeneratedCode";
     }
-
-    @Override
-    public int compareTo(@NotNull UsageGroup usageGroup) {
-      return usageGroup == this ? 0 : -1;
-    }
   }
 
   private static class NonCodeUsageGroup extends UsageGroupBase {
     public static final UsageGroup INSTANCE = new NonCodeUsageGroup();
 
+    private NonCodeUsageGroup() {
+      super(2);
+    }
+
     @Override
     @NotNull
     public String getText(UsageView view) {
-      return view == null ? UsageViewBundle.message("node.group.code.usages") : view.getPresentation().getNonCodeUsagesString();
+      return view == null ? UsageViewBundle.message("node.non.code.usages") : view.getPresentation().getNonCodeUsagesString();
     }
 
     @Override
@@ -101,12 +98,15 @@ public class NonCodeUsageGroupingRule implements UsageGroupingRule {
       //noinspection HardCodedStringLiteral
       return "NonCodeUsages";
     }
-    public int compareTo(@NotNull UsageGroup usageGroup) { return usageGroup == this ? 0 : -1; }
   }
 
   private static class DynamicUsageGroup extends UsageGroupBase {
     public static final UsageGroup INSTANCE = new DynamicUsageGroup();
     @NonNls private static final String DYNAMIC_CAPTION = "Dynamic usages";
+
+    public DynamicUsageGroup() {
+      super(1);
+    }
 
     @Override
     @NotNull
@@ -124,19 +124,14 @@ public class NonCodeUsageGroupingRule implements UsageGroupingRule {
       //noinspection HardCodedStringLiteral
       return "DynamicUsages";
     }
-    public int compareTo(@NotNull UsageGroup usageGroup) { return usageGroup == this ? 0 : 1; }
   }
 
   @Override
   public UsageGroup groupUsage(@NotNull Usage usage) {
     if (usage instanceof UsageInFile) {
       VirtualFile file = ((UsageInFile)usage).getFile();
-      if (file != null) {
-        for (GeneratedSourcesFilter filter : myGeneratedSourcesFilters) {
-          if (filter.isGeneratedSource(file, myProject)) {
-            return UsageInGeneratedCodeGroup.INSTANCE;
-          }
-        }
+      if (file != null && GeneratedSourcesFilter.isGeneratedSourceByAnyFilter(file, myProject)) {
+          return UsageInGeneratedCodeGroup.INSTANCE;
       }
     }
     if (usage instanceof PsiElementUsage) {

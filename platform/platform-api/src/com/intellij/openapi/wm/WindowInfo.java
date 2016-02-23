@@ -38,7 +38,11 @@ public interface WindowInfo {
 
   boolean isFloating();
 
+  boolean isWindowed();
+
   boolean isSliding();
+
+  boolean isShowStripeButton();
 
   ToolWindowContentUiType getContentUiType();
 }

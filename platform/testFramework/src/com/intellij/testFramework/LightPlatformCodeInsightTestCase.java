@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -103,7 +103,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
   }
 
   protected boolean isRunInWriteAction() {
-    return true;
+    return false;
   }
 
   /**
@@ -132,7 +132,8 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     return PathManagerEx.getTestDataPath();
   }
 
-  protected VirtualFile getVirtualFile(@NonNls String filePath) {
+  @NotNull
+  protected VirtualFile getVirtualFile(@NonNls @NotNull String filePath) {
     String fullPath = getTestDataPath() + filePath;
 
     final VirtualFile vFile = LocalFileSystem.getInstance().findFileByPath(fullPath.replace(File.separatorChar, '/'));
@@ -181,6 +182,26 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     }.execute().getResultObject();
   }
 
+  @NotNull
+  protected static Editor configureFromFileTextWithoutPSI(@NonNls @NotNull final String fileText) {
+    return new WriteCommandAction<Editor>(null) {
+      @Override
+      protected void run(@NotNull Result<Editor> result) throws Throwable {
+        final Document fakeDocument = EditorFactory.getInstance().createDocument(fileText);
+        EditorTestUtil.CaretAndSelectionState caretsState = EditorTestUtil.extractCaretAndSelectionMarkers(fakeDocument);
+
+        String newFileText = fakeDocument.getText();
+        Document document = EditorFactory.getInstance().createDocument(newFileText);
+        final Editor editor = EditorFactory.getInstance().createEditor(document);
+        ((EditorImpl)editor).setCaretActive();
+
+        EditorTestUtil.setCaretsAndSelection(editor, caretsState);
+        result.setResult(editor);
+      }
+    }.execute().getResultObject();
+  }
+
+  @NotNull
   protected static Editor createEditor(@NotNull VirtualFile file) {
     PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
     Editor editor = FileEditorManager.getInstance(getProject()).openTextEditor(new OpenFileDescriptor(getProject(), file, 0), false);
@@ -247,16 +268,20 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
 
   @Override
   protected void tearDown() throws Exception {
-    FileEditorManager editorManager = FileEditorManager.getInstance(getProject());
-    VirtualFile[] openFiles = editorManager.getOpenFiles();
-    for (VirtualFile openFile : openFiles) {
-      editorManager.closeFile(openFile);
+    try {
+      FileEditorManager editorManager = FileEditorManager.getInstance(getProject());
+      VirtualFile[] openFiles = editorManager.getOpenFiles();
+      for (VirtualFile openFile : openFiles) {
+        editorManager.closeFile(openFile);
+      }
+      deleteVFile();
+      myEditor = null;
+      myFile = null;
+      myVFile = null;
     }
-    deleteVFile();
-    myEditor = null;
-    myFile = null;
-    myVFile = null;
-    super.tearDown();
+    finally {
+      super.tearDown();
+    }
   }
 
   /**
@@ -352,7 +377,37 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     });
   }
 
-  private static String getMessage(@NonNls String engineMessage, String userMessage) {
+  protected static void checkResultByTextWithoutPSI(final String message,
+                                                    @NotNull final Editor editor,
+                                                    @NotNull final String fileText,
+                                                    final boolean ignoreTrailingSpaces,
+                                                    final String filePath) {
+    ApplicationManager.getApplication().runWriteAction(new Runnable() {
+      @Override
+      public void run() {
+        final Document fakeDocument = EditorFactory.getInstance().createDocument(fileText);
+
+        if (ignoreTrailingSpaces) {
+          ((DocumentImpl)fakeDocument).stripTrailingSpaces(getProject());
+        }
+
+        EditorTestUtil.CaretAndSelectionState carets = EditorTestUtil.extractCaretAndSelectionMarkers(fakeDocument);
+
+        String newFileText = fakeDocument.getText();
+        String fileText = editor.getDocument().getText();
+        String failMessage = getMessage("Text mismatch", message);
+        if (filePath != null && !newFileText.equals(fileText)) {
+          throw new FileComparisonFailure(failMessage, newFileText, fileText, filePath);
+        }
+        assertEquals(failMessage, newFileText, fileText);
+
+        EditorTestUtil.verifyCaretAndSelectionState(editor, carets, message);
+      }
+    });
+  }
+
+  @NotNull
+  private static String getMessage(@NonNls @NotNull String engineMessage, String userMessage) {
     if (userMessage == null) return engineMessage;
     return userMessage + " [" + engineMessage + "]";
   }
@@ -388,7 +443,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
   protected void caretRight() {
     caretRight(getEditor());
   }
-  public static void caretRight(Editor editor) {
+  public static void caretRight(@NotNull Editor editor) {
     executeAction(IdeActions.ACTION_EDITOR_MOVE_CARET_RIGHT, editor);
   }
 
@@ -396,14 +451,14 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     caretUp(getEditor());
   }
 
-  public static void caretUp(Editor editor) {
+  public static void caretUp(@NotNull Editor editor) {
     executeAction(IdeActions.ACTION_EDITOR_MOVE_CARET_UP, editor);
   }
 
   protected void deleteLine() {
     deleteLine(getEditor(),getProject());
   }
-  public static void deleteLine(Editor editor, Project project) {
+  public static void deleteLine(@NotNull Editor editor, Project project) {
     executeAction(IdeActions.ACTION_EDITOR_DELETE_LINE, editor,project);
   }
 
@@ -470,6 +525,14 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     executeAction(IdeActions.ACTION_EDITOR_MOVE_LINE_END);
   }
 
+  protected static void homeWithSelection() {
+    executeAction(IdeActions.ACTION_EDITOR_MOVE_LINE_START_WITH_SELECTION);
+  }
+
+  protected static void endWithSelection() {
+    executeAction(IdeActions.ACTION_EDITOR_MOVE_LINE_END_WITH_SELECTION);
+  }
+
   protected static void copy() {
     executeAction(IdeActions.ACTION_EDITOR_COPY);
   }
@@ -484,6 +547,14 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
 
   protected static void moveCaretToNextWordWithSelection() {
     executeAction(IdeActions.ACTION_EDITOR_NEXT_WORD_WITH_SELECTION);
+  }
+
+  protected static void previousWord() {
+    executeAction(IdeActions.ACTION_EDITOR_PREVIOUS_WORD);
+  }
+
+  protected static void nextWord() {
+    executeAction(IdeActions.ACTION_EDITOR_NEXT_WORD);
   }
 
   protected static void cutLineBackward() {
@@ -526,6 +597,22 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     executeAction("EditorSelectLine");
   }
 
+  protected static void left() {
+    executeAction("EditorLeft");
+  }
+
+  protected static void right() {
+    executeAction("EditorRight");
+  }
+
+  protected static void up() {
+    executeAction("EditorUp");
+  }
+
+  protected static void down() {
+    executeAction("EditorDown");
+  }
+
   protected static void lineComment() {
     new CommentByLineCommentAction().actionPerformedImpl(getProject(), getEditor());
   }
@@ -545,6 +632,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     }, "", null, editor.getDocument());
   }
 
+  @NotNull
   protected static DataContext getCurrentEditorDataContext() {
     final DataContext defaultContext = DataManager.getInstance().getDataContext();
     return new DataContext() {
@@ -597,7 +685,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
   }
 
   @com.intellij.testFramework.Parameterized.Parameters(name = "{0}")
-  public static List<Object[]> params(Class<?> klass) throws Throwable{
+  public static List<Object[]> params(@NotNull Class<?> klass) throws Throwable{
     final LightPlatformCodeInsightTestCase testCase = (LightPlatformCodeInsightTestCase)klass.newInstance();
     if (!(testCase instanceof FileBasedTestCaseHelper)) {
       fail("Parameterized test should implement FileBasedTestCaseHelper");
@@ -694,7 +782,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     }
   }
 
-  protected void runSingleTest(final Runnable testRunnable) throws Throwable {
+  protected void runSingleTest(@NotNull final Runnable testRunnable) throws Throwable {
     final Throwable[] throwables = new Throwable[1];
 
     Runnable runnable = new Runnable() {
@@ -714,7 +802,5 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     if (throwables[0] != null) {
       throw throwables[0];
     }
-
   }
-
 }

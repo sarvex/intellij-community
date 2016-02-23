@@ -16,9 +16,8 @@
 package git4idea.rebase;
 
 import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.text.StringUtil;
 import git4idea.commands.GitLineHandlerAdapter;
-
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * <p>
@@ -35,31 +34,60 @@ public class GitRebaseProblemDetector extends GitLineHandlerAdapter {
   private final static String[] REBASE_CONFLICT_INDICATORS = {
     "Merge conflict in",
     "hint: after resolving the conflicts, mark the corrected paths",
+    "You must edit all merge conflicts",
     "Failed to merge in the changes",
     "could not apply"};
   private static final String REBASE_NO_CHANGE_INDICATOR = "No changes - did you forget to use 'git add'?";
+  private static final String[] DIRTY_TREE_INDICATORS = {
+    "you have unstaged changes",
+    "your index contains uncommitted changes"
+  };
+  private static final String STOPPED_FOR_EDITING = "You can amend the commit now";
 
-  private AtomicBoolean mergeConflict = new AtomicBoolean(false);
-  private AtomicBoolean noChangeError = new AtomicBoolean(false);
+  private volatile boolean myMergeConflict;
+  private volatile boolean myNoChangeError;
+  private volatile boolean myDirtyTree;
+  private volatile boolean myStoppedForEditing;
 
   public boolean isNoChangeError() {
-    return noChangeError.get();
+    return myNoChangeError;
   }
 
   public boolean isMergeConflict() {
-    return mergeConflict.get();
+    return myMergeConflict;
+  }
+
+  public boolean isDirtyTree() {
+    return myDirtyTree;
+  }
+
+  public boolean hasStoppedForEditing() {
+    return myStoppedForEditing;
   }
 
   @Override
   public void onLineAvailable(String line, Key outputType) {
     for (String conflictIndicator : REBASE_CONFLICT_INDICATORS) {
-      if (line.contains(conflictIndicator)) {
-        mergeConflict.set(true);
+      if (StringUtil.containsIgnoreCase(line, conflictIndicator)) {
+        myMergeConflict = true;
         return;
       }
     }
-    if (line.contains(REBASE_NO_CHANGE_INDICATOR)) {
-      noChangeError.set(true);
+
+    if (StringUtil.containsIgnoreCase(line, REBASE_NO_CHANGE_INDICATOR)) {
+      myNoChangeError = true;
+      return;
+    }
+
+    for (String indicator : DIRTY_TREE_INDICATORS) {
+      if (StringUtil.containsIgnoreCase(line, indicator)) {
+        myDirtyTree = true;
+        return;
+      }
+    }
+
+    if (StringUtil.containsIgnoreCase(line, STOPPED_FOR_EDITING)) {
+      myStoppedForEditing = true;
     }
   }
 }

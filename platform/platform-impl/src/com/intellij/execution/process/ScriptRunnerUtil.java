@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ public final class ScriptRunnerUtil {
 
   public static String getProcessOutput(@NotNull GeneralCommandLine commandLine, @NotNull Condition<Key> outputTypeFilter, long timeout)
     throws ExecutionException {
-    return getProcessOutput(new OSProcessHandler(commandLine.createProcess(), commandLine.getCommandLineString()), outputTypeFilter,
+    return getProcessOutput(new OSProcessHandler(commandLine), outputTypeFilter,
                             timeout);
   }
 
@@ -120,9 +120,7 @@ public final class ScriptRunnerUtil {
                                             @Nullable VirtualFile scriptFile,
                                             String[] parameters,
                                             @Nullable Charset charset) throws ExecutionException {
-    GeneralCommandLine commandLine = new GeneralCommandLine();
-    commandLine.setExePath(exePath);
-    commandLine.setPassParentEnvironment(true);
+    GeneralCommandLine commandLine = new GeneralCommandLine(exePath);
     if (scriptFile != null) {
       commandLine.addParameter(scriptFile.getPresentableUrl());
     }
@@ -138,9 +136,8 @@ public final class ScriptRunnerUtil {
     if (charset == null) {
       charset = EncodingManager.getInstance().getDefaultCharset();
     }
-    final OSProcessHandler processHandler = new ColoredProcessHandler(commandLine.createProcess(),
-                                                                      commandLine.getCommandLineString(),
-                                                                      charset);
+    commandLine.setCharset(charset);
+    final OSProcessHandler processHandler = new ColoredProcessHandler(commandLine);
     if (LOG.isDebugEnabled()) {
       processHandler.addProcessListener(new ProcessAdapter() {
         @Override

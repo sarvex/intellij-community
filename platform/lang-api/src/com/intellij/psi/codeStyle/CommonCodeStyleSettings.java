@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ package com.intellij.psi.codeStyle;
 
 import com.intellij.lang.Language;
 import com.intellij.openapi.editor.Document;
-import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.util.*;
 import com.intellij.psi.PsiDocumentManager;
@@ -120,7 +119,7 @@ public class CommonCodeStyleSettings {
     CommonCodeStyleSettings commonSettings = new CommonCodeStyleSettings(myLanguage, getFileType());
     copyPublicFields(this, commonSettings);
     commonSettings.setRootSettings(rootSettings);
-    commonSettings.myForceArrangeMenuAvailable = this.myForceArrangeMenuAvailable;
+    commonSettings.myForceArrangeMenuAvailable = myForceArrangeMenuAvailable;
     if (myIndentOptions != null) {
       IndentOptions targetIndentOptions = commonSettings.initIndentOptions();
       targetIndentOptions.copyFrom(myIndentOptions);
@@ -225,6 +224,11 @@ public class CommonCodeStyleSettings {
 
   public boolean LINE_COMMENT_AT_FIRST_COLUMN = true;
   public boolean BLOCK_COMMENT_AT_FIRST_COLUMN = true;
+
+  /**
+   * Tells if a space is added when commenting/uncommenting lines with a line comment.
+   */
+  public boolean LINE_COMMENT_ADD_SPACE = false;
 
   public boolean KEEP_LINE_BREAKS = true;
 
@@ -390,7 +394,7 @@ public class CommonCodeStyleSettings {
   public boolean INDENT_CASE_FROM_SWITCH = true;
 
   /**
-   * Controls "break" position realtive to "case".
+   * Controls "break" position relative to "case".
    * <pre>
    * case 0:
    * <--->break;
@@ -439,6 +443,7 @@ public class CommonCodeStyleSettings {
    */
   public boolean ALIGN_GROUP_FIELD_DECLARATIONS = false;
   public boolean ALIGN_CONSECUTIVE_VARIABLE_DECLARATIONS = false;
+  public boolean ALIGN_SUBSEQUENT_SIMPLE_METHODS = false;
 
 //----------------- SPACES --------------------
 
@@ -813,6 +818,7 @@ public class CommonCodeStyleSettings {
   public int THROWS_KEYWORD_WRAP = DO_NOT_WRAP;
 
   public int METHOD_CALL_CHAIN_WRAP = DO_NOT_WRAP;
+  public boolean WRAP_FIRST_METHOD_IN_CALL_CHAIN = false;
 
   public boolean PARENTHESES_EXPRESSION_LPAREN_WRAP = false;
   public boolean PARENTHESES_EXPRESSION_RPAREN_WRAP = false;
@@ -827,6 +833,7 @@ public class CommonCodeStyleSettings {
 
   public boolean KEEP_SIMPLE_BLOCKS_IN_ONE_LINE = false;
   public boolean KEEP_SIMPLE_METHODS_IN_ONE_LINE = false;
+  public boolean KEEP_SIMPLE_LAMBDAS_IN_ONE_LINE = false;
   public boolean KEEP_SIMPLE_CLASSES_IN_ONE_LINE = false;
   public boolean KEEP_MULTIPLE_EXPRESSIONS_IN_ONE_LINE = false;
 
@@ -890,9 +897,26 @@ public class CommonCodeStyleSettings {
 
   public int FORCE_REARRANGE_MODE = REARRANGE_ACCORDIND_TO_DIALOG;
 
+  public enum WrapOnTyping {
+    DEFAULT(-1),
+    NO_WRAP (0),
+    WRAP (1);
+
+    public int intValue;
+
+    WrapOnTyping(int i) {
+      intValue = i;
+    }
+  }
+
+  /**
+   * Defines if wrapping should occur when typing reaches right margin. <b>Do not use a value of this field directly, call
+   * {@link CodeStyleSettings#isWrapOnTyping(Language)} method instead</b>.
+   */
+  public int WRAP_ON_TYPING = WrapOnTyping.DEFAULT.intValue;
 
   //-------------------------Indent options-------------------------------------------------
-  public static class IndentOptions implements JDOMExternalizable, Cloneable {
+  public static class IndentOptions implements Cloneable, JDOMExternalizable {
     public int INDENT_SIZE = 4;
     public int CONTINUATION_INDENT_SIZE = 8;
     public int TAB_SIZE = 4;
@@ -903,7 +927,9 @@ public class CommonCodeStyleSettings {
     public boolean USE_RELATIVE_INDENTS = false;
     public boolean KEEP_INDENTS_ON_EMPTY_LINES = false;
 
-    private final static Key<CommonCodeStyleSettings.IndentOptions> INDENT_OPTIONS_KEY = Key.create("INDENT_OPTIONS");
+    private FileIndentOptionsProvider myFileIndentOptionsProvider;
+    private static final Key<CommonCodeStyleSettings.IndentOptions> INDENT_OPTIONS_KEY = Key.create("INDENT_OPTIONS_KEY");
+    private boolean myInaccurate;
 
     @Override
     public void readExternal(Element element) throws InvalidDataException {
@@ -912,14 +938,11 @@ public class CommonCodeStyleSettings {
 
     @Override
     public void writeExternal(Element element) throws WriteExternalException {
-      DefaultJDOMExternalizer.writeExternal(this, element, new DefaultJDOMExternalizer.JDOMFilter() {
-        @Override
-        public boolean isAccept(@NotNull Field field) {
-          if ("KEEP_INDENTS_ON_EMPTY_LINES".equals(field.getName())) {
-            return KEEP_INDENTS_ON_EMPTY_LINES;
-          }
-          return true;
+      DefaultJDOMExternalizer.writeExternal(this, element, field -> {
+        if ("KEEP_INDENTS_ON_EMPTY_LINES".equals(field.getName())) {
+          return KEEP_INDENTS_ON_EMPTY_LINES;
         }
+        return true;
       });
     }
 
@@ -986,17 +1009,30 @@ public class CommonCodeStyleSettings {
     }
 
     @Nullable
-    static IndentOptions retrieveFromAssociatedDocument(@NotNull PsiFile file) {
-      PsiDocumentManager documentManager = PsiDocumentManager.getInstance(file.getProject());
-      if (documentManager != null) {
-        Document document = documentManager.getDocument(file);
-        if (document != null) return document.getUserData(INDENT_OPTIONS_KEY);
-      }
-      return null;
+    FileIndentOptionsProvider getFileIndentOptionsProvider() {
+      return myFileIndentOptionsProvider;
+    }
+
+    void setFileIndentOptionsProvider(@NotNull FileIndentOptionsProvider provider) {
+      myFileIndentOptionsProvider = provider;
     }
 
     void associateWithDocument(@NotNull Document document) {
       document.putUserData(INDENT_OPTIONS_KEY, this);
+    }
+
+    @Nullable
+    static IndentOptions retrieveFromAssociatedDocument(@NotNull PsiFile file) {
+      Document document = PsiDocumentManager.getInstance(file.getProject()).getDocument(file);
+      return document != null ? document.getUserData(INDENT_OPTIONS_KEY) : null;
+    }
+
+    boolean isRecalculateForCommittedDocument() {
+      return myInaccurate;
+    }
+
+    void setRecalculateForCommittedDocument(boolean value) {
+      myInaccurate = value;
     }
   }
 }

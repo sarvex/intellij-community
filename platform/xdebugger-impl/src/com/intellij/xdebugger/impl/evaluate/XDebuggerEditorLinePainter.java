@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,23 +23,24 @@ import com.intellij.openapi.editor.markup.TextAttributes;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
-import com.intellij.openapi.util.Pair;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.*;
-import com.intellij.util.NotNullProducer;
 import com.intellij.util.containers.ObjectLongHashMap;
 import com.intellij.xdebugger.XDebugSession;
+import com.intellij.xdebugger.XDebuggerManager;
 import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.frame.presentation.XValuePresentation;
 import com.intellij.xdebugger.impl.XDebugSessionImpl;
+import com.intellij.xdebugger.impl.XDebuggerManagerImpl;
 import com.intellij.xdebugger.impl.frame.XDebugView;
 import com.intellij.xdebugger.impl.frame.XVariablesView;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueTextRendererImpl;
+import com.intellij.xdebugger.settings.XDebuggerSettingsManager;
 import com.intellij.xdebugger.ui.DebuggerColors;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.awt.*;
 import java.util.*;
@@ -50,21 +51,21 @@ import java.util.List;
  */
 public class XDebuggerEditorLinePainter extends EditorLinePainter {
   public static final Key<Map<Variable, VariableValue>> CACHE = Key.create("debug.inline.variables.cache");
-  // we want to limit number of line extentions to avoid very slow painting
+  // we want to limit number of line extensions to avoid very slow painting
   // the constant is rather random (feel free to adjust it upon getting a new information)
-  private static final int LINE_EXTENTIONS_MAX_COUNT = 200;
+  private static final int LINE_EXTENSIONS_MAX_COUNT = 200;
 
   @Override
   public Collection<LineExtensionInfo> getLineExtensions(@NotNull Project project, @NotNull VirtualFile file, int lineNumber) {
-    if (!Registry.is("ide.debugger.inline")) {
+    if (!XDebuggerSettingsManager.getInstance().getDataViewSettings().isShowValuesInline()) {
       return null;
     }
 
-    final Map<Pair<VirtualFile, Integer>, Set<XValueNodeImpl>> map = project.getUserData(XVariablesView.DEBUG_VARIABLES);
+    XVariablesView.InlineVariablesInfo data = project.getUserData(XVariablesView.DEBUG_VARIABLES);
     final ObjectLongHashMap<VirtualFile> timestamps = project.getUserData(XVariablesView.DEBUG_VARIABLES_TIMESTAMPS);
     final Document doc = FileDocumentManager.getInstance().getDocument(file);
 
-    if (map == null || timestamps == null || doc == null) {
+    if (data == null || timestamps == null || doc == null) {
       return null;
     }
 
@@ -77,9 +78,15 @@ public class XDebuggerEditorLinePainter extends EditorLinePainter {
     if (timestamp == -1 || timestamp < doc.getModificationStamp()) {
       return null;
     }
-    Set<XValueNodeImpl> values = map.get(Pair.create(file, lineNumber));
+    List<XValueNodeImpl> values = data.get(file, lineNumber);
     if (values != null && !values.isEmpty()) {
-      final int bpLine = getCurrentBreakPointLineInFile(values, file);
+      XDebugSession session = XDebugView.getSession(values.iterator().next().getTree());
+      final int bpLine = getCurrentBreakPointLineInFile(session, file);
+      boolean isTopFrame = session instanceof XDebugSessionImpl && ((XDebugSessionImpl)session).isTopFrameSelected();
+      final TextAttributes attributes = bpLine == lineNumber && isTopFrame &&
+                                        ((XDebuggerManagerImpl)XDebuggerManager.getInstance(project)).isFullLineHighlighter()
+                                        ? getTopFrameSelectedAttributes() : getNormalAttributes();
+
       ArrayList<VariableText> result = new ArrayList<VariableText>();
       for (XValueNodeImpl value : values) {
         SimpleColoredText text = new SimpleColoredText();
@@ -103,9 +110,6 @@ public class XDebuggerEditorLinePainter extends EditorLinePainter {
         catch (Exception ignored) {
           continue;
         }
-        XDebugSession session = XDebugView.getSession(values.iterator().next().getTree());
-        boolean isTopFrame = session instanceof XDebugSessionImpl && ((XDebugSessionImpl)session).isTopFrameSelected();
-        final TextAttributes attributes = bpLine == lineNumber && isTopFrame ? getTopFrameSelectedAttributes() : getNormalAttributes();
 
         final String name = value.getName();
         if (StringUtil.isEmpty(text.toString())) {
@@ -136,25 +140,17 @@ public class XDebuggerEditorLinePainter extends EditorLinePainter {
           variableValue.produceChangedParts(res.infos);
         }
       }
-      Collections.sort(result, new Comparator<VariableText>() {
-        @Override
-        public int compare(VariableText o1, VariableText o2) {
-          return o1.length - o2.length;
-        }
-      });
       final List<LineExtensionInfo> infos = new ArrayList<LineExtensionInfo>();
       for (VariableText text : result) {
         infos.addAll(text.infos);
       }
-      return infos.size() > LINE_EXTENTIONS_MAX_COUNT ? infos.subList(0, LINE_EXTENTIONS_MAX_COUNT) : infos;
+      return infos.size() > LINE_EXTENSIONS_MAX_COUNT ? infos.subList(0, LINE_EXTENSIONS_MAX_COUNT) : infos;
     }
     return null;
   }
 
-  private static int getCurrentBreakPointLineInFile(Set<XValueNodeImpl> values, VirtualFile file) {
+  private static int getCurrentBreakPointLineInFile(@Nullable XDebugSession session, VirtualFile file) {
     try {
-      final XValueNodeImpl node = values.iterator().next();
-      final XDebugSession session = XDebugView.getSession(node.getTree());
       if (session != null) {
         final XSourcePosition position = session.getCurrentPosition();
         if (position != null && position.getFile().equals(file)) {
@@ -173,14 +169,7 @@ public class XDebuggerEditorLinePainter extends EditorLinePainter {
   public static TextAttributes getNormalAttributes() {
     TextAttributes attributes = EditorColorsManager.getInstance().getGlobalScheme().getAttributes(DebuggerColors.INLINED_VALUES);
     if (attributes == null || attributes.getForegroundColor() == null) {
-     return new TextAttributes(new JBColor(new NotNullProducer<Color>() {
-        @SuppressWarnings("UseJBColor")
-        @NotNull
-        @Override
-        public Color produce() {
-          return isDarkEditor() ? new Color(0x3d8065) : Gray._135;
-        }
-      }), null, null, null, Font.ITALIC);
+     return new TextAttributes(new JBColor(() -> isDarkEditor() ? new Color(0x3d8065) : Gray._135), null, null, null, Font.ITALIC);
     }
     return attributes;
   }
@@ -188,14 +177,7 @@ public class XDebuggerEditorLinePainter extends EditorLinePainter {
   public static TextAttributes getChangedAttributes() {
     TextAttributes attributes = EditorColorsManager.getInstance().getGlobalScheme().getAttributes(DebuggerColors.INLINED_VALUES_MODIFIED);
     if (attributes == null || attributes.getForegroundColor() == null) {
-      return new TextAttributes(new JBColor(new NotNullProducer<Color>() {
-        @SuppressWarnings("UseJBColor")
-        @NotNull
-        @Override
-        public Color produce() {
-          return isDarkEditor() ? new Color(0xa1830a) : new Color(0xca8021);
-        }
-      }), null, null, null, Font.ITALIC);
+      return new TextAttributes(new JBColor(() -> isDarkEditor() ? new Color(0xa1830a) : new Color(0xca8021)), null, null, null, Font.ITALIC);
     }
     return attributes;
   }
@@ -286,7 +268,7 @@ public class XDebuggerEditorLinePainter extends EditorLinePainter {
   }
 
   private static class VariableText {
-    List<LineExtensionInfo> infos = new ArrayList<LineExtensionInfo>();
+    final List<LineExtensionInfo> infos = new ArrayList<LineExtensionInfo>();
     int length = 0;
 
     void add(LineExtensionInfo info) {

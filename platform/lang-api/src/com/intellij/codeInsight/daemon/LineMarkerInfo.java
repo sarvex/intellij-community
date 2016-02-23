@@ -17,7 +17,6 @@
 package com.intellij.codeInsight.daemon;
 
 import com.intellij.openapi.actionSystem.AnAction;
-import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.editor.markup.GutterIconRenderer;
 import com.intellij.openapi.editor.markup.RangeHighlighter;
 import com.intellij.openapi.editor.markup.SeparatorPlacement;
@@ -31,7 +30,6 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.MouseEvent;
 import java.lang.ref.WeakReference;
 
 public class LineMarkerInfo<T extends PsiElement> {
@@ -45,18 +43,19 @@ public class LineMarkerInfo<T extends PsiElement> {
 
   public final int updatePass;
   @Nullable private final Function<? super T, String> myTooltipProvider;
+  private AnAction myNavigateAction = new NavigateAction<T>(this);
   @NotNull private final GutterIconRenderer.Alignment myIconAlignment;
   @Nullable private final GutterIconNavigationHandler<T> myNavigationHandler;
 
-  public LineMarkerInfo(@NotNull T element,
-                        int startOffset,
-                        Icon icon,
-                        int updatePass,
-                        @Nullable Function<? super T, String> tooltipProvider,
-                        @Nullable GutterIconNavigationHandler<T> navHandler,
-                        @NotNull GutterIconRenderer.Alignment alignment) {
-    this(element, new TextRange(startOffset, startOffset), icon, updatePass, tooltipProvider, navHandler, alignment);
-  }
+  /**
+   * Creates a line marker info for the element.
+   * @param element         the element for which the line marker is created.
+   * @param startOffset     the offset (relative to beginning of file) with which the marker is associated
+   * @param icon            the icon to show in the gutter for the line marker
+   * @param updatePass      the ID of the daemon pass during which the marker should be recalculated
+   * @param tooltipProvider the callback to calculate the tooltip for the gutter icon
+   * @param navHandler      the handler executed when the gutter icon is clicked
+   */
   public LineMarkerInfo(@NotNull T element,
                         @NotNull TextRange range,
                         Icon icon,
@@ -76,13 +75,20 @@ public class LineMarkerInfo<T extends PsiElement> {
   }
 
   /**
-   * Creates a line marker info for the element.
-   * @param element         the element for which the line marker is created.
-   * @param startOffset     the offset (relative to beginning of file) with which the marker is associated
-   * @param icon            the icon to show in the gutter for the line marker
-   * @param updatePass      the ID of the daemon pass during which the marker should be recalculated
-   * @param tooltipProvider the callback to calculate the tooltip for the gutter icon
-   * @param navHandler      the handler executed when the gutter icon is clicked
+   * @deprecated use {@link LineMarkerInfo#LineMarkerInfo(PsiElement, TextRange, Icon, int, Function, GutterIconNavigationHandler, GutterIconRenderer.Alignment)} instead
+   */
+  public LineMarkerInfo(@NotNull T element,
+                        int startOffset,
+                        Icon icon,
+                        int updatePass,
+                        @Nullable Function<? super T, String> tooltipProvider,
+                        @Nullable GutterIconNavigationHandler<T> navHandler,
+                        @NotNull GutterIconRenderer.Alignment alignment) {
+    this(element, new TextRange(startOffset, startOffset), icon, updatePass, tooltipProvider, navHandler, alignment);
+  }
+
+  /**
+   * @deprecated use {@link LineMarkerInfo#LineMarkerInfo(PsiElement, TextRange, Icon, int, Function, GutterIconNavigationHandler, GutterIconRenderer.Alignment)} instead
    */
   public LineMarkerInfo(@NotNull T element,
                         int startOffset,
@@ -101,10 +107,9 @@ public class LineMarkerInfo<T extends PsiElement> {
 
   @Nullable
   public String getLineMarkerTooltip() {
+    if (myTooltipProvider == null) return null;
     T element = getElement();
-    if (element == null || !element.isValid()) return null;
-    if (myTooltipProvider != null) return myTooltipProvider.fun(element);
-    return null;
+    return element == null || !element.isValid() ? null : myTooltipProvider.fun(element);
   }
 
   @Nullable
@@ -112,17 +117,8 @@ public class LineMarkerInfo<T extends PsiElement> {
     return elementRef.get();
   }
 
-  private class NavigateAction extends AnAction {
-    @Override
-    public void actionPerformed(AnActionEvent e) {
-      if (myNavigationHandler != null) {
-        MouseEvent mouseEvent = (MouseEvent)e.getInputEvent();
-        T element = getElement();
-        if (element == null || !element.isValid()) return;
-
-        myNavigationHandler.navigate(mouseEvent, element);
-      }
-    }
+  void setNavigateAction(@NotNull  AnAction navigateAction) {
+    myNavigateAction = navigateAction;
   }
 
   @Nullable
@@ -149,7 +145,7 @@ public class LineMarkerInfo<T extends PsiElement> {
 
     @Override
     public AnAction getClickAction() {
-      return myInfo.new NavigateAction();
+      return myInfo.myNavigateAction;
     }
 
     @Override

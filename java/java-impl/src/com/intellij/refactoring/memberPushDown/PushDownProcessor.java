@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package com.intellij.refactoring.memberPushDown;
 
 import com.intellij.codeInsight.AnnotationUtil;
 import com.intellij.codeInsight.ChangeContextUtil;
+import com.intellij.codeInsight.generation.OverrideImplementUtil;
 import com.intellij.codeInsight.intention.impl.CreateClassDialog;
 import com.intellij.codeInsight.intention.impl.CreateSubclassAction;
 import com.intellij.openapi.application.ApplicationManager;
@@ -80,8 +81,14 @@ public class PushDownProcessor extends BaseRefactoringProcessor {
 
   @Override
   @NotNull
-  protected UsageViewDescriptor createUsageViewDescriptor(UsageInfo[] usages) {
-    return new PushDownUsageViewDescriptor(myClass);
+  protected UsageViewDescriptor createUsageViewDescriptor(@NotNull UsageInfo[] usages) {
+    return new PushDownUsageViewDescriptor<MemberInfo>(myClass, myMemberInfos);
+  }
+
+  @NotNull
+  @Override
+  protected Collection<? extends PsiElement> getElementsToWrite(@NotNull UsageViewDescriptor descriptor) {
+    return Collections.singletonList(myClass);
   }
 
   @Nullable
@@ -106,7 +113,7 @@ public class PushDownProcessor extends BaseRefactoringProcessor {
 
   @Nullable
   @Override
-  protected RefactoringEventData getAfterData(UsageInfo[] usages) {
+  protected RefactoringEventData getAfterData(@NotNull UsageInfo[] usages) {
     final List<PsiElement> elements = new ArrayList<PsiElement>();
     for (UsageInfo usage : usages) {
       PsiElement element = usage.getElement();
@@ -152,7 +159,7 @@ public class PushDownProcessor extends BaseRefactoringProcessor {
   }
 
   @Override
-  protected boolean preprocessUsages(final Ref<UsageInfo[]> refUsages) {
+  protected boolean preprocessUsages(@NotNull final Ref<UsageInfo[]> refUsages) {
     final UsageInfo[] usagesIn = refUsages.get();
     final PushDownConflicts pushDownConflicts = new PushDownConflicts(myClass, myMemberInfos);
     pushDownConflicts.checkSourceClassConflicts();
@@ -216,7 +223,7 @@ public class PushDownProcessor extends BaseRefactoringProcessor {
   }
 
   @Override
-  protected void refreshElements(PsiElement[] elements) {
+  protected void refreshElements(@NotNull PsiElement[] elements) {
     if(elements.length == 1 && elements[0] instanceof PsiClass) {
       myClass = (PsiClass) elements[0];
     }
@@ -226,7 +233,7 @@ public class PushDownProcessor extends BaseRefactoringProcessor {
   }
 
   @Override
-  protected void performRefactoring(UsageInfo[] usages) {
+  protected void performRefactoring(@NotNull UsageInfo[] usages) {
     try {
       encodeRefs();
       if (myCreateClassDlg != null) { //usages.length == 0
@@ -317,13 +324,6 @@ public class PushDownProcessor extends BaseRefactoringProcessor {
   }
 
   private void decodeRefs(final PsiMember member, final PsiClass targetClass) {
-    try {
-      ChangeContextUtil.decodeContextInfo(member, null, null);
-    }
-    catch (IncorrectOperationException e) {
-      LOG.error(e);
-    }
-
     final PsiElementFactory factory = JavaPsiFacade.getInstance(myProject).getElementFactory();
     member.accept(new JavaRecursiveElementWalkingVisitor() {
       @Override public void visitReferenceExpression(PsiReferenceExpression expression) {
@@ -472,6 +472,9 @@ public class PushDownProcessor extends BaseRefactoringProcessor {
               PsiUtil.setModifierProperty(newMember, PsiModifier.PROTECTED, true);
             }
             myJavaDocPolicy.processNewJavaDoc(((PsiMethod)newMember).getDocComment());
+          }
+          if (memberInfo.isToAbstract()) {
+            OverrideImplementUtil.annotateOnOverrideImplement((PsiMethod)newMember, targetClass, (PsiMethod)memberInfo.getMember());
           }
         }
         else { //abstract method: remove @Override

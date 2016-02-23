@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@ package com.intellij.openapi.fileEditor;
 
 import com.intellij.AppTopics;
 import com.intellij.mock.MockVirtualFile;
-import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.ex.DocumentEx;
 import com.intellij.openapi.fileEditor.impl.FileDocumentManagerImpl;
+import com.intellij.openapi.util.ThrowableComputable;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.IoTestUtil;
 import com.intellij.openapi.vfs.CharsetToolkit;
@@ -31,7 +31,7 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileEvent;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
-import com.intellij.testFramework.PlatformLangTestCase;
+import com.intellij.testFramework.PlatformTestCase;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.LocalTimeCounter;
 import com.intellij.util.ObjectUtils;
@@ -45,7 +45,7 @@ import java.io.OutputStream;
 
 import static org.junit.Assert.assertNotEquals;
 
-public class FileDocumentManagerImplTest extends PlatformLangTestCase {
+public class FileDocumentManagerImplTest extends PlatformTestCase {
   private FileDocumentManagerImpl myDocumentManager;
   private Boolean myReloadFromDisk;
 
@@ -90,7 +90,14 @@ public class FileDocumentManagerImplTest extends PlatformLangTestCase {
 
   public void testGetDocument_CreateNew_ReadOnly() throws Exception {
     final VirtualFile file = createFile();
-    file.setWritable(false);
+    ApplicationManager.getApplication().runWriteAction(new ThrowableComputable<Object, IOException>() {
+      @Override
+      public Object compute() throws IOException {
+        file.setWritable(false);
+        return null;
+      }
+    });
+
     final Document document = myDocumentManager.getDocument(file);
     assertNotNull(document);
     assertEquals("test", document.getText());
@@ -221,7 +228,12 @@ public class FileDocumentManagerImplTest extends PlatformLangTestCase {
       assertEquals("test", new String(file.contentsToByteArray(), CharsetToolkit.UTF8_CHARSET));
     }
     finally {
-      myDocumentManager.dropAllUnsavedDocuments();
+      ApplicationManager.getApplication().runWriteAction(new Runnable() {
+        @Override
+        public void run() {
+          myDocumentManager.dropAllUnsavedDocuments();
+        }
+      });
     }
   }
 
@@ -347,27 +359,24 @@ public class FileDocumentManagerImplTest extends PlatformLangTestCase {
 
   public void testContentChanged_noDocument() throws Exception {
     final VirtualFile file = createFile();
-    setContent(file, "xxx");
+    setFileText(file, "xxx");
     assertNull(myDocumentManager.getCachedDocument(file));
   }
 
-  VirtualFile createFile(String name, String content) throws IOException {
+  private VirtualFile createFile(String name, String content) throws IOException {
     File file = createTempFile(name, content);
     VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByIoFile(file);
     assertNotNull(virtualFile);
     return virtualFile;
   }
-  VirtualFile createFile() throws IOException {
+  private VirtualFile createFile() throws IOException {
     return createFile("test.txt", "test");
-  }
-  void setContent(VirtualFile file, String content) throws IOException {
-    file.setBinaryContent(content.getBytes(CharsetToolkit.UTF8_CHARSET));
   }
 
   public void testContentChanged_documentPresent() throws Exception {
     VirtualFile file = createFile();
     Document document = myDocumentManager.getDocument(file);
-    setContent(file, "xxx");
+    setFileText(file, "xxx");
     assertNotNull(file.toString(), document);
     assertEquals("xxx", document.getText());
     assertEquals(file.getModificationStamp(), document.getModificationStamp());
@@ -376,7 +385,8 @@ public class FileDocumentManagerImplTest extends PlatformLangTestCase {
   public void testContentChanged_ignoreEventsFromSelf() throws Exception {
     final VirtualFile file = createFile("test.txt", "test\rtest");
     Document document = myDocumentManager.getDocument(file);
-    file.setBinaryContent("xxx".getBytes(CharsetToolkit.UTF8_CHARSET), -1,-1,myDocumentManager);
+    setBinaryContent(file, "xxx".getBytes(CharsetToolkit.UTF8_CHARSET), -1, -1, myDocumentManager);
+
     assertNotNull(file.toString(), document);
     assertEquals("test\ntest", document.getText());
   }
@@ -427,7 +437,7 @@ public class FileDocumentManagerImplTest extends PlatformLangTestCase {
 
 
     myReloadFromDisk = Boolean.TRUE;
-    setContent(file, "xxx");
+    setFileText(file, "xxx");
 
     assertEquals("xxx", document.getText());
     assertEquals(file.getModificationStamp(), document.getModificationStamp());
@@ -448,7 +458,7 @@ public class FileDocumentManagerImplTest extends PlatformLangTestCase {
     myReloadFromDisk = Boolean.FALSE;
     long oldDocumentStamp = document.getModificationStamp();
 
-    file.setBinaryContent("xxx".getBytes(CharsetToolkit.UTF8_CHARSET));
+    setBinaryContent(file, "xxx".getBytes(CharsetToolkit.UTF8_CHARSET));
 
     assertEquals("old test", document.getText());
     assertEquals(oldDocumentStamp, document.getModificationStamp());
@@ -613,13 +623,10 @@ public class FileDocumentManagerImplTest extends PlatformLangTestCase {
   }
 
   private static void renameFile(VirtualFile file, String newName) throws IOException {
-    AccessToken token = ApplicationManager.getApplication().acquireWriteActionLock(null);
-    try {
+    ApplicationManager.getApplication().runWriteAction((ThrowableComputable<Object, IOException>)() -> {
       file.rename(null, newName);
-    }
-    finally {
-      token.finish();
-    }
+      return null;
+    });
   }
 
   public void testNoPSIModificationsDuringSave() throws IOException {

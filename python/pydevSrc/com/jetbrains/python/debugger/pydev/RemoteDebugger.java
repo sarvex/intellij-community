@@ -24,7 +24,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -434,7 +433,7 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   @Override
-  public void setTempBreakpoint(String type, String file, int line) {
+  public void setTempBreakpoint(@NotNull String type, @NotNull String file, int line) {
     final SetBreakpointCommand command =
       new SetBreakpointCommand(this, type, file, line);
     execute(command);  // set temp. breakpoint
@@ -442,7 +441,7 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   @Override
-  public void removeTempBreakpoint(String file, int line) {
+  public void removeTempBreakpoint(@NotNull String file, int line) {
     String type = myTempBreakpoints.get(Pair.create(file, line));
     if (type != null) {
       final RemoveBreakpointCommand command = new RemoveBreakpointCommand(this, type, file, line);
@@ -454,7 +453,8 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   @Override
-  public void setBreakpoint(String typeId, String file, int line, String condition, String logExpression) {
+  public void setBreakpoint(@NotNull String typeId, @NotNull String file, int line, @Nullable String condition,
+                            @Nullable String logExpression) {
     final SetBreakpointCommand command =
       new SetBreakpointCommand(this, typeId, file, line,
                                condition,
@@ -463,7 +463,8 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   @Override
-  public void setBreakpointWithFuncName(String typeId, String file, int line, String condition, String logExpression, String funcName) {
+  public void setBreakpointWithFuncName(@NotNull String typeId, @NotNull String file, int line, @Nullable String condition,
+                                        @Nullable String logExpression, @Nullable String funcName) {
     final SetBreakpointCommand command =
       new SetBreakpointCommand(this, typeId, file, line,
                                condition,
@@ -473,7 +474,7 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   @Override
-  public void removeBreakpoint(String typeId, String file, int line) {
+  public void removeBreakpoint(@NotNull String typeId, @NotNull String file, int line) {
     final RemoveBreakpointCommand command =
       new RemoveBreakpointCommand(this, typeId, file, line);
     execute(command);
@@ -491,7 +492,7 @@ public class RemoteDebugger implements ProcessDebugger {
 
     private DebuggerReader(final InputStream stream) throws IOException {
       super(stream, CharsetToolkit.UTF8_CHARSET, SleepingPolicy.BLOCKING); //TODO: correct encoding?
-      start();
+      start(getClass().getName());
     }
 
     protected void doRun() {
@@ -537,6 +538,9 @@ public class RemoteDebugger implements ProcessDebugger {
         else if (AbstractCommand.isCallSignatureTrace(frame.getCommand())) {
           recordCallSignature(ProtocolParser.parseCallSignature(frame.getPayload()));
         }
+        else if (AbstractCommand.isConcurrencyEvent(frame.getCommand())) {
+          recordConcurrencyEvent(ProtocolParser.parseConcurrencyEvent(frame.getPayload(), myDebugProcess.getPositionConverter()));
+        }
         else {
           placeResponse(frame.getSequence(), frame);
         }
@@ -549,6 +553,10 @@ public class RemoteDebugger implements ProcessDebugger {
 
     private void recordCallSignature(PySignature signature) {
       myDebugProcess.recordSignature(signature);
+    }
+
+    private void recordConcurrencyEvent(PyConcurrencyEvent event) {
+      myDebugProcess.recordLogEvent(event);
     }
 
     // todo: extract response processing
@@ -591,6 +599,15 @@ public class RemoteDebugger implements ProcessDebugger {
             thread.updateState(PyThreadInfo.State.KILLED, null);
             myThreads.remove(id);
           }
+          if (myDebugProcess.getSession().getCurrentPosition() == null) {
+            for (PyThreadInfo threadInfo : myThreads.values()) {
+              // notify UI of suspended threads left in debugger if one thread finished its work
+              if ((threadInfo != null) && (threadInfo.getState() == PyThreadInfo.State.SUSPENDED)) {
+                myDebugProcess.threadResumed(threadInfo);
+                myDebugProcess.threadSuspended(threadInfo);
+              }
+            }
+          }
           break;
         }
         case AbstractCommand.SHOW_CONSOLE: {
@@ -613,8 +630,9 @@ public class RemoteDebugger implements ProcessDebugger {
       return ProtocolParser.parseThread(frame.getPayload(), myDebugProcess.getPositionConverter());
     }
 
+    @NotNull
     @Override
-    protected Future<?> executeOnPooledThread(Runnable runnable) {
+    protected Future<?> executeOnPooledThread(@NotNull Runnable runnable) {
       return ApplicationManager.getApplication().executeOnPooledThread(runnable);
     }
 

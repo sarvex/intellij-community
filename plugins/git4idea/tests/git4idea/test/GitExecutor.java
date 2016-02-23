@@ -15,17 +15,20 @@
  */
 package git4idea.test;
 
+import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.Executor;
 import git4idea.repo.GitRepository;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 
+import static org.junit.Assert.assertFalse;
+
 /**
- *
  * @author Kirill Likhodedov
  */
 public class GitExecutor extends Executor {
@@ -51,6 +54,11 @@ public class GitExecutor extends Executor {
 
   public static String git(String command, boolean ignoreNonZeroExitCode) {
     printVersionTheFirstTime();
+    return doCallGit(command, ignoreNonZeroExitCode);
+  }
+
+  @NotNull
+  private static String doCallGit(String command, boolean ignoreNonZeroExitCode) {
     List<String> split = splitCommandInParameters(command);
     split.add(0, PathHolder.GIT_EXECUTABLE);
     File workingDir = ourCurrentDir();
@@ -101,17 +109,31 @@ public class GitExecutor extends Executor {
     git("add --verbose " + path);
   }
 
-  public static void addCommit(@NotNull String message) {
+  @NotNull
+  public static String addCommit(@NotNull String message) {
     add();
-    commit(message);
+    return commit(message);
   }
 
   public static void checkout(@NotNull String... params) {
     git("checkout " + StringUtil.join(params, " "));
   }
 
-  public static void commit(@NotNull String message) {
+  public static String commit(@NotNull String message) {
     git("commit -m '" + message + "'");
+    return last();
+  }
+
+  @NotNull
+  public static String tac(@NotNull String file) {
+    touch(file, "content" + Math.random());
+    return addCommit("touched " + file);
+  }
+
+  @NotNull
+  public static String modify(@NotNull String file) throws IOException {
+    overwrite(file, "content" + Math.random());
+    return addCommit("modified " + file);
   }
 
   @NotNull
@@ -135,8 +157,60 @@ public class GitExecutor extends Executor {
   private static void printVersionTheFirstTime() {
     if (!myVersionPrinted) {
       myVersionPrinted = true;
-      git("version");
+      doCallGit("version", false);
     }
   }
 
+  @NotNull
+  public static TestFile file(@NotNull String fileName) {
+    File f = child(fileName);
+    return new TestFile(f);
+  }
+
+  public static class TestFile {
+    @NotNull private final File myFile;
+
+    private TestFile(@NotNull File file) {
+      myFile = file;
+    }
+
+    public TestFile append(@NotNull String content) throws IOException {
+      FileUtil.writeToFile(myFile, content.getBytes(), true);
+      return this;
+    }
+
+    public TestFile write(@NotNull String content) throws IOException {
+      FileUtil.writeToFile(myFile, content.getBytes(), false);
+      return this;
+    }
+
+    public TestFile create(@NotNull String content) throws IOException {
+      assertNotExists();
+      FileUtil.writeToFile(myFile, content.getBytes(), false);
+      return this;
+    }
+
+    public TestFile assertNotExists() {
+      assertFalse(myFile.exists());
+      return this;
+    }
+
+    public TestFile add() {
+      GitExecutor.add(myFile.getPath());
+      return this;
+    }
+
+    public TestFile commit() {
+      return commit("Some message");
+    }
+
+    public TestFile commit(String message) {
+      GitExecutor.commit(message);
+      return this;
+    }
+
+    public boolean exists() {
+      return myFile.exists();
+    }
+  }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,13 @@ package com.intellij.openapi.roots.impl;
 
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
-import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.*;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.util.NotNullFunction;
+import com.intellij.util.PairProcessor;
 import com.intellij.util.Processor;
 import com.intellij.util.SmartList;
 import com.intellij.util.containers.ContainerUtil;
@@ -48,22 +48,24 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
   protected boolean myRecursivelyExportedOnly;
   private boolean myExportedOnly;
   private Condition<OrderEntry> myCondition;
-  private final List<OrderEnumerationHandler> myCustomHandlers;
   protected RootModelProvider myModulesProvider;
   private final OrderRootsCache myCache;
 
-  public OrderEnumeratorBase(@Nullable Module module, @NotNull Project project, @Nullable OrderRootsCache cache) {
+  public OrderEnumeratorBase(@Nullable OrderRootsCache cache) {
     myCache = cache;
+  }
+
+  static List<OrderEnumerationHandler> getCustomHandlers(@NotNull Module module) {
     List<OrderEnumerationHandler> customHandlers = null;
     for (OrderEnumerationHandler.Factory handlerFactory : OrderEnumerationHandler.EP_NAME.getExtensions()) {
-      if (handlerFactory.isApplicable(project) && (module == null || handlerFactory.isApplicable(module))) {
+      if (handlerFactory.isApplicable(module)) {
         if (customHandlers == null) {
           customHandlers = new SmartList<OrderEnumerationHandler>();
         }
         customHandlers.add(handlerFactory.createHandler(module));
       }
     }
-    this.myCustomHandlers = customHandlers == null ? Collections.<OrderEnumerationHandler>emptyList() : customHandlers;
+    return customHandlers == null ? Collections.<OrderEnumerationHandler>emptyList() : customHandlers;
   }
 
   @Override
@@ -195,71 +197,116 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
     return flags;
   }
 
-  protected void processEntries(final ModuleRootModel rootModel,
-                                Processor<OrderEntry> processor,
-                                Set<Module> processed, boolean firstLevel) {
+  @Override
+  public boolean shouldRecurse(@NotNull ModuleOrderEntry entry, @NotNull List<OrderEnumerationHandler> handlers) {
+    ProcessEntryAction action = shouldAddOrRecurse(entry, true, handlers);
+    return action.type == ProcessEntryActionType.RECURSE;
+  }
+
+  // Should process, should recurse, or not process at all.
+  protected enum ProcessEntryActionType {
+    SKIP,
+    RECURSE,
+    PROCESS
+  }
+
+  protected static class ProcessEntryAction {
+    public ProcessEntryActionType type;
+    @Nullable public Module recurseOnModule;
+
+    private ProcessEntryAction(ProcessEntryActionType type) {
+      this.type = type;
+    }
+
+    public static final ProcessEntryAction SKIP = new ProcessEntryAction(ProcessEntryActionType.SKIP);
+
+    public static ProcessEntryAction RECURSE(@NotNull Module module) {
+      ProcessEntryAction result = new ProcessEntryAction(ProcessEntryActionType.RECURSE);
+      result.recurseOnModule = module;
+      return result;
+    }
+
+    public static final ProcessEntryAction PROCESS = new ProcessEntryAction(ProcessEntryActionType.PROCESS);
+  }
+
+  protected ProcessEntryAction shouldAddOrRecurse(OrderEntry entry, boolean firstLevel, List<OrderEnumerationHandler> customHandlers) {
+    if (myCondition != null && !myCondition.value(entry)) return ProcessEntryAction.SKIP;
+
+    if (entry instanceof JdkOrderEntry && (myWithoutJdk || !firstLevel)) return ProcessEntryAction.SKIP;
+    if (myWithoutLibraries && entry instanceof LibraryOrderEntry) return ProcessEntryAction.SKIP;
+    if (myWithoutDepModules) {
+      if (!myRecursively && entry instanceof ModuleOrderEntry) return ProcessEntryAction.SKIP;
+      if (entry instanceof ModuleSourceOrderEntry && !isRootModuleModel(((ModuleSourceOrderEntry)entry).getRootModel())) {
+        return ProcessEntryAction.SKIP;
+      }
+    }
+    if (myWithoutModuleSourceEntries && entry instanceof ModuleSourceOrderEntry) return ProcessEntryAction.SKIP;
+
+    OrderEnumerationHandler.AddDependencyType shouldAdd = OrderEnumerationHandler.AddDependencyType.DEFAULT;
+    for (OrderEnumerationHandler handler : customHandlers) {
+      shouldAdd = handler.shouldAddDependency(entry, this);
+      if (shouldAdd != OrderEnumerationHandler.AddDependencyType.DEFAULT) break;
+    }
+    if (shouldAdd == OrderEnumerationHandler.AddDependencyType.DO_NOT_ADD) {
+      return ProcessEntryAction.SKIP;
+    }
+
+    boolean exported = !(entry instanceof JdkOrderEntry);
+    if (entry instanceof ExportableOrderEntry) {
+      ExportableOrderEntry exportableEntry = (ExportableOrderEntry)entry;
+      if (shouldAdd == OrderEnumerationHandler.AddDependencyType.DEFAULT) {
+        final DependencyScope scope = exportableEntry.getScope();
+        boolean forTestCompile = scope.isForTestCompile() ||
+                                 scope == DependencyScope.RUNTIME && shouldAddRuntimeDependenciesToTestCompilationClasspath(customHandlers);
+        if (myCompileOnly && !scope.isForProductionCompile() && !forTestCompile) return ProcessEntryAction.SKIP;
+        if (myRuntimeOnly && !scope.isForProductionRuntime() && !scope.isForTestRuntime()) return ProcessEntryAction.SKIP;
+        if (myProductionOnly) {
+          if (!scope.isForProductionCompile() && !scope.isForProductionRuntime() ||
+              myCompileOnly && !scope.isForProductionCompile() ||
+              myRuntimeOnly && !scope.isForProductionRuntime()) {
+            return ProcessEntryAction.SKIP;
+          }
+        }
+      }
+      exported = exportableEntry.isExported();
+    }
+    if (!exported) {
+      if (myExportedOnly) return ProcessEntryAction.SKIP;
+      if (myRecursivelyExportedOnly && !firstLevel) return ProcessEntryAction.SKIP;
+    }
+    if (myRecursively && entry instanceof ModuleOrderEntry) {
+      ModuleOrderEntry moduleOrderEntry = (ModuleOrderEntry)entry;
+      final Module depModule = moduleOrderEntry.getModule();
+      if (depModule != null && shouldProcessRecursively(customHandlers)) {
+        return ProcessEntryAction.RECURSE(depModule);
+      }
+    }
+    if (myWithoutDepModules && entry instanceof ModuleOrderEntry) return ProcessEntryAction.SKIP;
+    return ProcessEntryAction.PROCESS;
+  }
+
+  protected void processEntries(final ModuleRootModel rootModel, PairProcessor<OrderEntry, List<OrderEnumerationHandler>> processor,
+                                Set<Module> processed, boolean firstLevel, final List<OrderEnumerationHandler> customHandlers) {
     if (processed != null && !processed.add(rootModel.getModule())) return;
 
     for (OrderEntry entry : rootModel.getOrderEntries()) {
-      if (myCondition != null && !myCondition.value(entry)) continue;
-
-      if (entry instanceof JdkOrderEntry && (myWithoutJdk || !firstLevel)) continue;
-      if (myWithoutLibraries && entry instanceof LibraryOrderEntry) continue;
-      if (myWithoutDepModules) {
-        if (!myRecursively && entry instanceof ModuleOrderEntry) continue;
-        if (entry instanceof ModuleSourceOrderEntry && !isRootModuleModel(((ModuleSourceOrderEntry)entry).getRootModel())) continue;
+      ProcessEntryAction action = shouldAddOrRecurse(entry, firstLevel, customHandlers);
+      if (action.type == ProcessEntryActionType.SKIP) {
+        continue;
       }
-      if (myWithoutModuleSourceEntries && entry instanceof ModuleSourceOrderEntry) continue;
-
-      OrderEnumerationHandler.AddDependencyType shouldAdd = OrderEnumerationHandler.AddDependencyType.DEFAULT;
-      for (OrderEnumerationHandler handler : myCustomHandlers) {
-        shouldAdd = handler.shouldAddDependency(entry, this);
-        if (shouldAdd != OrderEnumerationHandler.AddDependencyType.DEFAULT) break;
+      if (action.type == ProcessEntryActionType.RECURSE) {
+        processEntries(getRootModel(action.recurseOnModule), processor, processed, false, customHandlers);
+        continue;
       }
-      if (shouldAdd == OrderEnumerationHandler.AddDependencyType.DO_NOT_ADD) continue;
-
-      boolean exported = !(entry instanceof JdkOrderEntry);
-
-      if (entry instanceof ExportableOrderEntry) {
-        ExportableOrderEntry exportableEntry = (ExportableOrderEntry)entry;
-        if (shouldAdd == OrderEnumerationHandler.AddDependencyType.DEFAULT) {
-          final DependencyScope scope = exportableEntry.getScope();
-          boolean forTestCompile = scope.isForTestCompile() || scope == DependencyScope.RUNTIME && shouldAddRuntimeDependenciesToTestCompilationClasspath();
-          if (myCompileOnly && !scope.isForProductionCompile() && !forTestCompile) continue;
-          if (myRuntimeOnly && !scope.isForProductionRuntime() && !scope.isForTestRuntime()) continue;
-          if (myProductionOnly) {
-            if (!scope.isForProductionCompile() && !scope.isForProductionRuntime()
-                || myCompileOnly && !scope.isForProductionCompile()
-                || myRuntimeOnly && !scope.isForProductionRuntime()) {
-              continue;
-            }
-          }
-        }
-        exported = exportableEntry.isExported();
-      }
-      if (!exported) {
-        if (myExportedOnly) continue;
-        if (myRecursivelyExportedOnly && !firstLevel) continue;
-      }
-
-      if (myRecursively && entry instanceof ModuleOrderEntry) {
-        ModuleOrderEntry moduleOrderEntry = (ModuleOrderEntry)entry;
-        final Module module = moduleOrderEntry.getModule();
-        if (module != null && shouldProcessRecursively()) {
-          processEntries(getRootModel(module), processor, processed, false);
-          continue;
-        }
-      }
-
-      if (myWithoutDepModules && entry instanceof ModuleOrderEntry) continue;
-      if (!processor.process(entry)) {
+      assert action.type == ProcessEntryActionType.PROCESS;
+      if (!processor.process(entry, customHandlers)) {
         return;
       }
     }
   }
 
-  private boolean shouldAddRuntimeDependenciesToTestCompilationClasspath() {
-    for (OrderEnumerationHandler handler : myCustomHandlers) {
+  private static boolean shouldAddRuntimeDependenciesToTestCompilationClasspath(final List<OrderEnumerationHandler> customHandlers) {
+    for (OrderEnumerationHandler handler : customHandlers) {
       if (handler.shouldAddRuntimeDependenciesToTestCompilationClasspath()) {
         return true;
       }
@@ -267,8 +314,8 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
     return false;
   }
 
-  private boolean shouldProcessRecursively() {
-    for (OrderEnumerationHandler handler : myCustomHandlers) {
+  private static boolean shouldProcessRecursively(final List<OrderEnumerationHandler> customHandlers) {
+    for (OrderEnumerationHandler handler : customHandlers) {
       if (!handler.shouldProcessDependenciesRecursively()) {
         return false;
       }
@@ -277,12 +324,24 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
   }
 
   @Override
-  public void forEachLibrary(@NotNull final Processor<Library> processor) {
-    forEach(new Processor<OrderEntry>() {
+  public void forEach(@NotNull final Processor<OrderEntry> processor) {
+    forEach(new PairProcessor<OrderEntry, List<OrderEnumerationHandler>>() {
       @Override
-      public boolean process(OrderEntry orderEntry) {
-        if (orderEntry instanceof LibraryOrderEntry) {
-          final Library library = ((LibraryOrderEntry)orderEntry).getLibrary();
+      public boolean process(OrderEntry entry, List<OrderEnumerationHandler> handlers) {
+        return processor.process(entry);
+      }
+    });
+  }
+
+  protected abstract void forEach(@NotNull PairProcessor<OrderEntry, List<OrderEnumerationHandler>> processor);
+
+  @Override
+  public void forEachLibrary(@NotNull final Processor<Library> processor) {
+    forEach(new PairProcessor<OrderEntry, List<OrderEnumerationHandler>>() {
+      @Override
+      public boolean process(OrderEntry entry, List<OrderEnumerationHandler> handlers) {
+        if (entry instanceof LibraryOrderEntry) {
+          final Library library = ((LibraryOrderEntry)entry).getLibrary();
           if (library != null) {
             return processor.process(library);
           }
@@ -294,14 +353,14 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
 
   @Override
   public void forEachModule(@NotNull final Processor<Module> processor) {
-    forEach(new Processor<OrderEntry>() {
+    forEach(new PairProcessor<OrderEntry, List<OrderEnumerationHandler>>() {
       @Override
-      public boolean process(OrderEntry orderEntry) {
+      public boolean process(OrderEntry orderEntry, List<OrderEnumerationHandler> customHandlers) {
         if (myRecursively && orderEntry instanceof ModuleSourceOrderEntry) {
           final Module module = ((ModuleSourceOrderEntry)orderEntry).getRootModel().getModule();
           return processor.process(module);
         }
-        else if (orderEntry instanceof ModuleOrderEntry && (!myRecursively || !shouldProcessRecursively())) {
+        if (orderEntry instanceof ModuleOrderEntry && (!myRecursively || !shouldProcessRecursively(customHandlers))) {
           final Module module = ((ModuleOrderEntry)orderEntry).getModule();
           if (module != null) {
             return processor.process(module);
@@ -319,8 +378,8 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
     return processor.myValue;
   }
 
-  boolean shouldIncludeTestsFromDependentModulesToTestClasspath() {
-    for (OrderEnumerationHandler handler : myCustomHandlers) {
+  boolean shouldIncludeTestsFromDependentModulesToTestClasspath(List<OrderEnumerationHandler> customHandlers) {
+    for (OrderEnumerationHandler handler : customHandlers) {
       if (!handler.shouldIncludeTestsFromDependentModulesToTestClasspath()) {
         return false;
       }
@@ -328,8 +387,9 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
     return true;
   }
 
-  boolean addCustomRootsForLibrary(OrderEntry forOrderEntry, OrderRootType type, Collection<VirtualFile> result) {
-    for (OrderEnumerationHandler handler : myCustomHandlers) {
+  boolean addCustomRootsForLibrary(OrderEntry forOrderEntry, OrderRootType type, Collection<VirtualFile> result,
+                                   List<OrderEnumerationHandler> customHandlers) {
+    for (OrderEnumerationHandler handler : customHandlers) {
       final List<String> urls = new ArrayList<String>();
       final boolean added =
         handler.addCustomRootsForLibrary(forOrderEntry, type, urls);
@@ -343,8 +403,9 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
     return false;
   }
 
-  boolean addCustomRootUrlsForLibrary(OrderEntry forOrderEntry, OrderRootType type, Collection<String> result) {
-    for (OrderEnumerationHandler handler : myCustomHandlers) {
+  boolean addCustomRootUrlsForLibrary(OrderEntry forOrderEntry, OrderRootType type, Collection<String> result,
+                                      List<OrderEnumerationHandler> customHandlers) {
+    for (OrderEnumerationHandler handler : customHandlers) {
       final List<String> urls = new ArrayList<String>();
       final boolean added =
         handler.addCustomRootsForLibrary(forOrderEntry, type, urls);
@@ -360,8 +421,9 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
                                   ModuleRootModel rootModel,
                                   Collection<VirtualFile> result,
                                   boolean includeProduction,
-                                  boolean includeTests) {
-    for (OrderEnumerationHandler handler : myCustomHandlers) {
+                                  boolean includeTests,
+                                  final List<OrderEnumerationHandler> customHandlers) {
+    for (OrderEnumerationHandler handler : customHandlers) {
       final List<String> urls = new ArrayList<String>();
       final boolean added = handler.addCustomModuleRoots(type, rootModel, urls, includeProduction, includeTests);
       for (String url : urls) {
@@ -377,8 +439,9 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
                                      ModuleRootModel rootModel,
                                      Collection<String> result,
                                      boolean includeProduction,
-                                     boolean includeTests) {
-    for (OrderEnumerationHandler handler : myCustomHandlers) {
+                                     boolean includeTests,
+                                     List<OrderEnumerationHandler> customHandlers) {
+    for (OrderEnumerationHandler handler : customHandlers) {
       final List<String> urls = new ArrayList<String>();
       final boolean added = handler.addCustomModuleRoots(type, rootModel, urls, includeProduction, includeTests);
       result.addAll(urls);
@@ -414,17 +477,17 @@ abstract class OrderEnumeratorBase extends OrderEnumerator implements OrderEnume
    */
   public abstract void processRootModules(@NotNull Processor<Module> processor);
 
-  private class OrderEntryProcessor<R> implements Processor<OrderEntry> {
+  private static class OrderEntryProcessor<R> implements PairProcessor<OrderEntry, List<OrderEnumerationHandler>> {
     private R myValue;
     private final RootPolicy<R> myPolicy;
 
-    public OrderEntryProcessor(RootPolicy<R> policy, R initialValue) {
+    private OrderEntryProcessor(RootPolicy<R> policy, R initialValue) {
       myPolicy = policy;
       myValue = initialValue;
     }
 
     @Override
-    public boolean process(OrderEntry orderEntry) {
+    public boolean process(OrderEntry orderEntry, List<OrderEnumerationHandler> customHandlers) {
       myValue = orderEntry.accept(myPolicy, myValue);
       return true;
     }

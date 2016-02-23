@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,10 +46,7 @@ import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.PlainDocument;
 import java.awt.*;
-import java.awt.event.FocusAdapter;
-import java.awt.event.FocusEvent;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
+import java.awt.event.*;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
 import java.util.ListIterator;
@@ -72,6 +69,22 @@ public abstract class SpeedSearchBase<Comp extends JComponent> extends SpeedSear
   public SpeedSearchBase(Comp component) {
     myComponent = component;
 
+    myComponent.addComponentListener(new ComponentAdapter() {
+      @Override
+      public void componentHidden(ComponentEvent event) {
+        manageSearchPopup(null);
+      }
+
+      @Override
+      public void componentMoved(ComponentEvent event) {
+        moveSearchPopup();
+      }
+
+      @Override
+      public void componentResized(ComponentEvent event) {
+        moveSearchPopup();
+      }
+    });
     myComponent.addFocusListener(new FocusAdapter() {
       @Override
       public void focusLost(FocusEvent e) {
@@ -291,8 +304,12 @@ public abstract class SpeedSearchBase<Comp extends JComponent> extends SpeedSear
     return null;
   }
 
+  public void showPopup(String searchText) {
+    manageSearchPopup(new SearchPopup(searchText));
+  }
+
   public void showPopup() {
-    manageSearchPopup(new SearchPopup(""));
+    showPopup("");
   }
 
   public void hidePopup() {
@@ -311,7 +328,7 @@ public abstract class SpeedSearchBase<Comp extends JComponent> extends SpeedSear
       if (!UIUtil.isReallyTypedEvent(e)) return;
 
       char c = e.getKeyChar();
-      if (Character.isLetterOrDigit(c) || c == '_' || c == '*' || c == '/' || c == ':' || c == '.' || c == '#') {
+      if (Character.isLetterOrDigit(c) || c == '_' || c == '*' || c == '/' || c == ':' || c == '.' || c == '#' || c == '$') {
         manageSearchPopup(new SearchPopup(String.valueOf(c)));
         e.consume();
       }
@@ -568,7 +585,11 @@ public abstract class SpeedSearchBase<Comp extends JComponent> extends SpeedSear
       return;
     }
     myPopupLayeredPane.add(mySearchPopup, JLayeredPane.POPUP_LAYER);
-    if (myPopupLayeredPane == null) return; // See # 27482. Somewho it does happen...
+    moveSearchPopup();
+  }
+
+  private void moveSearchPopup() {
+    if (myComponent == null || mySearchPopup == null || myPopupLayeredPane == null) return;
     Point lPaneP = myPopupLayeredPane.getLocationOnScreen();
     Point componentP = getComponentLocationOnScreen();
     Rectangle r = getComponentVisibleRect();

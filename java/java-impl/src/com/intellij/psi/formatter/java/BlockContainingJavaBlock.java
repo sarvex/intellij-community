@@ -16,10 +16,9 @@
 package com.intellij.psi.formatter.java;
 
 import com.intellij.formatting.*;
+import com.intellij.formatting.alignment.AlignmentStrategy;
 import com.intellij.lang.ASTNode;
-import com.intellij.psi.JavaTokenType;
-import com.intellij.psi.PsiStatement;
-import com.intellij.psi.PsiTypeElement;
+import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
 import com.intellij.psi.codeStyle.JavaCodeStyleSettings;
 import com.intellij.psi.formatter.FormatterUtil;
@@ -54,6 +53,11 @@ public class BlockContainingJavaBlock extends AbstractJavaBlock{
                                   JavaCodeStyleSettings javaSettings) {
     super(node, wrap, alignment, indent, settings, javaSettings);
   }
+
+  public BlockContainingJavaBlock(ASTNode child, Indent indent, AlignmentStrategy strategy, CommonCodeStyleSettings settings, JavaCodeStyleSettings javaSettings) {
+    super(child, null, strategy, indent, settings, javaSettings);
+  }
+
   @Override
   protected List<Block> buildChildren() {
     final ArrayList<Block> result = new ArrayList<Block>();
@@ -100,7 +104,9 @@ public class BlockContainingJavaBlock extends AbstractJavaBlock{
         }
         else {
           prevChild = child;
-          child = processChild(result, child, childAlignment, childWrap, indent);
+          Alignment simpleMethodBraceAlignment = myAlignmentStrategy.getAlignment(child.getElementType());
+          Alignment toUse = childAlignment != null ? childAlignment : simpleMethodBraceAlignment;
+          child = processChild(result, child, toUse, childWrap, indent);
         }                
         for (int i = myIndentsBefore.size(); i < result.size(); i++) {
           myIndentsBefore.add(Indent.getContinuationIndent(myIndentSettings.USE_RELATIVE_INDENTS));
@@ -161,10 +167,21 @@ public class BlockContainingJavaBlock extends AbstractJavaBlock{
       else if (isSimpleStatement(child) || StdTokenSets.COMMENT_BIT_SET.contains(child.getElementType())){
         return getCodeBlockInternalIndent(1);
       }
+      else if (isNodeParentMethod(child) && 
+               (child.getElementType() == JavaElementType.TYPE
+                || child.getElementType() == JavaTokenType.IDENTIFIER
+                || child.getElementType() == JavaElementType.THROWS_LIST
+                || child.getElementType() == JavaElementType.TYPE_PARAMETER_LIST)) {
+        return Indent.getNoneIndent();
+      }
       else {
         return Indent.getContinuationIndent(myIndentSettings.USE_RELATIVE_INDENTS);
       }
     }
+  }
+
+  private static boolean isNodeParentMethod(@NotNull ASTNode node) {
+    return node.getTreeParent() != null && node.getTreeParent().getElementType() == JavaElementType.METHOD;
   }
 
   private Indent calcIndentBefore(final ASTNode child, final int state) {
@@ -244,8 +261,8 @@ public class BlockContainingJavaBlock extends AbstractJavaBlock{
       if (prevBlock instanceof ASTBlock && nextBlock instanceof ASTBlock) {
         ASTNode prevNode = ((ASTBlock)prevBlock).getNode();
         ASTNode nextNode = ((ASTBlock)nextBlock).getNode();
-        if (prevNode != null && nextNode != null && prevNode.getElementType() == JavaTokenType.RPARENTH 
-            && nextNode.getElementType() != JavaTokenType.LBRACE) 
+        if (prevNode != null && nextNode != null && prevNode.getElementType() == JavaTokenType.RPARENTH
+            && nextNode.getElementType() != JavaTokenType.LBRACE)
         {
           useExternalIndent = true;
         }
@@ -256,7 +273,7 @@ public class BlockContainingJavaBlock extends AbstractJavaBlock{
       return new ChildAttributes(getCodeBlockChildExternalIndent(newChildIndex), null);
     }
     else {
-      return new ChildAttributes(myIndentsBefore.get(newChildIndex), null);
+      return new ChildAttributes(myIndentsBefore.get(newChildIndex), getUsedAlignment(newChildIndex));
     }
   }
 

@@ -24,7 +24,7 @@
       <keyboard-shortcut first-keystroke="meta shift Y" />
       <keyboard-shortcut first-keystroke="meta 6" />
     </action>
-    <action id="ActivateChangesToolWindow">
+    <action id="ActivateVersionControlToolWindow">
       <keyboard-shortcut first-keystroke="meta 9" />
       <keyboard-shortcut first-keystroke="meta shift 9" />
     </action>
@@ -270,6 +270,7 @@
       <keyboard-shortcut first-keystroke="alt shift B"/>
       <mouse-shortcut keystroke="ctrl shift button1"/>
     </action>
+    <action id="tasks.open.in.browser"/><!-- conflicts with GotoTypeDeclaration  -->
     <action id="HelpTopics">
       <keyboard-shortcut first-keystroke="shift meta alt SLASH" />
     </action>
@@ -323,6 +324,9 @@
     <action id="ParameterInfo">
       <keyboard-shortcut first-keystroke="shift meta P" />
     </action>
+    <action id="ExpressionTypeInfo">
+      <keyboard-shortcut first-keystroke="control alt P" />
+    </action>
     <action id="PreviousEditorTab" />
     <action id="PreviousProjectWindow" />
     <action id="Print">
@@ -337,7 +341,6 @@
       <keyboard-shortcut first-keystroke="control F1"/>
       <keyboard-shortcut first-keystroke="alt SPACE"/>
     </action>
-    <action id="RemoveFromFavorites" />
     <action id="RenameElement">
       <keyboard-shortcut first-keystroke="control meta E" />
       <keyboard-shortcut first-keystroke="shift F6" />

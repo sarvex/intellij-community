@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,17 @@
 package com.intellij.module;
 
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.Result;
 import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.module.*;
-import com.intellij.testFramework.PlatformLangTestCase;
+import com.intellij.testFramework.PlatformTestCase;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * @author nik
  */
-public class ModulePointerTest extends PlatformLangTestCase {
+public class ModulePointerTest extends PlatformTestCase {
   public void testCreateByName() throws Exception {
     final ModulePointer pointer = getPointerManager().create("m");
     assertSame(pointer, getPointerManager().create("m"));
@@ -77,7 +79,13 @@ public class ModulePointerTest extends PlatformLangTestCase {
     assertSame(module, pointer.getModule());
     assertEquals("xxx", pointer.getModuleName());
 
-    modifiableModel.dispose();
+    ApplicationManager.getApplication().runWriteAction(new Runnable() {
+      @Override
+      public void run() {
+        modifiableModel.dispose();
+      }
+    });
+
 
     assertNull(pointer.getModule());
     assertEquals("xxx", pointer.getModuleName());
@@ -105,7 +113,7 @@ public class ModulePointerTest extends PlatformLangTestCase {
   private static void commitModel(final ModifiableModuleModel model) {
     new WriteAction() {
       @Override
-      protected void run(final Result result) {
+      protected void run(@NotNull final Result result) {
         model.commit();
       }
     }.execute();

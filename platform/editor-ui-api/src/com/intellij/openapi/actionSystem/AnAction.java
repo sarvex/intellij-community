@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,9 +33,9 @@ import java.util.List;
  * Represents an entity that has a state, a presentation and can be performed.
  *
  * For an action to be useful, you need to implement {@link AnAction#actionPerformed}
- * and optionally to override {@link com.intellij.openapi.actionSystem.AnAction#update}. By overriding the
- * {@link com.intellij.openapi.actionSystem.AnAction#update} method you can dynamically change action's presentation
- * depending on the place (for more information on places see {@link ActionPlaces}.
+ * and optionally to override {@link AnAction#update}. By overriding the
+ * {@link AnAction#update} method you can dynamically change action's presentation
+ * depending on the place (for more information on places see {@link com.intellij.openapi.actionSystem.ActionPlaces}.
  *
  * The same action can have various presentations.
  *
@@ -60,7 +60,7 @@ import java.util.List;
  *
  * @see AnActionEvent
  * @see Presentation
- * @see ActionPlaces
+ * @see com.intellij.openapi.actionSystem.ActionPlaces
  */
 public abstract class AnAction implements PossiblyDumbAware {
   public static final AnAction[] EMPTY_ARRAY = new AnAction[0];
@@ -140,7 +140,15 @@ public abstract class AnAction implements PossiblyDumbAware {
    * @param shortcutSet the shortcuts for the action.
    * @param component   the component for which the shortcuts will be active.
    */
-  public final void registerCustomShortcutSet(@NotNull ShortcutSet shortcutSet, @Nullable JComponent component){
+  public final void registerCustomShortcutSet(@NotNull ShortcutSet shortcutSet, @Nullable JComponent component) {
+    registerCustomShortcutSet(shortcutSet, component, null);
+  }
+
+  public final void registerCustomShortcutSet(int keyCode, @JdkConstants.InputEventMask int modifiers, @Nullable JComponent component) {
+    registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(keyCode, modifiers)), component);
+  }
+
+  public final void registerCustomShortcutSet(@NotNull ShortcutSet shortcutSet, @Nullable final JComponent component, @Nullable Disposable parentDisposable) {
     myShortcutSet = shortcutSet;
     if (component != null){
       @SuppressWarnings("unchecked")
@@ -153,20 +161,15 @@ public abstract class AnAction implements PossiblyDumbAware {
         actionList.add(this);
       }
     }
-  }
 
-  public final void registerCustomShortcutSet(int keyCode, @JdkConstants.InputEventMask int modifiers, @Nullable JComponent component) {
-    registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(keyCode, modifiers)), component);
-  }
-
-  public final void registerCustomShortcutSet(@NotNull ShortcutSet shortcutSet, @NotNull final JComponent component, @NotNull Disposable parentDisposable) {
-    registerCustomShortcutSet(shortcutSet, component);
-    Disposer.register(parentDisposable, new Disposable() {
-      @Override
-      public void dispose() {
-        unregisterCustomShortcutSet(component);
-      }
-    });
+    if (parentDisposable != null) {
+      Disposer.register(parentDisposable, new Disposable() {
+        @Override
+        public void dispose() {
+          unregisterCustomShortcutSet(component);
+        }
+      });
+    }
   }
 
   public final void unregisterCustomShortcutSet(JComponent component){
@@ -188,7 +191,7 @@ public abstract class AnAction implements PossiblyDumbAware {
     Presentation sourcePresentation = sourceAction.getTemplatePresentation();
     Presentation presentation = getTemplatePresentation();
     presentation.setIcon(sourcePresentation.getIcon());
-    presentation.setText(sourcePresentation.getTextWithMnemonic());
+    presentation.setText(sourcePresentation.getTextWithMnemonic(), sourcePresentation.getDisplayedMnemonicIndex() >= 0);
     presentation.setDescription(sourcePresentation.getDescription());
     copyShortcutFrom(sourceAction);
   }

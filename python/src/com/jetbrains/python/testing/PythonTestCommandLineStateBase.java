@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import com.intellij.openapi.util.Getter;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.jetbrains.python.HelperPackage;
 import com.jetbrains.python.PythonHelpersLocator;
 import com.jetbrains.python.console.PythonDebugLanguageConsoleView;
 import com.jetbrains.python.run.AbstractPythonRunConfiguration;
@@ -44,7 +45,6 @@ import com.jetbrains.python.run.PythonCommandLineState;
 import com.jetbrains.python.sdk.PythonSdkType;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.File;
 import java.util.List;
 import java.util.Map;
 
@@ -54,13 +54,14 @@ import java.util.Map;
 public abstract class PythonTestCommandLineStateBase extends PythonCommandLineState {
   protected final AbstractPythonRunConfiguration myConfiguration;
 
-  public AbstractPythonRunConfiguration getConfiguration() {
+  public AbstractPythonRunConfiguration<?> getConfiguration() {
     return myConfiguration;
   }
 
   public PythonTestCommandLineStateBase(AbstractPythonRunConfiguration configuration, ExecutionEnvironment env) {
     super(configuration, env);
     myConfiguration = configuration;
+    setRunWithPty(false);
   }
 
   @Override
@@ -72,16 +73,17 @@ public abstract class PythonTestCommandLineStateBase extends PythonCommandLineSt
 
     if (isDebug()) {
       final ConsoleView testsOutputConsoleView = SMTestRunnerConnectionUtil.createConsole(PythonTRunnerConsoleProperties.FRAMEWORK_NAME,
-                                                                                      consoleProperties,
-                                                                                      getEnvironment());
-      final ConsoleView consoleView = new PythonDebugLanguageConsoleView(project, PythonSdkType.findSdkByPath(myConfiguration.getInterpreterPath()), testsOutputConsoleView);
+                                                                                          consoleProperties);
+      final ConsoleView consoleView =
+        new PythonDebugLanguageConsoleView(project, PythonSdkType.findSdkByPath(myConfiguration.getInterpreterPath()),
+                                           testsOutputConsoleView);
       consoleView.attachToProcess(processHandler);
+      addTracebackFilter(project, consoleView, processHandler);
       return consoleView;
     }
     final ConsoleView consoleView = SMTestRunnerConnectionUtil.createAndAttachConsole(PythonTRunnerConsoleProperties.FRAMEWORK_NAME,
                                                                                       processHandler,
-                                                                                      consoleProperties,
-                                                                                      getEnvironment());
+                                                                                      consoleProperties);
     addTracebackFilter(project, consoleView, processHandler);
     return consoleView;
   }
@@ -91,7 +93,7 @@ public abstract class PythonTestCommandLineStateBase extends PythonCommandLineSt
   }
 
   @Override
-  public GeneralCommandLine generateCommandLine() throws ExecutionException {
+  public GeneralCommandLine generateCommandLine()  {
     GeneralCommandLine cmd = super.generateCommandLine();
 
     setWorkingDirectory(cmd);
@@ -107,20 +109,23 @@ public abstract class PythonTestCommandLineStateBase extends PythonCommandLineSt
   protected void setWorkingDirectory(@NotNull final GeneralCommandLine cmd) {
     final String workingDirectory = myConfiguration.getWorkingDirectory();
     if (!StringUtil.isEmptyOrSpaces(workingDirectory)) {
-      cmd.setWorkDirectory(workingDirectory);
+      cmd.withWorkDirectory(workingDirectory);
     }
     else if (myConfiguration instanceof AbstractPythonTestRunConfiguration) {
       final String folderName = ((AbstractPythonTestRunConfiguration)myConfiguration).getFolderName();
       if (!StringUtil.isEmptyOrSpaces(folderName)) {
-        cmd.setWorkDirectory(folderName);
+        cmd.withWorkDirectory(folderName);
       }
       else {
         final String scriptName = ((AbstractPythonTestRunConfiguration)myConfiguration).getScriptName();
         if (StringUtil.isEmptyOrSpaces(scriptName)) return;
         final VirtualFile script = LocalFileSystem.getInstance().findFileByPath(scriptName);
         if (script == null) return;
-        cmd.setWorkDirectory(script.getParent().getPath());
+        cmd.withWorkDirectory(script.getParent().getPath());
       }
+    }
+    if (cmd.getWorkDirectory() == null) { // If current dir still not set, lets use project dir
+      cmd.setWorkDirectory(myConfiguration.getWorkingDirectorySafe());
     }
   }
 
@@ -146,28 +151,29 @@ public abstract class PythonTestCommandLineStateBase extends PythonCommandLineSt
     });
     }
 
-    executionResult.setRestartActions(rerunFailedTestsAction, new ToggleAutoTestAction(getEnvironment()));
+    executionResult.setRestartActions(rerunFailedTestsAction, new ToggleAutoTestAction());
     return executionResult;
   }
 
-  protected void addBeforeParameters(GeneralCommandLine cmd) throws ExecutionException {}
-  protected void addAfterParameters(GeneralCommandLine cmd) throws ExecutionException {}
+  protected void addBeforeParameters(GeneralCommandLine cmd)  {}
+  protected void addAfterParameters(GeneralCommandLine cmd) {}
 
-  protected void addTestRunnerParameters(GeneralCommandLine cmd) throws ExecutionException {
-    ParamsGroup script_params = cmd.getParametersList().getParamsGroup(GROUP_SCRIPT);
-    assert script_params != null;
-    script_params.addParameter(new File(PythonHelpersLocator.getHelpersRoot(), getRunner()).getAbsolutePath());
+  protected void addTestRunnerParameters(GeneralCommandLine cmd)  {
+    ParamsGroup scriptParams = cmd.getParametersList().getParamsGroup(GROUP_SCRIPT);
+    assert scriptParams != null;
+    getRunner().addToGroup(scriptParams, cmd);
     addBeforeParameters(cmd);
-    script_params.addParameters(getTestSpecs());
+    scriptParams.addParameters(getTestSpecs());
     addAfterParameters(cmd);
   }
 
   @Override
-  public void addPredefinedEnvironmentVariables(Map<String, String> envs, boolean passParentEnvs) {
-    super.addPredefinedEnvironmentVariables(envs, passParentEnvs);
+  public void customizeEnvironmentVars(Map<String, String> envs, boolean passParentEnvs) {
+    super.customizeEnvironmentVars(envs, passParentEnvs);
     envs.put("PYCHARM_HELPERS_DIR", PythonHelpersLocator.getHelperPath("pycharm"));
   }
 
-  protected abstract String getRunner();
+  protected abstract HelperPackage getRunner();
+  @NotNull
   protected abstract List<String> getTestSpecs();
 }

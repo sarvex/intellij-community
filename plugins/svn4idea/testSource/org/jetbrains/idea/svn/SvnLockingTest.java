@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -86,8 +86,8 @@ public class SvnLockingTest extends TestCase {
     final HangInWrite operation1 = new HangInWrite("one_");
     final HangInWrite operation2 = new HangInWrite("two_");
 
-    final Thread thread1 = new Thread(operation1);
-    final Thread thread2 = new Thread(operation2);
+    final Thread thread1 = new Thread(operation1,"op1");
+    final Thread thread2 = new Thread(operation2,"op2");
     try {
       thread1.start();
       waitForRunning(operation1);
@@ -108,6 +108,8 @@ public class SvnLockingTest extends TestCase {
 
       thread1.interrupt();
       thread2.interrupt();
+      thread1.join();
+      thread2.join();
     }
   }
 
@@ -115,8 +117,8 @@ public class SvnLockingTest extends TestCase {
     final OnlyWrite operation1 = new OnlyWrite("one");
     final OnlyWrite operation2 = new OnlyWrite("two");
 
-    final Thread thread1 = new Thread(operation1);
-    final Thread thread2 = new Thread(operation2);
+    final Thread thread1 = new Thread(operation1,"one");
+    final Thread thread2 = new Thread(operation2,"two");
 
     try {
       thread1.start();
@@ -138,6 +140,8 @@ public class SvnLockingTest extends TestCase {
 
       thread1.interrupt();
       thread2.interrupt();
+      thread1.join();
+      thread2.join();
     }
   }
 
@@ -184,15 +188,16 @@ public class SvnLockingTest extends TestCase {
     }
   }*/
 
-  @Bombed(year=2020, month = 1,day = 1,description = "not clear. by specification, read should not get access if write lock is taken; sometimes it is not the case.")
+  @Bombed(user="irengrig", year = 2020, month = 1, day = 1,
+    description = "not clear. by specification, read should not get access if write lock is taken; sometimes it is not the case.")
   public void testReadInBetweenWrites() throws Exception {
     final HangInWrite operation1 = new HangInWrite("one1");
     final HangInWrite operation2 = new HangInWrite("two1");
     final HangInRead read = new HangInRead("READ");
 
-    final Thread thread1 = new Thread(operation1);
-    final Thread threadRead = new Thread(read);
-    final Thread thread2 = new Thread(operation2);
+    final Thread thread1 = new Thread(operation1,"op1");
+    final Thread threadRead = new Thread(read,"read1");
+    final Thread thread2 = new Thread(operation2,"op2");
 
     try {
       thread1.start();
@@ -225,6 +230,9 @@ public class SvnLockingTest extends TestCase {
       thread1.interrupt();
       thread2.interrupt();
       threadRead.interrupt();
+      thread1.join();
+      thread2.join();
+      threadRead.join();
     }
   }
 

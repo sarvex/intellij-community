@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.UserDataHolder;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.psi.stubs.PsiFileStub;
 import com.intellij.psi.stubs.StubElement;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.util.ExceptionUtil;
@@ -44,15 +45,15 @@ public class PsiInvalidElementAccessException extends RuntimeException implement
   private final Attachment[] myDiagnostic;
   private final String myMessage;
 
-  public PsiInvalidElementAccessException(PsiElement element) {
+  public PsiInvalidElementAccessException(@Nullable PsiElement element) {
     this(element, null, null);
   }
 
-  public PsiInvalidElementAccessException(PsiElement element, @Nullable String message) {
+  public PsiInvalidElementAccessException(@Nullable PsiElement element, @Nullable String message) {
     this(element, message, null);
   }
 
-  public PsiInvalidElementAccessException(PsiElement element, @Nullable Throwable cause) {
+  public PsiInvalidElementAccessException(@Nullable PsiElement element, @Nullable Throwable cause) {
     this(element, null, cause);
   }
 
@@ -143,8 +144,13 @@ public class PsiInvalidElementAccessException extends RuntimeException implement
       String m = "parent is null";
       if (root instanceof StubBasedPsiElement) {
         StubElement stub = ((StubBasedPsiElement)root).getStub();
-        m += "; stub=" + stub;
-        if (stub != null) m += "; p.s.=" + stub.getParentStub();
+        while (stub != null) {
+          m += "\n  each stub=" + stub;
+          if (stub instanceof PsiFileStub) {
+            m += "; fileStub.psi=" + stub.getPsi() + "; reason=" + ((PsiFileStub)stub).getInvalidationReason();
+          }
+          stub = stub.getParentStub();
+        }
       }
       return m;
     }
@@ -181,8 +187,12 @@ public class PsiInvalidElementAccessException extends RuntimeException implement
     return Integer.toHexString(System.identityHashCode(provider));
   }
 
-  public static void setInvalidationTrace(UserDataHolder element, Object trace) {
+  public static void setInvalidationTrace(@NotNull UserDataHolder element, Object trace) {
     element.putUserData(INVALIDATION_TRACE, trace);
+  }
+
+  public static Object getInvalidationTrace(@NotNull UserDataHolder element) {
+    return element.getUserData(INVALIDATION_TRACE);
   }
 
   public static boolean isTrackingInvalidation() {

@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 public abstract class AbstractJavaFXTestCase extends LightCodeInsightFixtureTestCase {
   public static final DefaultLightProjectDescriptor JAVA_FX_DESCRIPTOR = new DefaultLightProjectDescriptor() {
     @Override
-       public void configureModule(Module module, ModifiableRootModel model, ContentEntry contentEntry) {
+       public void configureModule(@NotNull Module module, @NotNull ModifiableRootModel model, @NotNull ContentEntry contentEntry) {
        PsiTestUtil.addLibrary(module, model, "javafx", PluginPathManager.getPluginHomePath("javaFX") + "/testData", "jfxrt.jar");
        super.configureModule(module, model, contentEntry);
      }
@@ -51,6 +51,4 @@ public abstract class AbstractJavaFXTestCase extends LightCodeInsightFixtureTest
     super.setUp();
     enableInspections();
   }
-
-  
 }

@@ -83,8 +83,8 @@ public class EmptyMethodInspection extends GlobalJavaBatchInspectionTool {
 
     String message = null;
     boolean needToDeleteHierarchy = false;
+    RefMethod refSuper = findSuperWithBody(refMethod);
     if (refMethod.isOnlyCallsSuper() && !refMethod.isFinal()) {
-      RefMethod refSuper = findSuperWithBody(refMethod);
       final RefJavaUtil refUtil = RefJavaUtil.getInstance();
       if (refSuper != null && Comparing.strEqual(refMethod.getAccessModifier(), refSuper.getAccessModifier())){
         if (Comparing.strEqual(refSuper.getAccessModifier(), PsiModifier.PROTECTED) //protected modificator gives access to method in another package
@@ -112,7 +112,7 @@ public class EmptyMethodInspection extends GlobalJavaBatchInspectionTool {
 
       message = InspectionsBundle.message("inspection.empty.method.problem.descriptor1");
     }
-    else if (areAllImplementationsEmpty(refMethod)) {
+    else if (areAllImplementationsEmpty(refMethod) && refSuper == null) {
       if (refMethod.hasBody()) {
         if (refMethod.getDerivedMethods().isEmpty()) {
           if (refMethod.getSuperMethods().isEmpty()) {
@@ -386,8 +386,8 @@ public class EmptyMethodInspection extends GlobalJavaBatchInspectionTool {
     @Override
     public void applyFix(@NotNull final Project project,
                          @NotNull final CommonProblemDescriptor[] descriptors,
-                         final List<PsiElement> psiElementsToIgnore,
-                         final Runnable refreshViews) {
+                         @NotNull final List<PsiElement> psiElementsToIgnore,
+                         @Nullable final Runnable refreshViews) {
       for (CommonProblemDescriptor descriptor : descriptors) {
         RefElement refElement = (RefElement)myProcessor.getElement(descriptor);
         if (refElement.isValid() && refElement instanceof RefMethod) {

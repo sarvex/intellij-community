@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,7 +42,6 @@ import com.intellij.openapi.vcs.roots.VcsRootDetector;
 import com.intellij.openapi.vfs.*;
 import com.intellij.openapi.vfs.newvfs.RefreshQueue;
 import com.intellij.openapi.wm.StatusBar;
-import com.intellij.util.ConcurrencyUtil;
 import com.intellij.util.containers.ContainerUtilRt;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -51,7 +50,6 @@ import javax.swing.*;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
 
 @SuppressWarnings({"UtilityClassWithoutPrivateConstructor"})
 public class VcsUtil {
@@ -319,24 +317,34 @@ public class VcsUtil {
     return VcsContextFactory.SERVICE.getInstance().createFilePathOn(file);
   }
 
-  public static FilePath getFilePath(File file) {
+  public static FilePath getFilePath(@NotNull File file) {
     return VcsContextFactory.SERVICE.getInstance().createFilePathOn(file);
   }
 
-  public static FilePath getFilePath(String path, boolean isDirectory) {
-    return getFilePath(new File(path), isDirectory);
+  public static FilePath getFilePath(@NotNull String path, boolean isDirectory) {
+    return VcsContextFactory.SERVICE.getInstance().createFilePath(path, isDirectory);
   }
 
   public static FilePath getFilePathOnNonLocal(String path, boolean isDirectory) {
     return VcsContextFactory.SERVICE.getInstance().createFilePathOnNonLocal(path, isDirectory);
   }
 
-  public static FilePath getFilePath(File file, boolean isDirectory) {
+  public static FilePath getFilePath(@NotNull File file, boolean isDirectory) {
     return VcsContextFactory.SERVICE.getInstance().createFilePathOn(file, isDirectory);
   }
 
-  public static FilePath getFilePathForDeletedFile(String path, boolean isDirectory) {
+  public static FilePath getFilePathForDeletedFile(@NotNull String path, boolean isDirectory) {
     return VcsContextFactory.SERVICE.getInstance().createFilePathOnDeleted(new File(path), isDirectory);
+  }
+
+  @NotNull
+  public static FilePath getFilePath(@NotNull VirtualFile parent, @NotNull String name) {
+    return VcsContextFactory.SERVICE.getInstance().createFilePathOn(parent, name);
+  }
+
+  @NotNull
+  public static FilePath getFilePath(@NotNull VirtualFile parent, @NotNull String fileName, boolean isDirectory) {
+    return VcsContextFactory.SERVICE.getInstance().createFilePath(parent, fileName, isDirectory);
   }
 
   /**
@@ -519,12 +527,7 @@ public class VcsUtil {
       }
     };
 
-    if (app.isDispatchThread()) {
-      action.run();
-    }
-    else {
-      app.invokeAndWait(action, ModalityState.defaultModalityState());
-    }
+    app.invokeAndWait(action, ModalityState.defaultModalityState());
 
     return file[0];
   }
@@ -594,8 +597,12 @@ public class VcsUtil {
   //}
 
   public static boolean isAspectAvailableByDefault(String id) {
+    return isAspectAvailableByDefault(id, true);
+  }
+
+  public static boolean isAspectAvailableByDefault(@Nullable String id, boolean defaultValue) {
     if (id == null) return false;
-    return PropertiesComponent.getInstance().getBoolean(ANNO_ASPECT + id, true);
+    return PropertiesComponent.getInstance().getBoolean(ANNO_ASPECT + id, defaultValue);
   }
 
   public static void setAspectAvailability(String aspectID, boolean showByDefault) {
@@ -616,10 +623,6 @@ public class VcsUtil {
 
   public static String getPathForProgressPresentation(@NotNull final File file) {
     return file.getName() + " (" + file.getParent() + ")";
-  }
-
-  public static ScheduledThreadPoolExecutor createExecutor(final String name) {
-    return ConcurrencyUtil.newSingleScheduledThreadExecutor(name, Thread.MIN_PRIORITY + 1);
   }
 
   @NotNull

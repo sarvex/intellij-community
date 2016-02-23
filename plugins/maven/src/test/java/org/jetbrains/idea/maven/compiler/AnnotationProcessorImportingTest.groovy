@@ -26,7 +26,7 @@ import org.jetbrains.idea.maven.importing.configurers.MavenAnnotationProcessorCo
 @SuppressWarnings("GroovyPointlessBoolean")
 class AnnotationProcessorImportingTest extends MavenImportingTestCase {
 
-  public void testSettingTargetLevel() throws Exception {
+  public void testImportAnnotationProcessorProfiles() throws Exception {
     createModulePom("module1", """
 <groupId>test</groupId>
 <artifactId>module1</artifactId>
@@ -126,10 +126,15 @@ class AnnotationProcessorImportingTest extends MavenImportingTestCase {
 
     def compilerConfiguration = ((CompilerConfigurationImpl)CompilerConfiguration.getInstance(myProject))
 
-    assert compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.MAVEN_DEFAULT_ANNOTATION_PROFILE).getModuleNames() == new HashSet<String>(["module1"])
-    assert compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.PROFILE_PREFIX + 'module2').getProcessors() == new HashSet<String>(["com.test.SourceCodeGeneratingAnnotationProcessor2"])
+    assert compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.MAVEN_DEFAULT_ANNOTATION_PROFILE).getModuleNames() == new HashSet<String>(["module1", "module4"])
+    assert compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.MAVEN_BSC_DEFAULT_ANNOTATION_PROFILE) == null
+
+    def projectProfile = compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.PROFILE_PREFIX + 'project')
+    assert projectProfile.getModuleNames() == new HashSet<String>(["module2"])
+    assert projectProfile.getProcessors() == new HashSet<String>(["com.test.SourceCodeGeneratingAnnotationProcessor2"])
     assert compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.PROFILE_PREFIX + 'module3') == null
     assert compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.PROFILE_PREFIX + 'module3_1') == null
+    assert compilerConfiguration.moduleProcessorProfiles.size() == 2
   }
 
   public void testOverrideGeneratedOutputDir() {
@@ -169,8 +174,12 @@ class AnnotationProcessorImportingTest extends MavenImportingTestCase {
       <artifactId>maven-compiler-plugin</artifactId>
       <configuration>
         <compilerArgument>-Aopt1=111 -Xmx512Mb -Aopt2=222</compilerArgument>
+        <compilerArgs>
+            <arg>-Aopt3=333</arg>
+            <arg>-AjustKey</arg>
+        </compilerArgs>
         <compilerArguments>
-          <Aopt3>333</Aopt3>
+          <Aopt4>444</Aopt4>
           <opt>666</opt>
         </compilerArguments>
       </configuration>
@@ -183,7 +192,7 @@ class AnnotationProcessorImportingTest extends MavenImportingTestCase {
 
     assert compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.MAVEN_DEFAULT_ANNOTATION_PROFILE) == null
     def processorOptions = compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.PROFILE_PREFIX + "project").getProcessorOptions()
-    assert new HashMap(processorOptions) == ['opt1': '111', 'opt2': '222', 'opt3': '333']
+    assert new HashMap(processorOptions) == ['opt1': '111', 'opt2': '222', 'opt3': '333', 'opt4': '444', 'justKey': '']
   }
 
   public void testMavenProcessorPlugin() {
@@ -194,6 +203,12 @@ class AnnotationProcessorImportingTest extends MavenImportingTestCase {
 
 <build>
   <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <compilerArgument>-proc:none</compilerArgument>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.bsc.maven</groupId>
                 <artifactId>maven-processor-plugin</artifactId>
@@ -207,6 +222,12 @@ class AnnotationProcessorImportingTest extends MavenImportingTestCase {
                         <phase>generate-sources</phase>
                         <configuration>
                             <outputDirectory>target/metamodel</outputDirectory>
+                            <!-- STANDARD WAY -->
+                            <compilerArguments>-Amyoption1=TRUE</compilerArguments>
+                            <!-- NEW FEATURE FROM VERSION 2.0.4-->
+                            <options>
+                                <myoption2>TRUE</myoption2>
+                            </options>
                         </configuration>
                     </execution>
                     <execution>
@@ -231,6 +252,7 @@ class AnnotationProcessorImportingTest extends MavenImportingTestCase {
     def profile = compilerConfiguration.findModuleProcessorProfile(MavenAnnotationProcessorConfigurer.PROFILE_PREFIX + "project")
     assert profile.getGeneratedSourcesDirectoryName(false).replace('\\', '/').endsWith("target/metamodel")
     assert profile.getGeneratedSourcesDirectoryName(true).replace('\\', '/').endsWith("target/metamodelTest")
+    assert new HashMap(profile.getProcessorOptions()) == ['myoption1' : 'TRUE', 'myoption2' : 'TRUE']
   }
 
   public void testMavenProcessorPluginDefault() {
@@ -245,10 +267,9 @@ class AnnotationProcessorImportingTest extends MavenImportingTestCase {
       <artifactId>maven-compiler-plugin</artifactId>
       <configuration>
         <compilerArgument>-Aopt1=111 -Xmx512Mb -Aopt2=222</compilerArgument>
-        <compilerArguments>
-          <proc>none</proc>
-          <compilerArgument>-proc:none</compilerArgument>
-        </compilerArguments>
+        <compilerArgs>
+            <arg>-proc:none</arg>
+        </compilerArgs>
       </configuration>
     </plugin>
 
@@ -299,6 +320,12 @@ class AnnotationProcessorImportingTest extends MavenImportingTestCase {
 
   <build>
     <plugins>
+      <plugin>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <configuration>
+              <compilerArgument>-proc:none</compilerArgument>
+          </configuration>
+      </plugin>
       <plugin>
         <groupId>org.bsc.maven</groupId>
         <artifactId>maven-processor-plugin</artifactId>

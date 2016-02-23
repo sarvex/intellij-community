@@ -208,17 +208,16 @@ public abstract class PythonSdkFlavor {
     PythonEnvUtil.addPathToEnv(envs, key, value);
   }
 
-  @SuppressWarnings({"MethodMayBeStatic"})
-  public void addPredefinedEnvironmentVariables(Map<String, String> envs, @NotNull Project project) {
-    Charset defaultCharset = EncodingProjectManager.getInstance(project).getDefaultCharset();
-    final String encoding = defaultCharset.name();
+  public static void setupEncodingEnvs(Map<String, String> envs, @NotNull Charset charset) {
+    final String encoding = charset.name();
     PythonEnvUtil.setPythonIOEncoding(envs, encoding);
   }
 
   @NotNull
   public abstract String getName();
 
-  public LanguageLevel getLanguageLevel(Sdk sdk) {
+  @NotNull
+  public LanguageLevel getLanguageLevel(@NotNull Sdk sdk) {
     final String version = sdk.getVersionString();
     final String prefix = getName() + " ";
     if (version != null && version.startsWith(prefix)) {

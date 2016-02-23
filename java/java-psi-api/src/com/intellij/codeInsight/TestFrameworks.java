@@ -19,7 +19,11 @@ import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiMethod;
+import com.intellij.psi.util.CachedValueProvider;
+import com.intellij.psi.util.CachedValuesManager;
+import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.testIntegration.TestFramework;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -51,9 +55,26 @@ public abstract class TestFrameworks {
   }
   
   @Nullable
-  public static TestFramework detectFramework(PsiClass psiClass) {
+  public static TestFramework detectFramework(@NotNull final PsiClass psiClass) {
+    return CachedValuesManager.getCachedValue(psiClass, new CachedValueProvider<TestFramework>() {
+      @Nullable
+      @Override
+      public Result<TestFramework> compute() {
+        return Result.create(computeFramework(psiClass), PsiModificationTracker.JAVA_STRUCTURE_MODIFICATION_COUNT);
+      }
+    });
+  }
+
+  @Nullable
+  private static TestFramework computeFramework(PsiClass psiClass) {
     for (TestFramework framework : Extensions.getExtensions(TestFramework.EXTENSION_NAME)) {
       if (framework.isTestClass(psiClass)) {
+        return framework;
+      }
+    }
+
+    for (TestFramework framework : Extensions.getExtensions(TestFramework.EXTENSION_NAME)) {
+      if (framework.findSetUpMethod(psiClass) != null || framework.findTearDownMethod(psiClass) != null) {
         return framework;
       }
     }

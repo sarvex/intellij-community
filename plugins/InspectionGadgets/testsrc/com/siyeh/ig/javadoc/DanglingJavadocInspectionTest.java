@@ -13,11 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-/**
- * (c) 2015 Silent Forest AB
- * created: 23 January 2015
- */
 package com.siyeh.ig.javadoc;
 
 import com.intellij.codeInspection.InspectionProfileEntry;
@@ -31,6 +26,10 @@ public class DanglingJavadocInspectionTest extends LightInspectionTestCase {
 
   public void testDanglingJavadoc() {
     doTest();
+  }
+
+  public void testPackageInfo() {
+    doNamedTest("package-info");
   }
 
   @Nullable

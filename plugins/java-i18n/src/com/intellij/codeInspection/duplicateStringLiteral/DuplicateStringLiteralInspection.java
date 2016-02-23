@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import com.intellij.codeInspection.*;
 import com.intellij.codeInspection.ex.BaseLocalInspectionTool;
 import com.intellij.codeInspection.i18n.JavaI18nUtil;
 import com.intellij.lang.java.JavaLanguage;
-import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
@@ -44,10 +43,10 @@ import com.intellij.util.CommonProcessors;
 import com.intellij.util.Function;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.SmartList;
-import com.intellij.util.text.CharArrayUtil;
 import com.intellij.util.text.StringSearcher;
 import gnu.trove.THashMap;
 import gnu.trove.THashSet;
+import gnu.trove.TIntProcedure;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -59,7 +58,6 @@ import java.awt.event.ActionListener;
 import java.util.*;
 
 public class DuplicateStringLiteralInspection extends BaseLocalInspectionTool {
-  private static final Logger LOG = Logger.getInstance("#com.intellij.codeInspection.DuplicateStringLiteralInspection");
   @SuppressWarnings({"WeakerAccess"}) public int MIN_STRING_LENGTH = 5;
   @SuppressWarnings({"WeakerAccess"}) public boolean IGNORE_PROPERTY_KEYS = false;
   @NonNls private static final String BR = "<br>";
@@ -101,8 +99,7 @@ public class DuplicateStringLiteralInspection extends BaseLocalInspectionTool {
                                             final boolean isOnTheFly) {
     Object value = originalExpression.getValue();
     if (!(value instanceof String)) return;
-    Project project = holder.getProject();
-    if (!shouldCheck(project, originalExpression)) return;
+    if (!shouldCheck(originalExpression)) return;
     final String stringToFind = (String)value;
     if (stringToFind.length() == 0) return;
     final GlobalSearchScope scope = GlobalSearchScope.projectScope(originalExpression.getProject());
@@ -117,7 +114,7 @@ public class DuplicateStringLiteralInspection extends BaseLocalInspectionTool {
       }
     });
 
-    ProgressIndicator progress = ProgressManager.getInstance().getProgressIndicator();
+    final ProgressIndicator progress = ProgressManager.getInstance().getProgressIndicator();
     Set<PsiFile> resultFiles = null;
     for (String word : words) {
       if (word.length() < MIN_STRING_LENGTH) {
@@ -138,27 +135,26 @@ public class DuplicateStringLiteralInspection extends BaseLocalInspectionTool {
     if (resultFiles == null || resultFiles.isEmpty()) return;
     final List<PsiExpression> foundExpr = new ArrayList<PsiExpression>();
 
-    for (PsiFile file : resultFiles) {
+    for (final PsiFile file : resultFiles) {
       progress.checkCanceled();
       FileViewProvider viewProvider = file.getViewProvider();
       // important: skip non-java files with given word in literal (IDEA-126201)
       if (viewProvider.getPsi(JavaLanguage.INSTANCE) == null) continue;
       CharSequence text = viewProvider.getContents();
-      final char[] textArray = CharArrayUtil.fromSequenceWithoutCopying(text);
       StringSearcher searcher = new StringSearcher(stringToFind, true, true);
 
-      for (int offset = LowLevelSearchUtil.searchWord(text, textArray, 0, text.length(), searcher, progress);
-           offset >= 0;
-           offset = LowLevelSearchUtil.searchWord(text, textArray, offset + searcher.getPattern().length(), text.length(), searcher, progress)
-        ) {
-        progress.checkCanceled();
-        PsiElement element = file.findElementAt(offset);
-        if (element == null || !(element.getParent() instanceof PsiLiteralExpression)) continue;
-        PsiLiteralExpression expression = (PsiLiteralExpression)element.getParent();
-        if (expression != originalExpression && Comparing.equal(stringToFind, expression.getValue()) && shouldCheck(project, expression)) {
-          foundExpr.add(expression);
+      LowLevelSearchUtil.processTextOccurrences(text, 0, text.length(), searcher, progress, new TIntProcedure() {
+        @Override
+        public boolean execute(int offset) {
+          PsiElement element = file.findElementAt(offset);
+          if (element == null || !(element.getParent() instanceof PsiLiteralExpression)) return true;
+          PsiLiteralExpression expression = (PsiLiteralExpression)element.getParent();
+          if (expression != originalExpression && Comparing.equal(stringToFind, expression.getValue()) && shouldCheck(expression)) {
+            foundExpr.add(expression);
+          }
+          return true;
         }
-      }
+      });
     }
     if (foundExpr.isEmpty()) return;
     Set<PsiClass> classes = new THashSet<PsiClass>();
@@ -216,8 +212,8 @@ public class DuplicateStringLiteralInspection extends BaseLocalInspectionTool {
     holder.registerProblem(originalExpression, msg, ProblemHighlightType.GENERIC_ERROR_OR_WARNING, array);
   }
 
-  private boolean shouldCheck(@NotNull Project project, @NotNull PsiLiteralExpression expression) {
-    if (IGNORE_PROPERTY_KEYS && JavaI18nUtil.mustBePropertyKey(project, expression, new THashMap<String, Object>())) return false;
+  private boolean shouldCheck(@NotNull PsiLiteralExpression expression) {
+    if (IGNORE_PROPERTY_KEYS && JavaI18nUtil.mustBePropertyKey(expression, new THashMap<String, Object>())) return false;
     return !SuppressManager.isSuppressedInspectionName(expression);
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,20 +52,6 @@ public class MavenProject {
 
   @NotNull private final VirtualFile myFile;
   @NotNull private volatile State myState = new State();
-
-  private static Map<String, String> COMPILER_LEVEL_TABLE = ContainerUtil.<String,String>immutableMapBuilder()
-    .put("1.1", "1.1")
-    .put("1.2", "1.2")
-    .put("1.3", "1.3")
-    .put("1.4", "1.4")
-    .put("1.5", "1.5")
-    .put("5", "1.5")
-    .put("1.6", "1.6")
-    .put("1.7", "1.7")
-    .put("7", "1.7")
-    .put("1.8", "1.8")
-    .put("8", "1.8")
-    .build();
 
   public enum ProcMode {BOTH, ONLY, NONE}
 
@@ -123,11 +109,11 @@ public class MavenProject {
   }
 
   @NotNull
-  private MavenProjectChanges set(@NotNull MavenProjectReaderResult readerResult,
-                                  @NotNull MavenGeneralSettings settings,
-                                  boolean updateLastReadStamp,
-                                  boolean resetArtifacts,
-                                  boolean resetProfiles) {
+  MavenProjectChanges set(@NotNull MavenProjectReaderResult readerResult,
+                          @NotNull MavenGeneralSettings settings,
+                          boolean updateLastReadStamp,
+                          boolean resetArtifacts,
+                          boolean resetProfiles) {
     State newState = myState.clone();
 
     if (updateLastReadStamp) newState.myLastReadStamp = myState.myLastReadStamp + 1;
@@ -320,7 +306,9 @@ public class MavenProject {
   @NotNull
   public String getDisplayName() {
     State state = myState;
-    if (StringUtil.isEmptyOrSpaces(state.myName)) return state.myMavenId.getArtifactId();
+    if (StringUtil.isEmptyOrSpaces(state.myName)) {
+      return StringUtil.notNullize(state.myMavenId.getArtifactId());
+    }
     return state.myName;
   }
 
@@ -366,27 +354,32 @@ public class MavenProject {
 
   @NotNull
   public String getAnnotationProcessorDirectory(boolean testSources) {
-    Element cfg = getPluginGoalConfiguration("org.bsc.maven", "maven-processor-plugin", testSources ? "process-test" : "process");
-    if (cfg != null) {
-      String out = MavenJDOMUtil.findChildValueByPath(cfg, "outputDirectory");
-      if (out == null) {
-        out = MavenJDOMUtil.findChildValueByPath(cfg, "defaultOutputDirectory");
+    if (getProcMode() == ProcMode.NONE) {
+      MavenPlugin bscMavenPlugin = findPlugin("org.bsc.maven", "maven-processor-plugin");
+      Element cfg = getPluginGoalConfiguration(bscMavenPlugin, testSources ? "process-test" : "process");
+      if (bscMavenPlugin != null && cfg == null) {
+        return getBuildDirectory() + (testSources ?  "/generated-sources/apt-test" : "/generated-sources/apt");
+      }
+      if (cfg != null) {
+        String out = MavenJDOMUtil.findChildValueByPath(cfg, "outputDirectory");
         if (out == null) {
-          return getBuildDirectory() + "/generated-sources/apt";
+          out = MavenJDOMUtil.findChildValueByPath(cfg, "defaultOutputDirectory");
+          if (out == null) {
+            return getBuildDirectory() + (testSources ?  "/generated-sources/apt-test" : "/generated-sources/apt");
+          }
         }
-      }
 
-      if (!new File(out).isAbsolute()) {
-        out = getDirectory() + '/' + out;
-      }
+        if (!new File(out).isAbsolute()) {
+          out = getDirectory() + '/' + out;
+        }
 
-      return out;
+        return out;
+      }
     }
 
     String def = getGeneratedSourcesDirectory(testSources) + (testSources ? "/test-annotations" : "/annotations");
-    return MavenJDOMUtil.findChildValueByPath(getCompilerConfig(),
-                                              testSources ? "generatedTestSourcesDirectory" : "generatedSourcesDirectory",
-                                              def);
+    return MavenJDOMUtil.findChildValueByPath(
+      getCompilerConfig(), testSources ? "generatedTestSourcesDirectory" : "generatedSourcesDirectory", def);
   }
 
   @NotNull
@@ -414,124 +407,152 @@ public class MavenProject {
       return ProcMode.ONLY;
     }
 
-    //Element compilerArguments = compilerConfiguration.getChild("compilerArguments");
-    //if (compilerArguments != null) {
-    //  for (Element element : (List<Element>)compilerArguments.getChildren()) {
-    //    String argName = element.getName();
-    //    if (argName.startsWith("-")) {
-    //      argName = argName.substring(1);
-    //    }
-    //
-    //    if ("proc:none".equals(argName)) {
-    //      return ProcMode.NONE;
-    //    }
-    //    if ("proc:only".equals(argName)) {
-    //      return ProcMode.ONLY;
-    //    }
-    //  }
-    //}
+    Element compilerArguments = compilerConfiguration.getChild("compilerArgs");
+    if (compilerArguments != null) {
+      for (Element element : compilerArguments.getChildren()) {
+        String arg = element.getValue();
+        if ("-proc:none".equals(arg)) {
+          return ProcMode.NONE;
+        }
+        if ("-proc:only".equals(arg)) {
+          return ProcMode.ONLY;
+        }
+      }
+    }
 
     return ProcMode.BOTH;
   }
 
-  //@Nullable
-  //private static Element getAnnotationProcessorsConfiguration(@Nullable Element compilerConfig) {
-  //  return (compilerConfig == null) ? null : compilerConfig.getChild("annotationProcessors");
-  //}
-
   public Map<String, String> getAnnotationProcessorOptions() {
     Element compilerConfig = getCompilerConfig();
+    if (compilerConfig == null) {
+      return Collections.emptyMap();
+    }
+    if (getProcMode() != MavenProject.ProcMode.NONE) {
+      return getAnnotationProcessorOptionsFromCompilerConfig(compilerConfig);
+    }
+    MavenPlugin bscMavenPlugin = findPlugin("org.bsc.maven", "maven-processor-plugin");
+    if (bscMavenPlugin != null) {
+      return getAnnotationProcessorOptionsFromProcessorPlugin(bscMavenPlugin);
+    }
+    return Collections.emptyMap();
+  }
 
-    if (compilerConfig == null) return Collections.emptyMap();
-
-    Map<String, String> res = null;
+  private static Map<String, String> getAnnotationProcessorOptionsFromCompilerConfig(Element compilerConfig) {
+    Map<String, String> res = new LinkedHashMap<String, String>();
 
     String compilerArgument = compilerConfig.getChildText("compilerArgument");
-    if (!StringUtil.isEmptyOrSpaces(compilerArgument)) {
-      ParametersList parametersList = new ParametersList();
-      parametersList.addParametersString(compilerArgument);
+    addAnnotationProcessorOptionFomrParametersString(compilerArgument, res);
 
-      for (String param : parametersList.getParameters()) {
-        if (param.startsWith("-A")) {
-          int idx = param.indexOf('=', 3);
-          if (idx >= 0) {
-            if (res == null) {
-              res = new LinkedHashMap<String, String>();
-            }
-
-            res.put(param.substring(2, idx), param.substring(idx + 1));
-          }
-        }
+    Element compilerArgs = compilerConfig.getChild("compilerArgs");
+    if (compilerArgs != null) {
+      for (Element e : compilerArgs.getChildren()) {
+        if (!StringUtil.equals(e.getName(), "arg")) continue;
+        String arg = e.getTextTrim();
+        addAnnotationProcessorOption(arg, res);
       }
     }
 
     Element compilerArguments = compilerConfig.getChild("compilerArguments");
     if (compilerArguments != null) {
-      for (Element e : compilerArguments.getChildren()){
+      for (Element e : compilerArguments.getChildren()) {
         String name = e.getName();
-        if (name.startsWith("-")) {
-          name = name.substring(1);
-        }
+        name = StringUtil.trimStart(name, "-");
 
         if (name.length() > 1 && name.charAt(0) == 'A') {
-          if (res == null) {
-            res = new LinkedHashMap<String, String>();
-          }
-
           res.put(name.substring(1), e.getTextTrim());
         }
       }
     }
+    return res;
+  }
 
-    if (res == null) return Collections.emptyMap();
+  private static void addAnnotationProcessorOptionFomrParametersString(String compilerArguments, Map<String, String> res) {
+    if (!StringUtil.isEmptyOrSpaces(compilerArguments)) {
+      ParametersList parametersList = new ParametersList();
+      parametersList.addParametersString(compilerArguments);
 
+      for (String param : parametersList.getParameters()) {
+        addAnnotationProcessorOption(param, res);
+      }
+    }
+  }
+
+  private static void addAnnotationProcessorOption(String compilerArg, Map<String, String> optionsMap) {
+    if (compilerArg == null || compilerArg.trim().isEmpty()) return;
+
+    if (compilerArg.startsWith("-A")) {
+      int idx = compilerArg.indexOf('=', 3);
+      if (idx >= 0) {
+        optionsMap.put(compilerArg.substring(2, idx), compilerArg.substring(idx + 1));
+      } else {
+        optionsMap.put(compilerArg.substring(2), "");
+      }
+    }
+  }
+
+  private static Map<String, String> getAnnotationProcessorOptionsFromProcessorPlugin(MavenPlugin bscMavenPlugin) {
+    Element cfg = bscMavenPlugin.getGoalConfiguration("process");
+    if (cfg == null) {
+      cfg = bscMavenPlugin.getConfigurationElement();
+    }
+    LinkedHashMap<String, String> res = new LinkedHashMap<String, String>();
+    if (cfg != null) {
+      String compilerArguments = cfg.getChildText("compilerArguments");
+      addAnnotationProcessorOptionFomrParametersString(compilerArguments, res);
+
+      final Element optionsElement = cfg.getChild("options");
+      if (optionsElement != null) {
+        for (Element option : optionsElement.getChildren()) {
+          res.put(option.getName(), option.getText());
+        }
+      }
+    }
     return res;
   }
 
   @Nullable
   public List<String> getDeclaredAnnotationProcessors() {
     Element compilerConfig = getCompilerConfig();
-    if (compilerConfig != null) {
+    if (compilerConfig == null) {
+      return null;
+    }
+
+    List<String> result = new ArrayList<String>();
+    if (getProcMode() != MavenProject.ProcMode.NONE) {
       Element processors = compilerConfig.getChild("annotationProcessors");
       if (processors != null) {
-        List<String> res = new ArrayList<String>();
-
-        for (Element element : processors.getChildren("annotationProcessor")){
+        for (Element element : processors.getChildren("annotationProcessor")) {
           String processorClassName = element.getTextTrim();
           if (!processorClassName.isEmpty()) {
-            res.add(processorClassName);
+            result.add(processorClassName);
           }
         }
-
-        return res;
       }
     }
+    else {
+      MavenPlugin bscMavenPlugin = findPlugin("org.bsc.maven", "maven-processor-plugin");
+      if (bscMavenPlugin != null) {
+        Element bscCfg = bscMavenPlugin.getGoalConfiguration("process");
+        if (bscCfg == null) {
+          bscCfg = bscMavenPlugin.getConfigurationElement();
+        }
 
-    MavenPlugin bscMavenPlugin = findPlugin("org.bsc.maven", "maven-processor-plugin");
-    if (bscMavenPlugin != null) {
-      Element cfg = bscMavenPlugin.getGoalConfiguration("process");
-      if (cfg == null) {
-        cfg = bscMavenPlugin.getConfigurationElement();
-      }
-
-      if (cfg != null) {
-        Element processors = cfg.getChild("processors");
-        if (processors != null) {
-          List<String> res = new ArrayList<String>();
-
-          for (Element element : processors.getChildren("processor")){
-            String processorClassName = element.getTextTrim();
-            if (!processorClassName.isEmpty()) {
-              res.add(processorClassName);
+        if (bscCfg != null) {
+          Element bscProcessors = bscCfg.getChild("processors");
+          if (bscProcessors != null) {
+            for (Element element : bscProcessors.getChildren("processor")) {
+              String processorClassName = element.getTextTrim();
+              if (!processorClassName.isEmpty()) {
+                result.add(processorClassName);
+              }
             }
           }
-
-          return res;
         }
       }
     }
 
-    return null;
+    return result;
   }
 
   @NotNull
@@ -618,11 +639,12 @@ public class MavenProject {
                                                                      @NotNull MavenProjectReaderProjectLocator locator,
                                                                      @NotNull ResolveContext context)
     throws MavenProcessCanceledException {
-    MavenProjectReaderResult result = reader.resolveProject(generalSettings,
+    Collection<MavenProjectReaderResult> results = reader.resolveProject(generalSettings,
                                                             embedder,
-                                                            getFile(),
+                                                            Collections.singleton(getFile()),
                                                             getActivatedProfilesIds(),
                                                             locator);
+    final MavenProjectReaderResult result = results.iterator().next();
     MavenProjectChanges changes = set(result, generalSettings, false, result.readingProblems.isEmpty(), false);
 
     if (result.nativeMavenProject != null) {
@@ -909,20 +931,18 @@ public class MavenProject {
 
   @Nullable
   public Element getPluginGoalConfiguration(@Nullable String groupId, @Nullable String artifactId, @Nullable String goal) {
-    MavenPlugin plugin = findPlugin(groupId, artifactId);
+    return getPluginGoalConfiguration(findPlugin(groupId, artifactId), goal);
+  }
+
+  @Nullable
+  public Element getPluginGoalConfiguration(@Nullable MavenPlugin plugin, @Nullable String goal) {
     if (plugin == null) return null;
-
-    if (goal == null) {
-      return plugin.getConfigurationElement();
-    }
-
-    return plugin.getGoalConfiguration(goal);
+    return goal == null ? plugin.getConfigurationElement() : plugin.getGoalConfiguration(goal);
   }
 
   public Element getPluginExecutionConfiguration(@Nullable String groupId, @Nullable String artifactId, @NotNull String executionId) {
     MavenPlugin plugin = findPlugin(groupId, artifactId);
     if (plugin == null) return null;
-
     return plugin.getExecutionConfiguration(executionId);
   }
 
@@ -971,17 +991,12 @@ public class MavenProject {
       result = myState.myProperties.getProperty("maven.compiler." + level);
     }
 
-    return normalizeCompilerLevel(result);
+    return result;
   }
 
   @Nullable
   private Element getCompilerConfig() {
     return getPluginConfiguration("org.apache.maven.plugins", "maven-compiler-plugin");
-  }
-
-  @Nullable
-  public static String normalizeCompilerLevel(@Nullable String level) {
-    return COMPILER_LEVEL_TABLE.get(level);
   }
 
   @NotNull
@@ -1129,14 +1144,14 @@ public class MavenProject {
       result.packaging = !Comparing.equal(myPackaging, other.myPackaging);
 
       result.output = !Comparing.equal(myFinalName, other.myFinalName)
-                        || !Comparing.equal(myBuildDirectory, other.myBuildDirectory)
-                        || !Comparing.equal(myOutputDirectory, other.myOutputDirectory)
-                        || !Comparing.equal(myTestOutputDirectory, other.myTestOutputDirectory);
+                      || !Comparing.equal(myBuildDirectory, other.myBuildDirectory)
+                      || !Comparing.equal(myOutputDirectory, other.myOutputDirectory)
+                      || !Comparing.equal(myTestOutputDirectory, other.myTestOutputDirectory);
 
       result.sources = !Comparing.equal(mySources, other.mySources)
-                        || !Comparing.equal(myTestSources, other.myTestSources)
-                        || !Comparing.equal(myResources, other.myResources)
-                        || !Comparing.equal(myTestResources, other.myTestResources);
+                       || !Comparing.equal(myTestSources, other.myTestSources)
+                       || !Comparing.equal(myResources, other.myResources)
+                       || !Comparing.equal(myTestResources, other.myTestResources);
 
       boolean repositoryChanged = !Comparing.equal(myLocalRepository, other.myLocalRepository);
 

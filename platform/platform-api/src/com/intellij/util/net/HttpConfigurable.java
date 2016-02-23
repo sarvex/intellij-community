@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,10 @@ package com.intellij.util.net;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
-import com.intellij.openapi.components.*;
+import com.intellij.openapi.components.ApplicationComponent;
+import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.State;
+import com.intellij.openapi.components.Storage;
 import com.intellij.openapi.options.ShowSettingsUtil;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
@@ -28,6 +31,7 @@ import com.intellij.openapi.ui.popup.util.PopupUtil;
 import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.CharsetToolkit;
+import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.wm.IdeFocusManager;
 import com.intellij.openapi.wm.IdeFrame;
 import com.intellij.util.Base64;
@@ -64,9 +68,9 @@ import java.util.Set;
 @State(
   name = "HttpConfigurable",
   storages = {
-    @Storage(file = StoragePathMacros.APP_CONFIG + "/proxy.settings.xml"),
+    @Storage("proxy.settings.xml"),
     // we use two storages due to backward compatibility, see http://crucible.labs.intellij.net/cru/CR-IC-5142
-    @Storage(file = StoragePathMacros.APP_CONFIG + "/other.xml", deprecated = true)
+    @Storage(value = "other.xml", deprecated = true)
   }
 )
 public class HttpConfigurable implements PersistentStateComponent<HttpConfigurable>, ApplicationComponent {
@@ -103,7 +107,7 @@ public class HttpConfigurable implements PersistentStateComponent<HttpConfigurab
   public transient Getter<PasswordAuthentication> myTestGenericAuthRunnable = new StaticGetter<PasswordAuthentication>(null);
 
   public static HttpConfigurable getInstance() {
-    return ServiceManager.getService(HttpConfigurable.class);
+    return ApplicationManager.getApplication().getComponent(HttpConfigurable.class);
   }
 
   public static boolean editConfigurable(@Nullable JComponent parent) {
@@ -309,12 +313,7 @@ public class HttpConfigurable implements PersistentStateComponent<HttpConfigurab
     }
     else {
       Application app = ApplicationManager.getApplication();
-      if (app.isDispatchThread()) {
-        runnable.run();
-      }
-      else {
-        app.invokeAndWait(runnable, ModalityState.any());
-      }
+      app.invokeAndWait(runnable, ModalityState.any());
     }
   }
 
@@ -419,33 +418,55 @@ public class HttpConfigurable implements PersistentStateComponent<HttpConfigurab
     }
   }
 
+  public boolean isHttpProxyEnabledForUrl(@Nullable String url) {
+    if (!USE_HTTP_PROXY) return false;
+    URI uri = url != null ? VfsUtil.toUri(url) : null;
+    return uri == null || !mySelector.isProxyException(uri.getHost());
+  }
+
+  /**
+   * @deprecated To be removed in IDEA 16. Use corresponding method of IdeHttpClientHelpers.
+   */
+  @Deprecated
   @NotNull
   public RequestConfig.Builder setProxy(@NotNull RequestConfig.Builder builder) {
-    return setProxy(builder, USE_HTTP_PROXY);
-  }
-
-  @NotNull
-  public CredentialsProvider setProxyCredentials(@NotNull CredentialsProvider provider) {
-    return setProxyCredentials(provider, USE_HTTP_PROXY);
-  }
-
-  @NotNull
-  public RequestConfig.Builder setProxy(@NotNull RequestConfig.Builder builder, boolean useProxy) {
-    if (useProxy) {
+    if (USE_HTTP_PROXY) {
       builder.setProxy(new HttpHost(PROXY_HOST, PROXY_PORT));
     }
-
     return builder;
   }
 
+  /**
+   * @deprecated To be removed in IDEA 16. Use corresponding method of IdeHttpClientHelpers.
+   */
+  @Deprecated
   @NotNull
-  public CredentialsProvider setProxyCredentials(@NotNull CredentialsProvider provider, boolean useProxy) {
-    if (useProxy && PROXY_AUTHENTICATION) {
+  public CredentialsProvider setProxyCredentials(@NotNull CredentialsProvider provider) {
+    if (USE_HTTP_PROXY && PROXY_AUTHENTICATION) {
       String ntlmUserPassword = PROXY_LOGIN.replace('\\', '/') + ":" + getPlainProxyPassword();
       provider.setCredentials(new AuthScope(PROXY_HOST, PROXY_PORT, AuthScope.ANY_REALM, AuthSchemes.NTLM), new NTCredentials(ntlmUserPassword));
       provider.setCredentials(new AuthScope(PROXY_HOST, PROXY_PORT), new UsernamePasswordCredentials(PROXY_LOGIN, getPlainProxyPassword()));
     }
+    return provider;
+  }
 
+  /**
+   * @deprecated To be removed in IDEA 15. This method was not supposed to be here. Use corresponding methods of IdeHttpClientHelpers.
+   */
+  @Deprecated
+  @NotNull
+  public RequestConfig.Builder setProxy(@NotNull RequestConfig.Builder builder, boolean useProxy) {
+    if (useProxy) setProxy(builder);
+    return builder;
+  }
+
+  /**
+   * @deprecated To be removed in IDEA 15. This method was not supposed to be here. Use corresponding methods of IdeHttpClientHelpers.
+   */
+  @Deprecated
+  @NotNull
+  public CredentialsProvider setProxyCredentials(@NotNull CredentialsProvider provider, boolean useProxy) {
+    if (useProxy) setProxyCredentials(provider);
     return provider;
   }
 

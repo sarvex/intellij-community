@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.intellij.openapi.externalSystem.util.ExternalSystemConstants;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.fileChooser.FileTypeDescriptor;
+import com.intellij.openapi.util.io.FileFilters;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.containers.ContainerUtilRt;
@@ -33,7 +34,10 @@ import org.gradle.wrapper.WrapperExecutor;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
 import java.net.URI;
 import java.util.Arrays;
 import java.util.Properties;
@@ -137,7 +141,7 @@ public class GradleUtil {
       if (script != null) {
         File file = script.getSourceFile();
         if (file != null) {
-          if (file.isFile()) {
+          if (!file.isDirectory()) {
             // The file points to 'build.gradle' at the moment but we keep it's parent dir path instead.
             file = file.getParentFile();
           }
@@ -174,9 +178,7 @@ public class GradleUtil {
   }
 
   public static void storeLastUsedGradleHome(@Nullable String gradleHomePath) {
-    if (gradleHomePath != null) {
-      PropertiesComponent.getInstance().setValue(LAST_USED_GRADLE_HOME_KEY, gradleHomePath);
-    }
+    PropertiesComponent.getInstance().setValue(LAST_USED_GRADLE_HOME_KEY, gradleHomePath, null);
   }
 
   @Nullable
@@ -204,12 +206,7 @@ public class GradleUtil {
       return null;
     }
 
-    File[] candidates = wrapperDir.listFiles(new FileFilter() {
-      @Override
-      public boolean accept(File candidate) {
-        return candidate.isFile() && candidate.getName().endsWith(".properties");
-      }
-    });
+    File[] candidates = wrapperDir.listFiles(FileFilters.filesWithExtension("properties"));
     if (candidates == null) {
       GradleLog.LOG.warn("No *.properties file is found at the gradle wrapper directory " + wrapperDir.getAbsolutePath());
       return null;

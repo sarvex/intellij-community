@@ -15,12 +15,11 @@
  */
 package com.intellij.diff.comparison.iterables;
 
-import com.intellij.diff.comparison.iterables.DiffIterableUtil.Range;
+import com.intellij.diff.util.Range;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
 
-@SuppressWarnings("ConstantConditions")
 class RangesDiffIterable extends ChangeDiffIterableBase {
   @NotNull private final List<? extends Range> myRanges;
 

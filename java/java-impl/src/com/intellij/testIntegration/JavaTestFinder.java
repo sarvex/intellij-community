@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.openapi.roots.ProjectRootManager;
 import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiNamedElement;
@@ -81,8 +82,10 @@ public class JavaTestFinder implements TestFinder {
     }
   }
 
-  private static boolean isTestSubjectClass(PsiClass klass) {
-    if (klass.isAnnotationType() || TestFrameworks.getInstance().isTestClass(klass)) {
+  protected boolean isTestSubjectClass(PsiClass klass) {
+    if (klass.isAnnotationType() || 
+        TestFrameworks.getInstance().isTestClass(klass) ||
+        !klass.isPhysical()) {
       return false;
     }
     return true;
@@ -107,15 +110,14 @@ public class JavaTestFinder implements TestFinder {
     PsiShortNamesCache cache = PsiShortNamesCache.getInstance(klass.getProject());
 
     String klassName = klass.getName();
-    Pattern pattern = Pattern.compile(".*" + klassName + ".*", Pattern.CASE_INSENSITIVE);
+    Pattern pattern = Pattern.compile(".*" + StringUtil.escapeToRegexp(klassName) + ".*", Pattern.CASE_INSENSITIVE);
 
     HashSet<String> names = new HashSet<String>();
     cache.getAllClassNames(names);
-    final TestFrameworks frameworks = TestFrameworks.getInstance();
     for (String eachName : names) {
       if (pattern.matcher(eachName).matches()) {
         for (PsiClass eachClass : cache.getClassesByName(eachName, scope)) {
-          if (frameworks.isTestClass(eachClass) || frameworks.isPotentialTestClass(eachClass)) {
+          if (isTestClass(eachClass, klass)) {
             if (!processor.process(Pair.create(eachClass, TestFinderHelper.calcTestNameProximity(klassName, eachName)))) {
               return true;
             }
@@ -124,6 +126,11 @@ public class JavaTestFinder implements TestFinder {
       }
     }
     return false;
+  }
+
+  protected boolean isTestClass(PsiClass eachClass, PsiClass klass) {
+    final TestFrameworks frameworks = TestFrameworks.getInstance();
+    return eachClass.isPhysical() && (frameworks.isTestClass(eachClass) || eachClass != klass && frameworks.isPotentialTestClass(eachClass));
   }
 
   @Nullable

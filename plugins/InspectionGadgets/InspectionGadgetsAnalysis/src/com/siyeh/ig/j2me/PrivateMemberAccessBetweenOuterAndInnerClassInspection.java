@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2013 Dave Griffith, Bas Leijdekkers
+ * Copyright 2003-2015 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,14 @@ package com.siyeh.ig.j2me;
 import com.intellij.codeInspection.ProblemDescriptor;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
+import com.intellij.psi.util.FileTypeUtils;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.util.IncorrectOperationException;
 import com.siyeh.InspectionGadgetsBundle;
 import com.siyeh.ig.BaseInspection;
 import com.siyeh.ig.BaseInspectionVisitor;
 import com.siyeh.ig.InspectionGadgetsFix;
 import com.siyeh.ig.psiutils.ClassUtils;
-import com.intellij.psi.util.FileTypeUtils;
+import com.siyeh.ig.psiutils.ExpressionUtils;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -98,8 +98,7 @@ public class PrivateMemberAccessBetweenOuterAndInnerClassInspection
     }
 
     @Override
-    public void doFix(Project project, ProblemDescriptor descriptor)
-      throws IncorrectOperationException {
+    public void doFix(Project project, ProblemDescriptor descriptor) {
       final PsiElement element = descriptor.getPsiElement();
       if (constructor) {
         makeConstructorPackageLocal(project, element);
@@ -127,8 +126,7 @@ public class PrivateMemberAccessBetweenOuterAndInnerClassInspection
       modifiers.setModifierProperty(PsiModifier.PRIVATE, false);
     }
 
-    private static void makeConstructorPackageLocal(Project project,
-                                                    PsiElement element) {
+    private static void makeConstructorPackageLocal(Project project, PsiElement element) {
       final PsiNewExpression newExpression =
         PsiTreeUtil.getParentOfType(element,
                                     PsiNewExpression.class);
@@ -162,18 +160,23 @@ public class PrivateMemberAccessBetweenOuterAndInnerClassInspection
   }
 
   @Override
+  public boolean shouldInspect(PsiFile file) {
+    if (FileTypeUtils.isInServerPageFile(file)) {
+      // disable for jsp files IDEADEV-12957
+      return false;
+    }
+    return true;
+  }
+
+  @Override
   public BaseInspectionVisitor buildVisitor() {
     return new PrivateMemberAccessFromInnerClassVisitor();
   }
 
-  private static class PrivateMemberAccessFromInnerClassVisitor
-    extends BaseInspectionVisitor {
+  private static class PrivateMemberAccessFromInnerClassVisitor extends BaseInspectionVisitor {
 
     @Override
     public void visitNewExpression(PsiNewExpression expression) {
-      if (FileTypeUtils.isInServerPageFile(expression)) {
-        return;
-      }
       super.visitNewExpression(expression);
       final PsiClass containingClass =
         getContainingContextClass(expression);
@@ -213,21 +216,10 @@ public class PrivateMemberAccessBetweenOuterAndInnerClassInspection
     }
 
     @Override
-    public void visitReferenceExpression(
-      @NotNull PsiReferenceExpression expression) {
-      if (FileTypeUtils.isInServerPageFile(expression)) {
-        // disable for jsp files IDEADEV-12957
-        return;
-      }
+    public void visitReferenceExpression(@NotNull PsiReferenceExpression expression) {
       super.visitReferenceExpression(expression);
-      final PsiElement referenceNameElement =
-        expression.getReferenceNameElement();
+      final PsiElement referenceNameElement = expression.getReferenceNameElement();
       if (referenceNameElement == null) {
-        return;
-      }
-      final PsiElement containingClass =
-        getContainingContextClass(expression);
-      if (containingClass == null) {
         return;
       }
       final PsiElement element = expression.resolve();
@@ -236,6 +228,14 @@ public class PrivateMemberAccessBetweenOuterAndInnerClassInspection
       }
       final PsiMember member = (PsiMember)element;
       if (!member.hasModifierProperty(PsiModifier.PRIVATE)) {
+        return;
+      }
+      final Object value = ExpressionUtils.computeConstantExpression(expression);
+      if (value != null) {
+        return; // no synthetic accessor created, compile time constant will be inlined by javac
+      }
+      final PsiElement containingClass = getContainingContextClass(expression);
+      if (containingClass == null) {
         return;
       }
       final PsiClass memberClass = ClassUtils.getContainingClass(member);

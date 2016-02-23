@@ -86,6 +86,11 @@ public class TextFieldWithHistory extends ComboBox {
     hidePopup();
   }
 
+  public void setTextAndAddToHistory(String text) {
+    setText(text);
+    addCurrentTextToHistory();
+  }
+
   public void addCurrentTextToHistory() {
     final String item = getText();
     myModel.addElement(item);
@@ -141,7 +146,7 @@ public class TextFieldWithHistory extends ComboBox {
 
     public void insertElementAt(Object obj, int index) {
       myFullList.add(index, (String)obj);
-      fireContentsChanged();
+      fireIntervalAdded(this, index, index);
     }
 
     public Object getSelectedItem() {

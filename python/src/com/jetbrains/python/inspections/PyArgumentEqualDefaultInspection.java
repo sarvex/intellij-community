@@ -77,8 +77,19 @@ public class PyArgumentEqualDefaultInspection extends PyInspection {
       if (func != null && hasSpecialCasedDefaults(func, node)) {
         return;
       }
-      CallArgumentsMapping result = list.analyzeCall(getResolveContext());
-      checkArguments(result, node.getArguments());
+      checkArguments(node, node.getArguments());
+    }
+
+    @Override
+    public void visitPyDecoratorList(final PyDecoratorList node) {
+      PyDecorator[] decorators = node.getDecorators();
+
+      for (PyDecorator decorator: decorators) {
+        if (decorator.hasArgumentList()) {
+          PyExpression[] arguments = decorator.getArguments();
+          checkArguments(decorator, arguments);
+        }
+      }
     }
 
     private static boolean hasSpecialCasedDefaults(PyCallable callable, PsiElement anchor) {
@@ -97,10 +108,10 @@ public class PyArgumentEqualDefaultInspection extends PyInspection {
       return false;
     }
 
-    private void checkArguments(CallArgumentsMapping result, PyExpression[] arguments) {
-      Map<PyExpression, PyNamedParameter> mapping = result.getPlainMappedParams();
+    private void checkArguments(PyCallExpression callExpr, PyExpression[] arguments) {
+      final PyCallExpression.PyArgumentsMapping mapping = callExpr.mapArguments(getResolveContext());
       Set<PyExpression> problemElements = new HashSet<PyExpression>();
-      for (Map.Entry<PyExpression, PyNamedParameter> e : mapping.entrySet()) {
+      for (Map.Entry<PyExpression, PyNamedParameter> e : mapping.getMappedParameters().entrySet()) {
         PyExpression defaultValue = e.getValue().getDefaultValue();
         if (defaultValue != null) {
           PyExpression key = e.getKey();

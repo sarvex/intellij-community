@@ -66,17 +66,11 @@ public class StandardInstructionVisitor extends InstructionVisitor {
     if (dfaDest instanceof DfaVariableValue) {
       DfaVariableValue var = (DfaVariableValue) dfaDest;
 
-      DfaValueFactory factory = runner.getFactory();
-      if (dfaSource instanceof DfaVariableValue && factory.getVarFactory().getAllQualifiedBy(var).contains(dfaSource)) {
-        Nullness nullability = memState.isNotNull(dfaSource) ? Nullness.NOT_NULL
-                                                             : ((DfaVariableValue)dfaSource).getInherentNullability();
-        dfaSource = factory.createTypeValue(((DfaVariableValue)dfaSource).getVariableType(), nullability);
-      }
-
-      if (var.getInherentNullability() == Nullness.NOT_NULL) {
+      final PsiModifierListOwner psi = var.getPsiVariable();
+      boolean forceDeclaredNullity = !(psi instanceof PsiParameter && psi.getParent() instanceof PsiParameterList);
+      if (forceDeclaredNullity && var.getInherentNullability() == Nullness.NOT_NULL) {
         checkNotNullable(memState, dfaSource, NullabilityProblem.assigningToNotNull, instruction.getRExpression());
       }
-      final PsiModifierListOwner psi = var.getPsiVariable();
       if (!(psi instanceof PsiField) || !psi.hasModifierProperty(PsiModifier.VOLATILE)) {
         memState.setVarValue(var, dfaSource);
       }
@@ -206,11 +200,12 @@ public class StandardInstructionVisitor extends InstructionVisitor {
     if (method == null || instruction.getContracts().isEmpty()) {
       argValues = null;
     } else {
-      int paramCount = method.getParameterList().getParametersCount();
+      PsiParameterList paramList = method.getParameterList();
+      int paramCount = paramList.getParametersCount();
       if (paramCount == args.length || method.isVarArgs() && args.length >= paramCount - 1) {
         argValues = new DfaValue[paramCount];
         if (varargCall) {
-          argValues[paramCount - 1] = DfaUnknownValue.getInstance();
+          argValues[paramCount - 1] = runner.getFactory().createTypeValue(paramList.getParameters()[paramCount - 1].getType(), Nullness.NOT_NULL);
         }
       } else {
         argValues = null;
@@ -231,7 +226,7 @@ public class StandardInstructionVisitor extends InstructionVisitor {
           forceNotNull(runner, memState, arg);
         }
       }
-      else if (requiredNullability == Nullness.UNKNOWN) {
+      else if (!instruction.updateOfNullable(memState, arg) && requiredNullability == Nullness.UNKNOWN) {
         checkNotNullable(memState, arg, NullabilityProblem.passingNullableArgumentToNonAnnotatedParameter, expr);
       }
     }
@@ -372,7 +367,8 @@ public class StandardInstructionVisitor extends InstructionVisitor {
                                      DfaValue value, NullabilityProblem problem,
                                      PsiElement anchor) {
     boolean notNullable = state.checkNotNullable(value);
-    if (notNullable && problem != NullabilityProblem.passingNullableArgumentToNonAnnotatedParameter) {
+    if (notNullable &&
+        problem != NullabilityProblem.passingNullableArgumentToNonAnnotatedParameter) {
       DfaValueFactory factory = ((DfaMemoryStateImpl)state).getFactory();
       state.applyCondition(factory.getRelationFactory().createRelation(value, factory.getConstFactory().getNull(), NE, false));
     }
@@ -523,18 +519,16 @@ public class StandardInstructionVisitor extends InstructionVisitor {
     PsiType varType = var.getVariableType();
     if (!(varType instanceof PsiPrimitiveType)) return null;
     
-    if (varType == PsiType.FLOAT || varType == PsiType.DOUBLE) return null;
+    if (PsiType.FLOAT.equals(varType) || PsiType.DOUBLE.equals(varType)) return null;
 
-    double minValue = varType == PsiType.BYTE ? Byte.MIN_VALUE :
-                      varType == PsiType.SHORT ? Short.MIN_VALUE :
-                      varType == PsiType.INT ? Integer.MIN_VALUE :
-                      varType == PsiType.CHAR ? Character.MIN_VALUE :
-                      Long.MIN_VALUE;
-    double maxValue = varType == PsiType.BYTE ? Byte.MAX_VALUE :
-                      varType == PsiType.SHORT ? Short.MAX_VALUE :
-                      varType == PsiType.INT ? Integer.MAX_VALUE :
-                      varType == PsiType.CHAR ? Character.MAX_VALUE :
-                      Long.MAX_VALUE;
+    double minValue = PsiType.BYTE.equals(varType) ? Byte.MIN_VALUE : PsiType.SHORT.equals(varType)
+                                                                 ? Short.MIN_VALUE : PsiType.INT.equals(varType)
+                                                                   ? Integer.MIN_VALUE : PsiType.CHAR.equals(varType) ? Character.MIN_VALUE :
+                                                                                         Long.MIN_VALUE;
+    double maxValue = PsiType.BYTE.equals(varType) ? Byte.MAX_VALUE : PsiType.SHORT.equals(varType)
+                                                                 ? Short.MAX_VALUE : PsiType.INT.equals(varType)
+                                                                   ? Integer.MAX_VALUE : PsiType.CHAR.equals(varType) ? Character.MAX_VALUE :
+                                                                                         Long.MAX_VALUE;
 
     return checkComparisonWithKnownRange(instruction, runner, memState, opSign, comparedWith, minValue, maxValue);
   }
@@ -555,10 +549,12 @@ public class StandardInstructionVisitor extends InstructionVisitor {
     if (opSign == LT && comparedWith <= rangeMin) return alwaysFalse(instruction, runner, memState);
     if (opSign == LT && comparedWith > rangeMax) return alwaysTrue(instruction, runner, memState);
     if (opSign == LE && comparedWith >= rangeMax) return alwaysTrue(instruction, runner, memState);
+    if (opSign == LE && comparedWith < rangeMin) return alwaysFalse(instruction, runner, memState);
 
     if (opSign == GT && comparedWith >= rangeMax) return alwaysFalse(instruction, runner, memState);
     if (opSign == GT && comparedWith < rangeMin) return alwaysTrue(instruction, runner, memState);
     if (opSign == GE && comparedWith <= rangeMin) return alwaysTrue(instruction, runner, memState);
+    if (opSign == GE && comparedWith > rangeMax) return alwaysFalse(instruction, runner, memState);
 
     return null;
   }
@@ -589,9 +585,7 @@ public class StandardInstructionVisitor extends InstructionVisitor {
         return true;
       }
     }
-    if (PsiTreeUtil.findChildOfType(element, PsiAssignmentExpression.class) != null) {
-      return true;
-    }
     return false;
   }
+
 }

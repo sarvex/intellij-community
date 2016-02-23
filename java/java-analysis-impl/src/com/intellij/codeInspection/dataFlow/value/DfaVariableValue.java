@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
  */
 package com.intellij.codeInspection.dataFlow.value;
 
-import com.intellij.codeInsight.NullableNotNullManager;
 import com.intellij.codeInsight.daemon.impl.analysis.JavaGenericsUtil;
 import com.intellij.codeInspection.dataFlow.DfaPsiUtil;
 import com.intellij.codeInspection.dataFlow.Nullness;
@@ -82,10 +81,10 @@ public class DfaVariableValue extends DfaValue {
       return result;
     }
 
-    public List<DfaVariableValue> getAllQualifiedBy(DfaVariableValue value) {
+    @NotNull
+    public List<DfaVariableValue> getAllQualifiedBy(@NotNull DfaVariableValue value) {
       return value.myDependents;
     }
-
   }
 
   private final PsiModifierListOwner myVariable;
@@ -160,6 +159,7 @@ public class DfaVariableValue extends DfaValue {
     return myQualifier;
   }
 
+  @NotNull
   public Nullness getInherentNullability() {
     if (myInherentNullability != null) {
       return myInherentNullability;
@@ -168,6 +168,7 @@ public class DfaVariableValue extends DfaValue {
     return myInherentNullability = calcInherentNullability();
   }
 
+  @NotNull
   private Nullness calcInherentNullability() {
     PsiModifierListOwner var = getPsiVariable();
     Nullness nullability = DfaPsiUtil.getElementNullability(getVariableType(), var);
@@ -195,19 +196,11 @@ public class DfaVariableValue extends DfaValue {
 
       boolean hasUnknowns = false;
       for (PsiExpression expression : initializers) {
-        if (!(expression instanceof PsiReferenceExpression)) {
-          hasUnknowns = true;
-          continue;
-        }
-        PsiElement target = ((PsiReferenceExpression)expression).resolve();
-        if (!(target instanceof PsiParameter)) {
-          hasUnknowns = true;
-          continue;
-        }
-        if (NullableNotNullManager.isNullable((PsiParameter)target)) {
+        Nullness nullness = getFieldInitializerNullness(expression);
+        if (nullness == Nullness.NULLABLE) {
           return Nullness.NULLABLE;
         }
-        if (!NullableNotNullManager.isNotNull((PsiParameter)target)) {
+        if (nullness == Nullness.UNKNOWN) {
           hasUnknowns = true;
         }
       }
@@ -223,6 +216,20 @@ public class DfaVariableValue extends DfaValue {
     }
 
     return defaultNullability;
+  }
+
+  private static Nullness getFieldInitializerNullness(@NotNull PsiExpression expression) {
+    if (expression.textMatches(PsiKeyword.NULL)) return Nullness.NULLABLE;
+    if (expression instanceof PsiNewExpression || expression instanceof PsiLiteralExpression || expression instanceof PsiPolyadicExpression) return Nullness.NOT_NULL;
+    if (expression instanceof PsiReferenceExpression) {
+      PsiElement target = ((PsiReferenceExpression)expression).resolve();
+      return DfaPsiUtil.getElementNullability(null, (PsiModifierListOwner)target);
+    }
+    if (expression instanceof PsiMethodCallExpression) {
+      PsiMethod method = ((PsiMethodCallExpression)expression).resolveMethod();
+      return method != null ? DfaPsiUtil.getElementNullability(null, method) : Nullness.UNKNOWN;
+    }
+    return Nullness.UNKNOWN;
   }
 
   public boolean isFlushableByCalls() {

@@ -20,8 +20,6 @@ import com.intellij.codeInspection.deadCode.UnusedDeclarationInspection;
 import com.intellij.openapi.projectRoots.JavaSdkVersion;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.testFramework.IdeaTestUtil;
-import junit.framework.Test;
-import junit.framework.TestSuite;
 import org.jetbrains.annotations.NonNls;
 
 public class NewLambdaHighlightingTest extends LightDaemonAnalyzerTestCase {
@@ -182,6 +180,99 @@ public class NewLambdaHighlightingTest extends LightDaemonAnalyzerTestCase {
   }
 
   public void testIDEA136759() throws Exception {
+    doTest();
+  }
+
+  public void testInfiniteLoopAndValueCompatibility() throws Exception {
+    doTest();
+  }
+
+  public void testAcceptInferredVariablesBeforeAdditionalConstraintsLeadToFail() throws Exception {
+    doTest(false);
+  }
+
+  public void testEnsureNoCaptureIsPerformedOverTargetTypeOfCastExpressionWhichMarksFunctionalExpression() throws Exception {
+    doTest();
+  }
+
+  public void testCaptureInReturnStatementOfLambdaExpression() throws Exception {
+    doTest();
+  }
+
+  public void testControlFlowAnalysisFailedValueCompatibilityUnchanged() throws Exception {
+    doTest();
+  }
+
+  public void testNonAccessibleFunctionalInterfaceTypeArguments() throws Exception {
+    doTest();
+  }
+
+  //JDK-8043374
+  public void testIntersectionTypeOfDifferentParameterizationOfTheSameClassInNonWildcardParameterization() throws Exception {
+    doTest();
+  }
+
+  public void testPreserveCapturedWildcardsDuringNonWildcardParameterization() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA136401() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA133920() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA132253() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA144840() throws Exception {
+    doTest();
+  }
+
+  public void testRecursiveAtSiteSubstitutorsWithAdditionalConstraints() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA136325() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA127215() throws Exception {
+    doTest();
+  }
+
+  public void testGroundTargetTypeForExpectedReturnTypeOfLambdaExpression() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA149224() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA149670() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA149709() throws Exception {
+    doTest();
+  }
+
+  public void testResolveOrderShouldTakeIntoAccountDependenciesOfAlreadyResolvedVars() throws Exception {
+    doTest();
+  }
+
+  public void testCodeBlockLambdaWithIsValueCompatibleChecks() throws Exception {
+    doTest();
+  }
+
+  public void testCodeBlockLambdaWithoutParamsIsValueCompatibleChecks() throws Exception {
+    doTest();
+  }
+
+  public void testInferenceFromReturnLambdaStatementWhereContainingMethodNonGeneric() throws Exception {
     doTest();
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,9 @@ import com.intellij.debugger.DebuggerBundle;
 import com.intellij.debugger.ui.tree.render.CompoundNodeRenderer;
 import com.intellij.debugger.ui.tree.render.NodeRenderer;
 import com.intellij.ide.util.ElementsChooser;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.Disposable;
+import com.intellij.openapi.actionSystem.ActionToolbarPosition;
+import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.options.ConfigurableUi;
 import com.intellij.openapi.ui.Splitter;
 import com.intellij.ui.AnActionButton;
@@ -38,17 +40,17 @@ import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class UserRenderersConfigurable extends JPanel implements ConfigurableUi<NodeRendererSettings> {
+public final class UserRenderersConfigurable extends JPanel implements ConfigurableUi<NodeRendererSettings>, Disposable {
   private final JPanel myNameFieldPanel;
   private final JTextField myNameField;
   private final ElementsChooser<NodeRenderer> myRendererChooser;
   private NodeRenderer myCurrentRenderer = null;
-  private final CompoundRendererConfigurable myRendererDataConfigurable = new CompoundRendererConfigurable();
+  private final CompoundRendererConfigurable myRendererDataConfigurable = new CompoundRendererConfigurable(this);
 
   public UserRenderersConfigurable() {
     super(new BorderLayout(4, 0));
 
-    myRendererChooser = new ElementsChooser<NodeRenderer>(true);
+    myRendererChooser = new ElementsChooser<>(true);
     setupRenderersList();
 
     ToolbarDecorator decorator = ToolbarDecorator.createDecorator((JTable)myRendererChooser.getComponent());
@@ -87,6 +89,10 @@ public final class UserRenderersConfigurable extends JPanel implements Configura
   }
 
   @Override
+  public void dispose() {
+  }
+
+  @Override
   @NotNull
   public JComponent getComponent() {
     return this;
@@ -104,9 +110,9 @@ public final class UserRenderersConfigurable extends JPanel implements Configura
     myRendererChooser.addListSelectionListener(new ListSelectionListener() {
       @Override
       public void valueChanged(@NotNull ListSelectionEvent e) {
-        if (!e.getValueIsAdjusting()) {
-          updateCurrentRenderer(myRendererChooser.getSelectedElements());
-        }
+      if (!e.getValueIsAdjusting()) {
+        updateCurrentRenderer(myRendererChooser.getSelectedElements());
+      }
       }
     });
   }
@@ -150,7 +156,7 @@ public final class UserRenderersConfigurable extends JPanel implements Configura
 
   private void flushTo(final RendererConfiguration rendererConfiguration) {
     final int count = myRendererChooser.getElementCount();
-    final List<NodeRenderer> renderers = new ArrayList<NodeRenderer>(count);
+    final List<NodeRenderer> renderers = new ArrayList<>(count);
     for (int idx = 0; idx < count; idx++) {
       renderers.add(myRendererChooser.getElementAt(idx));
     }
@@ -175,21 +181,25 @@ public final class UserRenderersConfigurable extends JPanel implements Configura
   public void reset(@NotNull NodeRendererSettings settings) {
     myRendererChooser.removeAllElements();
     final RendererConfiguration rendererConfiguration = settings.getCustomRenderers();
-    final ArrayList<NodeRenderer> elementsToSelect = new ArrayList<NodeRenderer>(1);
+    final ArrayList<NodeRenderer> elementsToSelect = new ArrayList<>(1);
     rendererConfiguration.iterateRenderers(new InternalIterator<NodeRenderer>() {
       @Override
       public boolean visit(final NodeRenderer renderer) {
         final NodeRenderer clonedRenderer = (NodeRenderer)renderer.clone();
-        myRendererChooser.addElement(clonedRenderer, clonedRenderer.isEnabled());
-        if (elementsToSelect.size() == 0) {
-          elementsToSelect.add(clonedRenderer);
-        }
-        return true;
+      myRendererChooser.addElement(clonedRenderer, clonedRenderer.isEnabled());
+      if (elementsToSelect.size() == 0) {
+        elementsToSelect.add(clonedRenderer);
+      }
+      return true;
       }
     });
     myRendererChooser.selectElements(elementsToSelect);
     updateCurrentRenderer(elementsToSelect);
     myRendererDataConfigurable.reset();
+  }
+
+  public void addRenderer(NodeRenderer renderer) {
+    myRendererChooser.addElement(renderer, renderer.isEnabled());
   }
 
   private class AddAction implements AnActionButtonRunnable {
@@ -201,13 +211,8 @@ public final class UserRenderersConfigurable extends JPanel implements Configura
     public void run(AnActionButton button) {
       final NodeRenderer renderer = (NodeRenderer)NodeRendererSettings.getInstance().createRenderer(CompoundNodeRenderer.UNIQUE_ID);
       renderer.setEnabled(true);
-      myRendererChooser.addElement(renderer, renderer.isEnabled());
-      SwingUtilities.invokeLater(new Runnable() {
-        @Override
-        public void run() {
-          myNameField.requestFocus();
-        }
-      });
+      addRenderer(renderer);
+      SwingUtilities.invokeLater(myNameField::requestFocus);
     }
   }
 
@@ -219,9 +224,7 @@ public final class UserRenderersConfigurable extends JPanel implements Configura
 
     @Override
     public void run(AnActionButton button) {
-      for (NodeRenderer selectedElement : myRendererChooser.getSelectedElements()) {
-        myRendererChooser.removeElement(selectedElement);
-      }
+      myRendererChooser.getSelectedElements().forEach(myRendererChooser::removeElement);
     }
   }
 

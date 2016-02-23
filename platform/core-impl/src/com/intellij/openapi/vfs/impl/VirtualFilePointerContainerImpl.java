@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,9 +57,7 @@ public class VirtualFilePointerContainerImpl extends TraceableDisposable impleme
                                          @NotNull Disposable parentDisposable,
                                          @Nullable VirtualFilePointerListener listener) {
     //noinspection HardCodedStringLiteral
-    super(TRACE_CREATION && !ApplicationInfoImpl.isInPerformanceTest()
-          ? new Throwable("parent = '" + parentDisposable + "' (" + parentDisposable.getClass() + "); listener=" + listener)
-          : null);
+    super(TRACE_CREATION && !ApplicationInfoImpl.isInPerformanceTest());
     myVirtualFilePointerManager = manager;
     myParent = parentDisposable;
     myListener = listener;
@@ -67,10 +65,9 @@ public class VirtualFilePointerContainerImpl extends TraceableDisposable impleme
 
   @Override
   public void readExternal(@NotNull final Element rootChild, @NotNull final String childElements) throws InvalidDataException {
-    final List urls = rootChild.getChildren(childElements);
-    for (Object url : urls) {
-      Element pathElement = (Element)url;
-      final String urlAttribute = pathElement.getAttributeValue(URL_ATTR);
+    final List<Element> urls = rootChild.getChildren(childElements);
+    for (Element url : urls) {
+      final String urlAttribute = url.getAttributeValue(URL_ATTR);
       if (urlAttribute == null) throw new InvalidDataException("path element without url");
       add(urlAttribute);
     }
@@ -154,8 +151,7 @@ public class VirtualFilePointerContainerImpl extends TraceableDisposable impleme
     assert !myDisposed;
     dropCaches();
 
-    List<VirtualFilePointer> thatList = ((VirtualFilePointerContainerImpl)that).myList;
-    for (final VirtualFilePointer pointer : thatList) {
+    for (final VirtualFilePointer pointer : that.getList()) {
       myList.add(duplicate(pointer));
     }
   }

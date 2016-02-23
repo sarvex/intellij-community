@@ -20,6 +20,7 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.progress.SomeQueue;
 import com.intellij.util.Alarm;
+import org.jetbrains.annotations.NotNull;
 
 @SomeQueue
 public class ZipperUpdater {
@@ -44,11 +45,15 @@ public class ZipperUpdater {
     myAlarm = new Alarm(threadToUse, parentDisposable);
   }
 
-  public void queue(final Runnable runnable) {
+  public void queue(@NotNull final Runnable runnable) {
     queue(runnable, false);
   }
 
-  public void queue(final Runnable runnable, final boolean urgent) {
+  public void queue(@NotNull final Runnable runnable, final boolean urgent) {
+    queue(runnable, urgent, false);
+  }
+
+  public void queue(@NotNull final Runnable runnable, final boolean urgent, final boolean anyModality) {
     synchronized (myLock) {
       if (myAlarm.isDisposed()) return;
       final boolean wasRaised = myRaised;
@@ -67,9 +72,16 @@ public class ZipperUpdater {
             }
           }
         };
-        if (Alarm.ThreadToUse.SWING_THREAD.equals(myThreadToUse) && ! ApplicationManager.getApplication().isDispatchThread()) {
-          myAlarm.addRequest(request, urgent ? 0 : myDelay, ModalityState.NON_MODAL);
-        } else {
+        if (Alarm.ThreadToUse.SWING_THREAD.equals(myThreadToUse)) {
+          if (anyModality) {
+            myAlarm.addRequest(request, urgent ? 0 : myDelay, ModalityState.any());
+          } else if (!ApplicationManager.getApplication().isDispatchThread()) {
+            myAlarm.addRequest(request, urgent ? 0 : myDelay, ModalityState.NON_MODAL);
+          } else {
+            myAlarm.addRequest(request, urgent ? 0 : myDelay);
+          }
+        }
+        else {
           myAlarm.addRequest(request, urgent ? 0 : myDelay);
         }
       }

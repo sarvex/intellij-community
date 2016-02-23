@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,11 +21,11 @@ import org.jetbrains.annotations.NotNull;
 /**
  * @author peter
  */
-public class DefaultProject extends ProjectImpl {
+class DefaultProject extends ProjectImpl {
   private static final String TEMPLATE_PROJECT_NAME = "Default (Template) Project";
 
-  protected DefaultProject(@NotNull ProjectManager manager, @NotNull String filePath, boolean optimiseTestLoadSpeed) {
-    super(manager, filePath, optimiseTestLoadSpeed, TEMPLATE_PROJECT_NAME);
+  protected DefaultProject(@NotNull ProjectManager manager, @NotNull String filePath) {
+    super(manager, filePath, TEMPLATE_PROJECT_NAME);
   }
 
   @Override

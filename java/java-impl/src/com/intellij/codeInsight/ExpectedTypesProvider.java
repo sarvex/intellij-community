@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -337,17 +337,20 @@ public class ExpectedTypesProvider {
         type = ((PsiAnnotationMethod)parent).getReturnType();
       }
       if (type instanceof PsiArrayType) {
-        myResult.add(createInfoImpl(((PsiArrayType)type).getComponentType(), type));
+        final PsiType componentType = ((PsiArrayType)type).getComponentType();
+        myResult.add(createInfoImpl(componentType, componentType));
       }
     }
 
     @Override public void visitNameValuePair(@NotNull PsiNameValuePair pair) {
       final PsiType type = getAnnotationMethodType(pair);
       if (type == null) return;
-      myResult.add(createInfoImpl(type, type));
       if (type instanceof PsiArrayType) {
         PsiType componentType = ((PsiArrayType)type).getComponentType();
         myResult.add(createInfoImpl(componentType, componentType));
+      }
+      else {
+        myResult.add(createInfoImpl(type, type));
       }
     }
 
@@ -502,8 +505,8 @@ public class ExpectedTypesProvider {
 
     @Override public void visitVariable(@NotNull PsiVariable variable) {
       PsiType type = variable.getType();
-      myResult.add(createInfoImpl(type, ExpectedTypeInfo.TYPE_OR_SUBTYPE, type,
-                                                 variable instanceof PsiResourceVariable ? TailType.NONE : TailType.SEMICOLON, null, getPropertyName(variable)));
+      TailType tail = variable instanceof PsiResourceVariable ? TailType.NONE : TailType.SEMICOLON;
+      myResult.add(createInfoImpl(type, ExpectedTypeInfo.TYPE_OR_SUBTYPE, type, tail, null, getPropertyName(variable)));
     }
 
     @Override public void visitAssignmentExpression(@NotNull PsiAssignmentExpression assignment) {
@@ -627,7 +630,7 @@ public class ExpectedTypesProvider {
     public void visitPolyadicExpression(@NotNull PsiPolyadicExpression expr) {
       PsiExpression[] operands = expr.getOperands();
       final int index = Arrays.asList(operands).indexOf(myExpr);
-      assert index >= 0;
+      if (index < 0) return; // broken syntax
 
       if (myForCompletion && index == 0) {
         final MyParentVisitor visitor = new MyParentVisitor(expr, myForCompletion, myClassProvider, myVoidable, myUsedAfter);
@@ -1230,9 +1233,7 @@ public class ExpectedTypesProvider {
         final PsiClassType type =
           substitutor == null ? facade.getElementFactory().createType(aClass) : facade.getElementFactory().createType(aClass, substitutor);
 
-        if (method.hasModifierProperty(PsiModifier.STATIC) ||
-            method.hasModifierProperty(PsiModifier.FINAL) ||
-            method.hasModifierProperty(PsiModifier.PRIVATE)) {
+        if (method.hasModifierProperty(PsiModifier.STATIC) || method.hasModifierProperty(PsiModifier.PRIVATE)) {
           types.add(createInfoImpl(type, ExpectedTypeInfo.TYPE_STRICTLY, type, TailType.DOT));
         } else if (method.findSuperMethods().length == 0) {
           types.add(createInfoImpl(type, ExpectedTypeInfo.TYPE_OR_SUBTYPE, type, TailType.DOT));

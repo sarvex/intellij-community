@@ -8,16 +8,23 @@ import com.intellij.testFramework.UsefulTestCase;
 import com.intellij.testFramework.fixtures.IdeaProjectTestFixture;
 import com.intellij.xdebugger.XDebuggerTestUtil;
 import com.jetbrains.env.PyEnvTestCase;
+import com.jetbrains.env.PyProcessWithConsoleTestTask;
 import com.jetbrains.env.python.debug.PyDebuggerTask;
-import com.jetbrains.env.ut.PyUnitTestTask;
+import com.jetbrains.env.ut.PyUnitTestProcessRunner;
 import com.jetbrains.python.PythonHelpersLocator;
 import com.jetbrains.python.console.pydev.PydevCompletionVariant;
 import com.jetbrains.python.debugger.PyDebuggerException;
 import com.jetbrains.python.debugger.PyExceptionBreakpointProperties;
 import com.jetbrains.python.debugger.PyExceptionBreakpointType;
 import com.jetbrains.python.debugger.pydev.PyDebugCallback;
+import com.jetbrains.python.debugger.settings.PyDebuggerSettings;
+import com.jetbrains.python.debugger.settings.PySteppingFilter;
 import com.jetbrains.python.sdk.flavors.PythonSdkFlavor;
+import com.jetbrains.python.sdkTools.SdkCreationType;
+import org.jetbrains.annotations.NotNull;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -59,20 +66,26 @@ public class PythonDebuggerTest extends PyEnvTestCase {
   //}
 
   private void unittests(final String script) {
-    runPythonTest(new PyUnitTestTask("", script) {
+    runPythonTest(new PyProcessWithConsoleTestTask<PyUnitTestProcessRunner>(SdkCreationType.SDK_PACKAGES_ONLY) {
+
+      @NotNull
       @Override
-      protected String getTestDataPath() {
+      protected PyUnitTestProcessRunner createProcessRunner() throws Exception {
+        return new PyUnitTestProcessRunner(getTestDataPath(), script, 0);
+      }
+
+      @NotNull
+      @Override
+      public String getTestDataPath() {
         return PythonHelpersLocator.getPythonCommunityPath() + "/helpers/pydev";
       }
 
       @Override
-      public void after() {
-        allTestsPassed();
-      }
-
-      @Override
-      protected int getTestTimeout() {
-        return 600000;
+      protected void checkTestResults(@NotNull final PyUnitTestProcessRunner runner,
+                                      @NotNull final String stdout,
+                                      @NotNull final String stderr,
+                                      @NotNull final String all) {
+        runner.assertAllTestsPassed();
       }
     });
   }
@@ -234,6 +247,48 @@ public class PythonDebuggerTest extends PyEnvTestCase {
     });
   }
 
+  public void testStepIntoMyCode() throws Exception {
+    runPythonTest(new PyDebuggerTask("/debug", "test_my_code.py") {
+      @Override
+      public void before() throws Exception {
+        toggleBreakpoint(getScriptPath(), 5);
+        toggleBreakpoint(getScriptPath(), 7);
+      }
+
+      @Override
+      public void testing() throws Exception {
+        waitForPause();
+        stepIntoMyCode();
+        waitForPause();
+        eval("x").hasValue("2");
+        resume();
+        waitForPause();
+        stepIntoMyCode();
+        waitForPause();
+        eval("stopped_in_user_file").hasValue("True");
+      }
+    });
+  }
+
+  public void testStepIntoMyCodeFromLib() throws Exception {
+    runPythonTest(new PyDebuggerTask("/debug", "test_my_code.py") {
+      @Override
+      public void before() throws Exception {
+        toggleBreakpoint(getScriptPath(), 7);
+      }
+
+      @Override
+      public void testing() throws Exception {
+        waitForPause();
+        stepInto();
+        waitForPause();
+        stepIntoMyCode();
+        waitForPause();
+        eval("stopped_in_user_file").hasValue("True");
+      }
+    });
+  }
+
   public void testSmartStepInto() throws Exception {
     runPythonTest(new PyDebuggerTask("/debug", "test3.py") {
       @Override
@@ -285,6 +340,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         waitForOutput("command was GO!");
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return ImmutableSet.of("-jython"); //can't run on jython
@@ -324,7 +380,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
     runPythonTest(new PyDebuggerTask("/debug", "test_exceptbreak.py") {
       @Override
       public void before() throws Exception {
-        createExceptionBreakZeroDivisionError(myFixture, true, false, false, false);
+        createExceptionBreakZeroDivisionError(myFixture, true, false, false);
       }
 
       @Override
@@ -335,6 +391,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         waitForTerminate();
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return ImmutableSet.of("-iron");
@@ -344,7 +401,6 @@ public class PythonDebuggerTest extends PyEnvTestCase {
 
   private static void createExceptionBreakZeroDivisionError(IdeaProjectTestFixture fixture,
                                                             boolean notifyOnTerminate,
-                                                            boolean notifyAlways,
                                                             boolean notifyOnFirst,
                                                             boolean ignoreLibraries) {
     XDebuggerTestUtil.removeAllBreakpoints(fixture.getProject());
@@ -352,49 +408,21 @@ public class PythonDebuggerTest extends PyEnvTestCase {
 
     PyExceptionBreakpointProperties properties = new PyExceptionBreakpointProperties("exceptions.ZeroDivisionError");
     properties.setNotifyOnTerminate(notifyOnTerminate);
-    properties.setNotifyAlways(notifyAlways);
     properties.setNotifyOnlyOnFirst(notifyOnFirst);
     properties.setIgnoreLibraries(ignoreLibraries);
     addExceptionBreakpoint(fixture, properties);
     properties = new PyExceptionBreakpointProperties("builtins.ZeroDivisionError"); //for python 3
     properties.setNotifyOnTerminate(notifyOnTerminate);
-    properties.setNotifyAlways(notifyAlways);
     properties.setNotifyOnlyOnFirst(notifyOnFirst);
     properties.setIgnoreLibraries(ignoreLibraries);
     addExceptionBreakpoint(fixture, properties);
-  }
-
-  public void testExceptionBreakpointAlways() throws Exception {
-    runPythonTest(new PyDebuggerTask("/debug", "test_exceptbreak.py") {
-      @Override
-      public void before() throws Exception {
-        createExceptionBreakZeroDivisionError(myFixture, false, true, false, false);
-      }
-
-      @Override
-      public void testing() throws Exception {
-        waitForPause();
-        eval("__exception__[0].__name__").hasValue("'ZeroDivisionError'");
-        resume();
-        waitForPause();
-        resume();
-        waitForPause();
-        resume();
-        waitForTerminate();
-      }
-
-      @Override
-      public Set<String> getTags() {
-        return ImmutableSet.of("-pypy"); //TODO: fix it for Pypy
-      }
-    });
   }
 
   public void testExceptionBreakpointOnFirstRaise() throws Exception {
     runPythonTest(new PyDebuggerTask("/debug", "test_exceptbreak.py") {
       @Override
       public void before() throws Exception {
-        createExceptionBreakZeroDivisionError(myFixture, false, false, true, false);
+        createExceptionBreakZeroDivisionError(myFixture, false, true, false);
       }
 
       @Override
@@ -405,6 +433,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         waitForTerminate();
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return ImmutableSet.of("-iron");
@@ -413,26 +442,24 @@ public class PythonDebuggerTest extends PyEnvTestCase {
   }
 
   private static void createExceptionBreak(IdeaProjectTestFixture fixture,
-                                                       boolean notifyOnTerminate,
-                                                       boolean notifyAlways,
-                                                       boolean notifyOnFirst,
-                                                       boolean ignoreLibraries) {
+                                           boolean notifyOnTerminate,
+                                           boolean notifyOnFirst,
+                                           boolean ignoreLibraries) {
     XDebuggerTestUtil.removeAllBreakpoints(fixture.getProject());
     XDebuggerTestUtil.setDefaultBreakpointEnabled(fixture.getProject(), PyExceptionBreakpointType.class, false);
 
     PyExceptionBreakpointProperties properties = new PyExceptionBreakpointProperties("BaseException");
     properties.setNotifyOnTerminate(notifyOnTerminate);
-    properties.setNotifyAlways(notifyAlways);
     properties.setNotifyOnlyOnFirst(notifyOnFirst);
     properties.setIgnoreLibraries(ignoreLibraries);
     addExceptionBreakpoint(fixture, properties);
   }
 
-  public void testExceptionBreakpointIgnoreLibraries() throws Exception {
+  public void testExceptionBreakpointIgnoreLibrariesOnRaise() throws Exception {
     runPythonTest(new PyDebuggerTask("/debug", "test_ignore_lib.py") {
       @Override
       public void before() throws Exception {
-        createExceptionBreak(myFixture, false, true, false, true);
+        createExceptionBreak(myFixture, false, true, true);
       }
 
       @Override
@@ -443,9 +470,33 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         waitForTerminate();
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return ImmutableSet.of("-jython");
+      }
+    });
+  }
+
+  public void testExceptionBreakpointIgnoreLibrariesOnTerminate() throws Exception {
+    runPythonTest(new PyDebuggerTask("/debug", "test_ignore_lib.py") {
+      @Override
+      public void before() throws Exception {
+        createExceptionBreak(myFixture, true, false, true);
+      }
+
+      @Override
+      public void testing() throws Exception {
+        waitForPause();
+        eval("stopped_in_user_file").hasValue("True");
+        resume();
+        waitForTerminate();
+      }
+
+      @NotNull
+      @Override
+      public Set<String> getTags() {
+        return ImmutableSet.of("-iron");
       }
     });
   }
@@ -455,7 +506,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
       @Override
       public void before() throws Exception {
         toggleBreakpoint(getScriptPath(), 9);
-        toggleBreakpoint(getScriptPath(), 13);
+        toggleBreakpoint(getScriptPath(), 15);
       }
 
       @Override
@@ -468,6 +519,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         resume();
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return ImmutableSet.of("-pypy"); //TODO: fix that for PyPy
@@ -497,6 +549,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         resume();
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return ImmutableSet.of("-jython"); //TODO: fix that for Jython if anybody needs it
@@ -546,6 +599,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         waitForOutput("Result:OK");
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return Sets.newHashSet("python3");
@@ -585,6 +639,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         resume();
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return Sets.newHashSet("pyqt5");
@@ -624,6 +679,7 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         resume();
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return Sets.newHashSet("pyqt5");
@@ -664,9 +720,88 @@ public class PythonDebuggerTest extends PyEnvTestCase {
         resume();
       }
 
+      @NotNull
       @Override
       public Set<String> getTags() {
         return Sets.newHashSet("pyqt5");
+      }
+    });
+  }
+
+
+  public void testStepOverYieldFrom() throws Exception {
+    runPythonTest(new PyDebuggerTask("/debug", "test_step_over_yield.py") {
+      @Override
+      protected void init() {
+        setMultiprocessDebug(true);
+      }
+
+      @Override
+      public void before() throws Exception {
+        toggleBreakpoint(getScriptPath(), 6);
+      }
+
+      @Override
+      public void testing() throws Exception {
+
+        waitForPause();
+
+        stepOver();
+
+        waitForPause();
+
+        eval("a").hasValue("42");
+
+        stepOver();
+
+        waitForPause();
+
+        eval("a").hasValue("42");
+
+        stepOver();
+
+        waitForPause();
+
+        eval("sum").hasValue("6");
+
+        resume();
+      }
+
+      @NotNull
+      @Override
+      public Set<String> getTags() {
+        return Sets.newHashSet("python34");
+      }
+    });
+  }
+
+  public void testSteppingFilter() throws Exception {
+    runPythonTest(new PyDebuggerTask("/debug", "test_stepping_filter.py") {
+      @Override
+      public void before() throws Exception {
+        toggleBreakpoint(getScriptPath(), 4);
+        List<PySteppingFilter> filters = new ArrayList<>();
+        filters.add(new PySteppingFilter(true, "*/test_m?_code.py"));
+        final PyDebuggerSettings debuggerSettings = PyDebuggerSettings.getInstance();
+        debuggerSettings.setLibrariesFilterEnabled(true);
+        debuggerSettings.setSteppingFiltersEnabled(true);
+        debuggerSettings.setSteppingFilters(filters);
+      }
+
+      @Override
+      public void after() throws Exception {
+        PyDebuggerSettings.getInstance().setSteppingFilters(Collections.emptyList());
+      }
+
+      @Override
+      public void testing() throws Exception {
+        waitForPause();
+        stepInto();
+        waitForPause();
+        eval("stopped_in_user_file").hasValue("True");
+        stepInto();
+        waitForPause();
+        eval("stopped_in_user_file").hasValue("True");
       }
     });
   }

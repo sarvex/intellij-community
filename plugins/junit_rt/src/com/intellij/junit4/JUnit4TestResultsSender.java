@@ -29,15 +29,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class JUnit4TestResultsSender extends RunListener {
-  private static final String MESSAGE_LENGTH_FOR_PATTERN_MATCHING = "idea.junit.message.length.threshold";
   private static final String JUNIT_FRAMEWORK_COMPARISON_NAME = ComparisonFailure.class.getName();
   private static final String ORG_JUNIT_COMPARISON_NAME = "org.junit.ComparisonFailure";
-  private static final String ASSERTION_CLASS_NAME = AssertionError.class.getName();
-  private static final String ASSERTION_FAILED_CLASS_NAME = "junit.framework.AssertionFailedError";
 
   private final OutputObjectRegistry myRegistry;
   private Map myCurrentTestMeters = new HashMap();
@@ -52,7 +47,8 @@ public class JUnit4TestResultsSender extends RunListener {
     final Throwable throwable = failure.getException();
 
     final Throwable cause = throwable.getCause();
-    if (isAssertionError(throwable.getClass()) || isAssertionError(cause != null ? cause.getClass() : null)) {
+    if (ComparisonFailureData.isAssertionError(throwable.getClass()) || 
+        ComparisonFailureData.isAssertionError(cause != null ? cause.getClass() : null)) {
       // junit4 makes no distinction between errors and failures
       doAddFailure(description, throwable);
     }
@@ -100,79 +96,13 @@ public class JUnit4TestResultsSender extends RunListener {
     return isComparisonFailure(aClass.getSuperclass());
   }
 
-  private static boolean isAssertionError(Class throwableClass) {
-    if (throwableClass == null) return false;
-    final String throwableClassName = throwableClass.getName();
-    if (throwableClassName.equals(ASSERTION_CLASS_NAME) || throwableClassName.equals(ASSERTION_FAILED_CLASS_NAME)) return true;
-    return isAssertionError(throwableClass.getSuperclass());
-  }
-  
   private static PacketFactory createExceptionNotification(Throwable assertion) {
     if (assertion instanceof KnownException) return ((KnownException)assertion).getPacketFactory();
-    if (isComparisonFailure(assertion)) {
-      return ComparisonDetailsExtractor.create(assertion);
-    }
-    final Throwable cause = assertion.getCause();
-    if (isComparisonFailure(cause)) {
-      try {
-        return ComparisonDetailsExtractor.create(assertion, ComparisonDetailsExtractor.getExpected(cause), ComparisonDetailsExtractor.getActual(cause));
-      }
-      catch (Throwable ignore) {}
-    }
-
-    final String message = assertion.getMessage();
-    if (message != null && acceptedByThreshold(message.length())) {
-      PacketFactory notification = createExceptionNotification(assertion, message, "\nExpected: is \"(.*)\"\n\\s*got: \"(.*)\"\n");
-      if (notification == null) {
-        notification = createExceptionNotification(assertion, message, "\nExpected: is \"(.*)\"\n\\s*but: was \"(.*)\"");
-      }
-      if (notification == null) {
-        notification = createExceptionNotification(assertion, message, "\nExpected: (.*)\n\\s*got: (.*)");
-      }
-      if (notification == null) {
-        notification = createExceptionNotification(assertion, message, ".*?\\s*expected same:<(.*)> was not:<(.*)>");
-      }
-      if (notification == null) {
-        notification = createExceptionNotification(assertion, message, ".*?\\s*expected:<(.*?)> but was:<(.*?)>");
-      }
-      if (notification == null) {
-        notification = createExceptionNotification(assertion, message, "\nExpected: \"(.*)\"\n\\s*but: was \"(.*)\"");
-      }
-      if (notification == null) {
-        notification = createExceptionNotification(assertion, message, "\\s*Expected: (.*)\\s*but: was (.*)");
-      }
-      if (notification != null) {
-        return notification;
-      }
+    final ComparisonFailureData notification = JUnit4TestListener.createExceptionNotification(assertion);
+    if (notification != null) {
+      return ComparisonDetailsExtractor.create(assertion, notification.getExpected(), notification.getActual());
     }
     return new ExceptionPacketFactory(PoolOfTestStates.FAILED_INDEX, assertion);
-  }
-  
-  private static boolean acceptedByThreshold(int messageLength) {
-    int threshold = 10000;
-    final String property = System.getProperty(MESSAGE_LENGTH_FOR_PATTERN_MATCHING);
-    if (property != null) {
-      try {
-        threshold = Integer.parseInt(property);
-      }
-      catch (NumberFormatException ignore) {}
-    }
-    return messageLength < threshold;
-  }
-
-  private static PacketFactory createExceptionNotification(Throwable assertion, String message, final String regex) {
-    final Matcher matcher = Pattern.compile(regex, Pattern.DOTALL | Pattern.CASE_INSENSITIVE).matcher(message);
-
-    boolean found = false;
-    while (matcher.find()) {
-      if (found) return null;
-      found = true;
-    }
-
-    if (matcher.matches()) {
-      return ComparisonDetailsExtractor.create(assertion, matcher.group(1).replaceAll("\\\\n", "\n"), matcher.group(2).replaceAll("\\\\n", "\n"));
-    }
-    return null;
   }
 
   private Packet prepareDefectPacket(Description test, Throwable assertion) {

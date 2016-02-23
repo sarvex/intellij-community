@@ -15,17 +15,21 @@
  */
 package com.jetbrains.python.psi.impl;
 
+import com.google.common.collect.ImmutableList;
 import com.intellij.lang.ASTNode;
 import com.intellij.psi.*;
 import com.intellij.psi.scope.PsiScopeProcessor;
 import com.intellij.psi.stubs.IStubElementType;
 import com.intellij.psi.util.QualifiedName;
 import com.intellij.util.ArrayFactory;
+import com.intellij.util.ArrayUtil;
+import com.intellij.util.containers.ContainerUtil;
 import com.jetbrains.python.PyElementTypes;
 import com.jetbrains.python.PyNames;
 import com.jetbrains.python.PyTokenTypes;
 import com.jetbrains.python.PythonDialectsTokenSetProvider;
 import com.jetbrains.python.psi.*;
+import com.jetbrains.python.psi.resolve.RatedResolveResult;
 import com.jetbrains.python.psi.resolve.ResolveImportUtil;
 import com.jetbrains.python.psi.stubs.PyFromImportStatementStub;
 import org.jetbrains.annotations.NotNull;
@@ -35,10 +39,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import static com.jetbrains.python.psi.PyUtil.as;
+
 /**
  * @author yole
  */
-public class PyFromImportStatementImpl extends PyBaseElementImpl<PyFromImportStatementStub> implements PyFromImportStatement {
+public class PyFromImportStatementImpl extends PyBaseElementImpl<PyFromImportStatementStub> implements PyFromImportStatement{
   public PyFromImportStatementImpl(ASTNode astNode) {
     super(astNode);
   }
@@ -109,8 +115,9 @@ public class PyFromImportStatementImpl extends PyBaseElementImpl<PyFromImportSta
     return result.toArray(new PyImportElement[result.size()]);
   }
 
+  @Nullable
   public PyStarImportElement getStarImportElement() {
-    return findChildByClass(PyStarImportElement.class);
+    return getStubOrPsiChild(PyElementTypes.STAR_IMPORT_ELEMENT);
   }
 
   public int getRelativeLevel() {
@@ -208,14 +215,15 @@ public class PyFromImportStatementImpl extends PyBaseElementImpl<PyFromImportSta
 
   @Override
   public void deleteChildInternal(@NotNull ASTNode child) {
-    PyPsiUtils.deleteAdjacentComma(this, child, getImportElements());
+    if (ArrayUtil.contains(child.getPsi(), getImportElements())) {
+      PyPsiUtils.deleteAdjacentCommaWithWhitespaces(this, child.getPsi());
+    }
     super.deleteChildInternal(child);
   }
 
   @Nullable
-  public PsiElement resolveImportSource() {
-    final List<PsiElement> candidates = resolveImportSourceCandidates();
-    return candidates.size() > 0 ? candidates.get(0) : null;
+  public PsiFileSystemItem resolveImportSource() {
+    return as(ContainerUtil.getFirstItem(resolveImportSourceCandidates()), PsiFileSystemItem.class);
   }
 
   @NotNull
@@ -247,5 +255,46 @@ public class PyFromImportStatementImpl extends PyBaseElementImpl<PyFromImportSta
       result.add(prefix + unqualifiedName);
     }
     return result;
+  }
+
+  @NotNull
+  @Override
+  public Iterable<PyElement> iterateNames() {
+    final PyElement resolved = as(resolveImplicitSubModule(), PyElement.class);
+    return resolved != null ? ImmutableList.<PyElement>of(resolved) : Collections.<PyElement>emptyList();
+  }
+
+  @NotNull
+  @Override
+  public List<RatedResolveResult> multiResolveName(@NotNull String name) {
+    final QualifiedName importSourceQName = getImportSourceQName();
+    if (importSourceQName != null && importSourceQName.endsWith(name)) {
+      final PsiElement element = resolveImplicitSubModule();
+      if (element != null) {
+        return ResolveResultList.to(element);
+      }
+    }
+    return Collections.emptyList();
+  }
+
+  /**
+   * The statement 'from pkg1.m1 import ...' makes 'm1' available as a local name in the package 'pkg1'.
+   *
+   * http://stackoverflow.com/questions/6048786/from-module-import-in-init-py-makes-module-name-visible
+   */
+  @Nullable
+  private PsiElement resolveImplicitSubModule() {
+    final QualifiedName importSourceQName = getImportSourceQName();
+    if (importSourceQName != null) {
+      final String name = importSourceQName.getLastComponent();
+      final PsiFile file = getContainingFile();
+      if (name != null && PyUtil.isPackage(file)) {
+        final PsiElement resolvedImportSource = PyUtil.turnInitIntoDir(resolveImportSource());
+        if (resolvedImportSource != null && resolvedImportSource.getParent() == file.getContainingDirectory()) {
+          return resolvedImportSource;
+        }
+      }
+    }
+    return null;
   }
 }

@@ -33,8 +33,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import static com.intellij.codeInspection.bytecodeAnalysis.AbstractValues.InstanceOfCheckValue;
-import static com.intellij.codeInspection.bytecodeAnalysis.AbstractValues.ParamValue;
+import static com.intellij.codeInspection.bytecodeAnalysis.AbstractValues.*;
 import static com.intellij.codeInspection.bytecodeAnalysis.PResults.*;
 import static org.jetbrains.org.objectweb.asm.Opcodes.*;
 import static com.intellij.codeInspection.bytecodeAnalysis.Direction.*;
@@ -61,7 +60,9 @@ abstract class PResults {
     return sop;
   }
 
-  // Results
+  /**
+   * 'P' stands for 'Partial'
+   */
   interface PResult {}
   static final PResult Identity = new PResult() {
     @Override
@@ -193,20 +194,20 @@ class NonNullInAnalysis extends Analysis<PResult> {
   }
 
   @NotNull
-  Equation<Key, Value> mkEquation(PResult result) {
+  Equation mkEquation(PResult result) {
     if (Identity == result || Return == result) {
-      return new Equation<Key, Value>(aKey, new Final<Key, Value>(Value.Top));
+      return new Equation(aKey, new Final(Value.Top));
     }
     else if (NPE == result) {
-      return new Equation<Key, Value>(aKey, new Final<Key, Value>(Value.NotNull));
+      return new Equation(aKey, new Final(Value.NotNull));
     }
     else {
       ConditionalNPE condNpe = (ConditionalNPE) result;
-      Set<Product<Key, Value>> components = new HashSet<Product<Key, Value>>();
+      Set<Product> components = new HashSet<Product>();
       for (Set<Key> prod : condNpe.sop) {
-        components.add(new Product<Key, Value>(Value.Top, prod));
+        components.add(new Product(Value.Top, prod));
       }
-      return new Equation<Key, Value>(aKey, new Pending<Key, Value>(components));
+      return new Equation(aKey, new Pending(components));
     }
   }
 
@@ -215,7 +216,7 @@ class NonNullInAnalysis extends Analysis<PResult> {
   private PResult subResult = null;
 
   @NotNull
-  protected Equation<Key, Value> analyze() throws AnalyzerException {
+  protected Equation analyze() throws AnalyzerException {
     pendingPush(new ProceedState(createStartState()));
     int steps = 0;
     while (pendingTop > 0 && earlyResult == null) {
@@ -401,7 +402,7 @@ class NonNullInAnalysis extends Analysis<PResult> {
         break;
       default:
         nextFrame = new Frame<BasicValue>(frame);
-        interpreter.reset();
+        interpreter.reset(false);
         nextFrame.execute(insnNode, interpreter);
         subResult = interpreter.getSubResult();
     }
@@ -419,20 +420,20 @@ class NullableInAnalysis extends Analysis<PResult> {
   }
 
   @NotNull
-  Equation<Key, Value> mkEquation(PResult result) {
+  Equation mkEquation(PResult result) {
     if (NPE == result) {
-      return new Equation<Key, Value>(aKey, new Final<Key, Value>(Value.Top));
+      return new Equation(aKey, new Final(Value.Top));
     }
     if (Identity == result || Return == result) {
-      return new Equation<Key, Value>(aKey, new Final<Key, Value>(Value.Null));
+      return new Equation(aKey, new Final(Value.Null));
     }
     else {
       ConditionalNPE condNpe = (ConditionalNPE) result;
-      Set<Product<Key, Value>> components = new HashSet<Product<Key, Value>>();
+      Set<Product> components = new HashSet<Product>();
       for (Set<Key> prod : condNpe.sop) {
-        components.add(new Product<Key, Value>(Value.Top, prod));
+        components.add(new Product(Value.Top, prod));
       }
-      return new Equation<Key, Value>(aKey, new Pending<Key, Value>(components));
+      return new Equation(aKey, new Pending(components));
     }
   }
 
@@ -443,7 +444,7 @@ class NullableInAnalysis extends Analysis<PResult> {
   private boolean top = false;
 
   @NotNull
-  protected Equation<Key, Value> analyze() throws AnalyzerException {
+  protected Equation analyze() throws AnalyzerException {
     pendingPush(createStartState());
     int steps = 0;
     while (pendingTop > 0 && earlyResult == null) {
@@ -501,7 +502,7 @@ class NullableInAnalysis extends Analysis<PResult> {
     List<Conf> nextHistory = dfsTree.loopEnters[insnIndex] ? append(history, conf) : history;
 
     addComputed(insnIndex, state);
-    execute(frame, insnNode);
+    execute(frame, insnNode, taken);
 
     if (subResult == NPE || top) {
       earlyResult = NPE;
@@ -581,7 +582,7 @@ class NullableInAnalysis extends Analysis<PResult> {
     pending[pendingTop++] = state;
   }
 
-  private void execute(Frame<BasicValue> frame, AbstractInsnNode insnNode) throws AnalyzerException {
+  private void execute(Frame<BasicValue> frame, AbstractInsnNode insnNode, boolean taken) throws AnalyzerException {
     switch (insnNode.getType()) {
       case AbstractInsnNode.LABEL:
       case AbstractInsnNode.LINE:
@@ -592,7 +593,7 @@ class NullableInAnalysis extends Analysis<PResult> {
         break;
       default:
         nextFrame = new Frame<BasicValue>(frame);
-        interpreter.reset();
+        interpreter.reset(taken);
         nextFrame.execute(insnNode, interpreter);
         subResult = interpreter.getSubResult();
         top = interpreter.top;
@@ -605,6 +606,7 @@ abstract class NullityInterpreter extends BasicInterpreter {
   final boolean nullableAnalysis;
   final int nullityMask;
   private PResult subResult = Identity;
+  protected boolean taken;
 
   NullityInterpreter(boolean nullableAnalysis, int nullityMask) {
     this.nullableAnalysis = nullableAnalysis;
@@ -616,9 +618,10 @@ abstract class NullityInterpreter extends BasicInterpreter {
   public PResult getSubResult() {
     return subResult;
   }
-  void reset() {
+  void reset(boolean taken) {
     subResult = Identity;
     top = false;
+    this.taken = taken;
   }
 
   @Override
@@ -728,7 +731,8 @@ abstract class NullityInterpreter extends BasicInterpreter {
         MethodInsnNode methodNode = (MethodInsnNode) insn;
         Method method = new Method(methodNode.owner, methodNode.name, methodNode.desc);
         for (int i = shift; i < values.size(); i++) {
-          if (values.get(i) instanceof ParamValue) {
+          BasicValue value = values.get(i);
+          if (value instanceof ParamValue || (NullValue == value && nullityMask == In.NULLABLE_MASK && "<init>".equals(methodNode.name))) {
             subResult = combine(subResult, new ConditionalNPE(new Key(method, new In(i - shift, nullityMask), stable)));
           }
         }
@@ -755,6 +759,14 @@ class NullableInterpreter extends NullityInterpreter {
 
   NullableInterpreter() {
     super(true, In.NULLABLE_MASK);
+  }
+
+  @Override
+  public BasicValue newOperation(AbstractInsnNode insn) throws AnalyzerException {
+    if (insn.getOpcode() == ACONST_NULL && taken) {
+      return NullValue;
+    }
+    return super.newOperation(insn);
   }
 
   @Override

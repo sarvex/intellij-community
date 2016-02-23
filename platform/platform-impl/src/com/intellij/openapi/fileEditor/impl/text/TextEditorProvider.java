@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.*;
 import com.intellij.openapi.editor.ex.util.EditorUtil;
+import com.intellij.openapi.editor.impl.EditorImpl;
 import com.intellij.openapi.fileEditor.*;
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx;
 import com.intellij.openapi.fileTypes.BinaryFileTypeDecompilers;
@@ -31,9 +32,11 @@ import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.UserDataHolderBase;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.pom.Navigatable;
 import com.intellij.psi.SingleRootFileViewProvider;
+import com.intellij.util.ui.update.UiNotifyConnector;
 import org.jdom.Element;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -60,7 +63,7 @@ public class TextEditorProvider implements FileEditorProvider, DumbAware {
   @NonNls private static final String SELECTION_START_COLUMN_ATTR     = "selection-start-column";
   @NonNls private static final String SELECTION_END_LINE_ATTR         = "selection-end-line";
   @NonNls private static final String SELECTION_END_COLUMN_ATTR       = "selection-end-column";
-  @NonNls private static final String VERTICAL_SCROLL_PROPORTION_ATTR = "vertical-scroll-proportion";
+  @NonNls private static final String RELATIVE_CARET_POSITION_ATTR    = "relative-caret-position";
   @NonNls private static final String CARET_ELEMENT                   = "caret";
 
   public static TextEditorProvider getInstance() {
@@ -69,15 +72,7 @@ public class TextEditorProvider implements FileEditorProvider, DumbAware {
 
   @Override
   public boolean accept(@NotNull Project project, @NotNull VirtualFile file) {
-    if (file.isDirectory() || !file.isValid()) {
-      return false;
-    }
-    if (SingleRootFileViewProvider.isTooLargeForContentLoading(file)) {
-      return false;
-    }
-
-    final FileType ft = file.getFileType();
-    return !ft.isBinary() || BinaryFileTypeDecompilers.INSTANCE.forFileType(ft) != null;
+    return isTextFile(file) && !SingleRootFileViewProvider.isTooLargeForContentLoading(file);
   }
 
   @Override
@@ -109,8 +104,8 @@ public class TextEditorProvider implements FileEditorProvider, DumbAware {
         }
       }
 
-      String verticalScrollProportion = element.getAttributeValue(VERTICAL_SCROLL_PROPORTION_ATTR);
-      state.VERTICAL_SCROLL_PROPORTION = verticalScrollProportion == null ? 0 : Float.parseFloat(verticalScrollProportion);
+      String verticalScrollProportion = element.getAttributeValue(RELATIVE_CARET_POSITION_ATTR);
+      state.RELATIVE_CARET_POSITION = verticalScrollProportion == null ? 0 : Integer.parseInt(verticalScrollProportion);
     }
     catch (NumberFormatException ignored) {
     }
@@ -138,7 +133,7 @@ public class TextEditorProvider implements FileEditorProvider, DumbAware {
   public void writeState(@NotNull FileEditorState _state, @NotNull Project project, @NotNull Element element) {
     TextEditorState state = (TextEditorState)_state;
 
-    element.setAttribute(VERTICAL_SCROLL_PROPORTION_ATTR, Float.toString(state.VERTICAL_SCROLL_PROPORTION));
+    element.setAttribute(RELATIVE_CARET_POSITION_ATTR, Integer.toString(state.RELATIVE_CARET_POSITION));
     if (state.CARETS != null) {
       for (TextEditorState.CaretState caretState : state.CARETS) {
         Element e = new Element(CARET_ELEMENT);
@@ -214,6 +209,7 @@ public class TextEditorProvider implements FileEditorProvider, DumbAware {
 
   protected TextEditorState getStateImpl(final Project project, @NotNull Editor editor, @NotNull FileEditorStateLevel level){
     TextEditorState state = new TextEditorState();
+    if (!Registry.is("editor.new.rendering") && editor instanceof EditorImpl && ((EditorImpl)editor).myUseNewRendering) return state;
     CaretModel caretModel = editor.getCaretModel();
     if (caretModel.supportsMultipleCarets()) {
       List<CaretState> caretsAndSelections = caretModel.getCaretsAndSelections();
@@ -236,9 +232,18 @@ public class TextEditorProvider implements FileEditorProvider, DumbAware {
 
     // Saving scrolling proportion on UNDO may cause undesirable results of undo action fails to perform since
     // scrolling proportion restored slightly differs from what have been saved.
-    state.VERTICAL_SCROLL_PROPORTION = level == FileEditorStateLevel.UNDO ? -1 : EditorUtil.calcVerticalScrollProportion(editor);
+    state.RELATIVE_CARET_POSITION = level == FileEditorStateLevel.UNDO ? Integer.MAX_VALUE : EditorUtil.calcRelativeCaretPosition(editor);
 
     return state;
+  }
+
+  public static boolean isTextFile(@NotNull VirtualFile file) {
+    if (file.isDirectory() || !file.isValid()) {
+      return false;
+    }
+
+    final FileType ft = file.getFileType();
+    return !ft.isBinary() || BinaryFileTypeDecompilers.INSTANCE.forFileType(ft) != null;
   }
 
   private static TextEditorState.CaretState createCaretState(LogicalPosition caretPosition, LogicalPosition selectionStartPosition, LogicalPosition selectionEndPosition) {
@@ -261,7 +266,7 @@ public class TextEditorProvider implements FileEditorProvider, DumbAware {
   }
 
   protected void setStateImpl(final Project project, final Editor editor, final TextEditorState state){
-    if (state.CARETS != null) {
+    if (state.CARETS != null && state.CARETS.length > 0) {
       if (editor.getCaretModel().supportsMultipleCarets()) {
         CaretModel caretModel = editor.getCaretModel();
         List<CaretState> states = new ArrayList<CaretState>(state.CARETS.length);
@@ -273,28 +278,35 @@ public class TextEditorProvider implements FileEditorProvider, DumbAware {
         caretModel.setCaretsAndSelections(states, false);
       }
       else {
-        LogicalPosition pos = new LogicalPosition(state.CARETS[0].LINE, state.CARETS[0].COLUMN);
+        TextEditorState.CaretState caretState = state.CARETS[0];
+        LogicalPosition pos = new LogicalPosition(caretState.LINE, caretState.COLUMN);
         editor.getCaretModel().moveToLogicalPosition(pos);
-        editor.getSelectionModel().removeSelection();
+        int startOffset = editor.logicalPositionToOffset(new LogicalPosition(caretState.SELECTION_START_LINE, 
+                                                                             caretState.SELECTION_START_COLUMN));
+        int endOffset = editor.logicalPositionToOffset(new LogicalPosition(caretState.SELECTION_END_LINE, 
+                                                                           caretState.SELECTION_END_COLUMN));
+        if (startOffset == endOffset) {
+          editor.getSelectionModel().removeSelection();
+        }
+        else {
+          editor.getSelectionModel().setSelection(startOffset, endOffset);
+        }
       }
     }
 
-    if (state.VERTICAL_SCROLL_PROPORTION != -1) {
-      EditorUtil.setVerticalScrollProportion(editor, state.VERTICAL_SCROLL_PROPORTION);
-    }
-
-    if (!editor.getCaretModel().supportsMultipleCarets()) {
-      if (state.CARETS[0].SELECTION_START_LINE == state.CARETS[0].SELECTION_END_LINE
-          && state.CARETS[0].SELECTION_START_COLUMN == state.CARETS[0].SELECTION_END_COLUMN) {
-        editor.getSelectionModel().removeSelection();
+    final int relativeCaretPosition = state.RELATIVE_CARET_POSITION;
+    UiNotifyConnector.doWhenFirstShown(editor.getContentComponent(), new Runnable() {
+      public void run() {
+        if (!editor.isDisposed()) {
+          editor.getScrollingModel().disableAnimation();
+          if (relativeCaretPosition != Integer.MAX_VALUE) {
+            EditorUtil.setRelativeCaretPosition(editor, relativeCaretPosition);
+          }
+          editor.getScrollingModel().scrollToCaret(ScrollType.RELATIVE);
+          editor.getScrollingModel().enableAnimation();
+        }
       }
-      else {
-        int startOffset = editor.logicalPositionToOffset(new LogicalPosition(state.CARETS[0].SELECTION_START_LINE, state.CARETS[0].SELECTION_START_COLUMN));
-        int endOffset = editor.logicalPositionToOffset(new LogicalPosition(state.CARETS[0].SELECTION_END_LINE, state.CARETS[0].SELECTION_END_COLUMN));
-        editor.getSelectionModel().setSelection(startOffset, endOffset);
-      }
-    }
-    editor.getScrollingModel().scrollToCaret(ScrollType.RELATIVE);
+    });
   }
 
   protected class EditorWrapper extends UserDataHolderBase implements TextEditor {

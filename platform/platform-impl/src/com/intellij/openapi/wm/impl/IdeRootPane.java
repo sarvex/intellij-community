@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import com.intellij.ide.actions.ViewToolbarAction;
 import com.intellij.ide.ui.UISettings;
 import com.intellij.ide.ui.UISettingsListener;
 import com.intellij.ide.ui.customization.CustomActionsSchema;
+import com.intellij.ide.ui.laf.darcula.ui.DarculaRootPaneUI;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.actionSystem.ex.ActionManagerEx;
 import com.intellij.openapi.application.Application;
@@ -31,6 +32,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.wm.*;
 import com.intellij.openapi.wm.ex.IdeFrameEx;
 import com.intellij.openapi.wm.impl.status.IdeStatusBarImpl;
@@ -38,6 +40,7 @@ import com.intellij.openapi.wm.impl.status.MemoryUsagePanel;
 import com.intellij.ui.BalloonLayout;
 import com.intellij.ui.BalloonLayoutImpl;
 import com.intellij.ui.PopupHandler;
+import com.intellij.ui.ScreenUtil;
 import com.intellij.ui.components.JBLayeredPane;
 import com.intellij.ui.components.JBPanel;
 import com.intellij.util.containers.ContainerUtil;
@@ -48,6 +51,7 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.MouseMotionAdapter;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.util.ArrayList;
@@ -85,10 +89,16 @@ public class IdeRootPane extends JRootPane implements UISettingsListener {
   private boolean myFullScreen;
 
   public IdeRootPane(ActionManagerEx actionManager, UISettings uiSettings, DataManager dataManager, Application application, final IdeFrame frame) {
+    if (SystemInfo.isWindows && (UIUtil.isUnderDarcula() || UIUtil.isUnderIntelliJLaF()) && frame instanceof IdeFrameImpl) {
+      //setUI(DarculaRootPaneUI.createUI(this));
+      setWindowDecorationStyle(FRAME);
+    }
     myActionManager = actionManager;
     myUISettings = uiSettings;
 
     myContentPane.add(myNorthPanel, BorderLayout.NORTH);
+
+    myContentPane.addMouseMotionListener(new MouseMotionAdapter() {}); // listen to mouse motion events for a11y
 
     myStatusBarCustomComponentFactories = application.getExtensions(StatusBarCustomComponentFactory.EP_NAME);
     myApplication = application;
@@ -101,14 +111,16 @@ public class IdeRootPane extends JRootPane implements UISettingsListener {
     myContentPane.add(myStatusBar, BorderLayout.SOUTH);
 
     if (WindowManagerImpl.isFloatingMenuBarSupported()) {
-      menuBar = new IdeMenuBar(actionManager, dataManager);
-      getLayeredPane().add(menuBar, new Integer(JLayeredPane.DEFAULT_LAYER - 1));
-      if (frame instanceof IdeFrameEx) {
-        addPropertyChangeListener(WindowManagerImpl.FULL_SCREEN, new PropertyChangeListener() {
-          @Override public void propertyChange(PropertyChangeEvent evt) {
-            myFullScreen = ((IdeFrameEx)frame).isInFullScreen();
-          }
-        });
+      if (!isDecoratedMenu()) {
+        menuBar = new IdeMenuBar(actionManager, dataManager);
+        getLayeredPane().add(menuBar, new Integer(JLayeredPane.DEFAULT_LAYER - 1));
+        if (frame instanceof IdeFrameEx) {
+          addPropertyChangeListener(WindowManagerImpl.FULL_SCREEN, new PropertyChangeListener() {
+            @Override public void propertyChange(PropertyChangeEvent evt) {
+              myFullScreen = ((IdeFrameEx)frame).isInFullScreen();
+            }
+          });
+        }
       }
     }
     else {
@@ -147,6 +159,9 @@ public class IdeRootPane extends JRootPane implements UISettingsListener {
    */
   public final void removeNotify(){
     myUISettings.removeUISettingsListener(this);
+    if (ScreenUtil.isStandardAddRemoveNotify(this)) {
+      removeToolbar();
+    }
     super.removeNotify();
   }
 
@@ -187,13 +202,18 @@ public class IdeRootPane extends JRootPane implements UISettingsListener {
   }
 
   void updateToolbar() {
-    if (myToolbar != null) {
-      myNorthPanel.remove(myToolbar);
-    }
+    removeToolbar();
     myToolbar = createToolbar();
     myNorthPanel.add(myToolbar, 0);
     updateToolbarVisibility();
     myContentPane.revalidate();
+  }
+
+  private void removeToolbar() {
+    if (myToolbar != null) {
+      myNorthPanel.remove(myToolbar);
+      myToolbar = null;
+    }
   }
 
   void updateNorthComponents() {
@@ -323,10 +343,6 @@ public class IdeRootPane extends JRootPane implements UISettingsListener {
     if (layout instanceof BalloonLayoutImpl) ((BalloonLayoutImpl)layout).queueRelayout();
   }
 
-  public boolean isOptimizedDrawingEnabled() {
-    return !myGlassPane.hasPainters() && myGlassPane.getComponentCount() == 0;
-  }
-
   public ToolWindowsPane getToolWindowsPane() {
     return myToolWindowsPane;
   }
@@ -342,7 +358,7 @@ public class IdeRootPane extends JRootPane implements UISettingsListener {
       else {
         rd = parent.getSize();
       }
-      if (menuBar != null && menuBar.isVisible() && !myFullScreen) {
+      if (menuBar != null && menuBar.isVisible() && !myFullScreen && !isDecoratedMenu()) {
         mbd = menuBar.getPreferredSize();
       }
       else {
@@ -415,5 +431,13 @@ public class IdeRootPane extends JRootPane implements UISettingsListener {
         contentPane.setBounds(0, contentY, w, h - contentY);
       }
     }
+  }
+
+  public static boolean isFrameDecorated() {
+    return SystemInfo.isWindows && Registry.is("ide.win.frame.decoration");
+  }
+
+  public boolean isDecoratedMenu() {
+    return getUI() instanceof DarculaRootPaneUI && isFrameDecorated();
   }
 }

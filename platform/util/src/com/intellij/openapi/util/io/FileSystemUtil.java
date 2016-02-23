@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import com.intellij.openapi.util.io.win32.IdeaWin32;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.SystemProperties;
 import com.intellij.util.containers.ContainerUtil;
-import com.sun.jna.Library;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
@@ -34,9 +33,12 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Array;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.Collection;
+import java.util.Locale;
+import java.util.Map;
 
 import static com.intellij.util.BitUtil.isSet;
 import static com.intellij.util.BitUtil.notSet;
@@ -46,7 +48,8 @@ import static com.intellij.util.BitUtil.notSet;
  */
 public class FileSystemUtil {
   static final String FORCE_USE_NIO2_KEY = "idea.io.use.nio2";
-  static final String COARSE_TIMESTAMP = "idea.io.coarse.ts";
+  static final String FORCE_USE_FALLBACK_KEY = "idea.io.use.fallback";
+  static final String COARSE_TIMESTAMP_KEY = "idea.io.coarse.ts";
 
   private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.util.io.FileSystemUtil");
 
@@ -67,10 +70,11 @@ public class FileSystemUtil {
   private static Mediator ourMediator = getMediator();
 
   private static Mediator getMediator() {
+    boolean forceNio2 = SystemProperties.getBooleanProperty(FORCE_USE_NIO2_KEY, false);
+    boolean forceFallback = SystemProperties.getBooleanProperty(FORCE_USE_FALLBACK_KEY, false);
     Throwable error = null;
-    final boolean forceUseNio2 = SystemProperties.getBooleanProperty(FORCE_USE_NIO2_KEY, false);
 
-    if (!forceUseNio2) {
+    if (!forceNio2 && !forceFallback) {
       if (SystemInfo.isWindows && IdeaWin32.isAvailable()) {
         try {
           return check(new IdeaWin32MediatorImpl());
@@ -89,7 +93,7 @@ public class FileSystemUtil {
       }
     }
 
-    if (SystemInfo.isJavaVersionAtLeast("1.7") && !"1.7.0-ea".equals(SystemInfo.JAVA_VERSION)) {
+    if (!forceFallback && SystemInfo.isJavaVersionAtLeast("1.7") && !"1.7.0-ea".equals(SystemInfo.JAVA_VERSION)) {
       try {
         return check(new Nio2MediatorImpl());
       }
@@ -98,9 +102,9 @@ public class FileSystemUtil {
       }
     }
 
-    final String message =
-      "Failed to load filesystem access layer (" + SystemInfo.OS_NAME + ", " + SystemInfo.JAVA_VERSION + ", " + forceUseNio2 + ")";
-    LOG.error(message, error);
+    if (!forceFallback) {
+      LOG.warn("Failed to load filesystem access layer: " + SystemInfo.OS_NAME + ", " + SystemInfo.JAVA_VERSION + ", " + "nio2=" + forceNio2, error);
+    }
 
     return new FallbackMediatorImpl();
   }
@@ -170,26 +174,6 @@ public class FileSystemUtil {
   public static String resolveSymLink(@NotNull File file) {
     return resolveSymLink(file.getAbsolutePath());
   }
-
-  /** @deprecated use {@link #clonePermissions(String, String)} (to remove in IDEA 14) */
-  @SuppressWarnings("UnusedDeclaration")
-  public static int getPermissions(@NotNull String path) {
-    return -1;
-  }
-
-  /** @deprecated use {@link #clonePermissions(String, String)} (to remove in IDEA 14) */
-  @SuppressWarnings("UnusedDeclaration")
-  public static int getPermissions(@NotNull File file) {
-    return -1;
-  }
-
-  /** @deprecated use {@link #clonePermissions(String, String)} (to remove in IDEA 14) */
-  @SuppressWarnings("UnusedDeclaration")
-  public static void setPermissions(@NotNull String path, int permissions) { }
-
-  /** @deprecated use {@link #clonePermissions(String, String)} (to remove in IDEA 14) */
-  @SuppressWarnings({"UnusedDeclaration", "deprecation"})
-  public static void setPermissions(@NotNull File file, int permissions) { }
 
   /**
    * Gives the second file permissions of the first one if possible; returns true if succeed.
@@ -289,7 +273,7 @@ public class FileSystemUtil {
         long lastModified = (Long)myToMillis.invoke(attributes.get("lastModifiedTime"));
         if (SystemInfo.isWindows) {
           boolean isHidden = new File(path).getParent() == null ? false : (Boolean)attributes.get("hidden");
-          boolean isWritable = !(Boolean)attributes.get("readonly");
+          boolean isWritable = isDirectory || !(Boolean)attributes.get("readonly");
           return new FileAttributes(isDirectory, isOther, isSymbolicLink, isHidden, size, lastModified, isWritable);
         }
         else {
@@ -376,30 +360,40 @@ public class FileSystemUtil {
   // thanks to SVNKit for the idea of platform-specific offsets
   private static class JnaUnixMediatorImpl extends Mediator {
     @SuppressWarnings({"OctalInteger", "SpellCheckingInspection"})
-    private interface LibC extends Library {
-      int S_MASK = 0177777;
-      int S_IFLNK = 0120000;  // symbolic link
-      int S_IFREG = 0100000;  // regular file
-      int S_IFDIR = 0040000;  // directory
-      int PERM_MASK = 0777;
-      int EXECUTE_MASK = 0111;
-      int WRITE_MASK = 0222;
-      int W_OK = 2;           // write permission flag for access(2)
+    private static class LibC {
+      static final int S_MASK = 0177777;
+      static final int S_IFMT = 0170000;
+      static final int S_IFLNK = 0120000;  // symbolic link
+      static final int S_IFREG = 0100000;  // regular file
+      static final int S_IFDIR = 0040000;  // directory
+      static final int PERM_MASK = 0777;
+      static final int EXECUTE_MASK = 0111;
+      static final int WRITE_MASK = 0222;
+      static final int W_OK = 2;           // write permission flag for access(2)
 
-      int getuid();
-      int getgid();
-      int lstat(String path, Pointer stat);
-      int stat(String path, Pointer stat);
-      int __lxstat64(int ver, String path, Pointer stat);
-      int __xstat64(int ver, String path, Pointer stat);
-      int chmod(String path, int mode);
-      int access(String path, int mode);
+      static native int getuid();
+      static native int getgid();
+      static native int chmod(String path, int mode);
+      static native int access(String path, int mode);
+    }
+
+    @SuppressWarnings("SpellCheckingInspection")
+    private static class UnixLibC {
+      static native int lstat(String path, Pointer stat);
+      static native int stat(String path, Pointer stat);
+    }
+
+    @SuppressWarnings("SpellCheckingInspection")
+    private static class LinuxLibC {
+      static native int __lxstat64(int ver, String path, Pointer stat);
+      static native int __xstat64(int ver, String path, Pointer stat);
     }
 
     private static final int[] LINUX_32 =  {16, 44, 72, 24, 28};
     private static final int[] LINUX_64 =  {24, 48, 88, 28, 32};
     private static final int[] LNX_PPC32 = {16, 48, 80, 24, 28};
     private static final int[] LNX_PPC64 = LINUX_64;
+    private static final int[] LNX_ARM32 = LNX_PPC32;
     private static final int[] BSD_32 =    { 8, 48, 32, 12, 16};
     private static final int[] BSD_64 =    { 8, 72, 40, 12, 16};
     private static final int[] SUN_OS_32 = {20, 48, 64, 28, 32};
@@ -412,15 +406,22 @@ public class FileSystemUtil {
     private static final int OFF_UID  = 3;
     private static final int OFF_GID  = 4;
 
-    private final LibC myLibC;
     private final int[] myOffsets;
     private final int myUid;
     private final int myGid;
-    private final boolean myCoarseTs = SystemProperties.getBooleanProperty(COARSE_TIMESTAMP, false);
+    private final boolean myCoarseTs = SystemProperties.getBooleanProperty(COARSE_TIMESTAMP_KEY, false);
 
     private JnaUnixMediatorImpl() throws Exception {
       if (SystemInfo.isLinux) {
-        if ("ppc".equals(SystemInfo.OS_ARCH)) {
+        if ("arm".equals(SystemInfo.OS_ARCH)) {
+          if (SystemInfo.is32Bit) {
+            myOffsets = LNX_ARM32;
+          }
+          else {
+            throw new IllegalStateException("AArch64 architecture is not supported");
+          }
+        }
+        else if ("ppc".equals(SystemInfo.OS_ARCH)) {
           myOffsets = SystemInfo.is32Bit ? LNX_PPC32 : LNX_PPC64;
         }
         else {
@@ -437,19 +438,21 @@ public class FileSystemUtil {
         throw new IllegalStateException("Unsupported OS/arch: " + SystemInfo.OS_NAME + "/" + SystemInfo.OS_ARCH);
       }
 
-      myLibC = (LibC)Native.loadLibrary("c", LibC.class);
-      myUid = myLibC.getuid();
-      myGid = myLibC.getgid();
+      Native.register(LibC.class, "c");
+      Native.register(SystemInfo.isLinux ? LinuxLibC.class : UnixLibC.class, "c");
+
+      myUid = LibC.getuid();
+      myGid = LibC.getgid();
     }
 
     @Override
     protected FileAttributes getAttributes(@NotNull String path) throws Exception {
       Memory buffer = new Memory(256);
-      int res = SystemInfo.isLinux ? myLibC.__lxstat64(STAT_VER, path, buffer) : myLibC.lstat(path, buffer);
+      int res = SystemInfo.isLinux ? LinuxLibC.__lxstat64(STAT_VER, path, buffer) : UnixLibC.lstat(path, buffer);
       if (res != 0) return null;
 
       int mode = getModeFlags(buffer) & LibC.S_MASK;
-      boolean isSymlink = (mode & LibC.S_IFLNK) == LibC.S_IFLNK;
+      boolean isSymlink = (mode & LibC.S_IFMT) == LibC.S_IFLNK;
       if (isSymlink) {
         if (!loadFileStatus(path, buffer)) {
           return FileAttributes.BROKEN_SYMLINK;
@@ -457,20 +460,20 @@ public class FileSystemUtil {
         mode = getModeFlags(buffer) & LibC.S_MASK;
       }
 
-      boolean isDirectory = (mode & LibC.S_IFDIR) == LibC.S_IFDIR;
-      boolean isSpecial = !isDirectory && (mode & LibC.S_IFREG) == 0;
+      boolean isDirectory = (mode & LibC.S_IFMT) == LibC.S_IFDIR;
+      boolean isSpecial = !isDirectory && (mode & LibC.S_IFMT) != LibC.S_IFREG;
       long size = buffer.getLong(myOffsets[OFF_SIZE]);
       long mTime1 = SystemInfo.is32Bit ? buffer.getInt(myOffsets[OFF_TIME]) : buffer.getLong(myOffsets[OFF_TIME]);
       long mTime2 = myCoarseTs ? 0 : SystemInfo.is32Bit ? buffer.getInt(myOffsets[OFF_TIME] + 4) : buffer.getLong(myOffsets[OFF_TIME] + 8);
       long mTime = mTime1 * 1000 + mTime2 / 1000000;
 
-      boolean writable = ownFile(buffer) ? (mode & LibC.WRITE_MASK) != 0 : myLibC.access(path, LibC.W_OK) == 0;
+      boolean writable = ownFile(buffer) ? (mode & LibC.WRITE_MASK) != 0 : LibC.access(path, LibC.W_OK) == 0;
 
       return new FileAttributes(isDirectory, isSpecial, isSymlink, false, size, mTime, writable);
     }
 
-    private boolean loadFileStatus(@NotNull String path, Memory buffer) {
-      return (SystemInfo.isLinux ? myLibC.__xstat64(STAT_VER, path, buffer) : myLibC.stat(path, buffer)) == 0;
+    private static boolean loadFileStatus(String path, Memory buffer) {
+      return (SystemInfo.isLinux ? LinuxLibC.__xstat64(STAT_VER, path, buffer) : UnixLibC.stat(path, buffer)) == 0;
     }
 
     @Override
@@ -503,7 +506,7 @@ public class FileSystemUtil {
       else {
         permissions = sourcePermissions;
       }
-      return myLibC.chmod(target, permissions) == 0;
+      return LibC.chmod(target, permissions) == 0;
     }
 
     private int getModeFlags(Memory buffer) {
@@ -529,11 +532,10 @@ public class FileSystemUtil {
       Object fileSystem;
       Method getBooleanAttributes;
       try {
-        final Class<?> fsClass = Class.forName("java.io.FileSystem");
-        final Method getFileSystem = fsClass.getMethod("getFileSystem");
-        getFileSystem.setAccessible(true);
-        fileSystem = getFileSystem.invoke(null);
-        getBooleanAttributes = fsClass.getDeclaredMethod("getBooleanAttributes", File.class);
+        Field fs = File.class.getDeclaredField("fs");
+        fs.setAccessible(true);
+        fileSystem = fs.get(null);
+        getBooleanAttributes = fileSystem.getClass().getMethod("getBooleanAttributes", File.class);
         getBooleanAttributes.setAccessible(true);
       }
       catch (Throwable t) {
@@ -550,22 +552,26 @@ public class FileSystemUtil {
       if (myFileSystem != null) {
         final int flags = (Integer)myGetBooleanAttributes.invoke(myFileSystem, file);
         if (flags != 0) {
-          final boolean isDirectory = isSet(flags, BA_DIRECTORY);
-          final boolean isSpecial = notSet(flags, BA_REGULAR | BA_DIRECTORY);
-          final boolean isHidden = isSet(flags, BA_HIDDEN);
-          return new FileAttributes(isDirectory, isSpecial, false, isHidden, file.length(), file.lastModified(), file.canWrite());
+          boolean isDirectory = isSet(flags, BA_DIRECTORY);
+          boolean isSpecial = notSet(flags, BA_REGULAR) && notSet(flags, BA_DIRECTORY);
+          boolean isHidden = isSet(flags, BA_HIDDEN) && !isWindowsRoot(path);
+          boolean isWritable = SystemInfo.isWindows && isDirectory || file.canWrite();
+          return new FileAttributes(isDirectory, isSpecial, false, isHidden, file.length(), file.lastModified(), isWritable);
         }
       }
-      else {
-        if (file.exists()) {
-          final boolean isDirectory = file.isDirectory();
-          final boolean isSpecial = !isDirectory && !file.isFile();
-          final boolean isHidden = file.isHidden();
-          return new FileAttributes(isDirectory, isSpecial, false, isHidden, file.length(), file.lastModified(), file.canWrite());
-        }
+      else if (file.exists()) {
+        boolean isDirectory = file.isDirectory();
+        boolean isSpecial = !isDirectory && !file.isFile();
+        boolean isHidden = file.isHidden() && !isWindowsRoot(path);
+        boolean isWritable = SystemInfo.isWindows && isDirectory || file.canWrite();
+        return new FileAttributes(isDirectory, isSpecial, false, isHidden, file.length(), file.lastModified(), isWritable);
       }
 
       return null;
+    }
+
+    private static boolean isWindowsRoot(String p) {
+      return SystemInfo.isWindows && p.length() >= 2 && p.length() <= 3 && Character.isLetter(p.charAt(0)) && p.charAt(1) == ':';
     }
 
     @Override

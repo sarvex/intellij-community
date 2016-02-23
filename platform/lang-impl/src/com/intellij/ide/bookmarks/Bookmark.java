@@ -39,6 +39,7 @@ import com.intellij.openapi.editor.markup.RangeHighlighter;
 import com.intellij.openapi.editor.markup.TextAttributes;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
+import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Ref;
@@ -50,6 +51,7 @@ import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
 import com.intellij.ui.ColorUtil;
 import com.intellij.ui.JBColor;
+import com.intellij.ui.RetrievableIcon;
 import com.intellij.util.NotNullProducer;
 import com.intellij.util.PlatformIcons;
 import com.intellij.util.Processor;
@@ -59,7 +61,7 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.awt.*;
 
-public class Bookmark implements Navigatable {
+public class Bookmark implements Navigatable, Comparable<Bookmark> {
   public static final Icon DEFAULT_ICON = new MyCheckedIcon();
 
   private final VirtualFile myFile;
@@ -78,6 +80,17 @@ public class Bookmark implements Navigatable {
     myTarget = new OpenFileDescriptor(project, file, line, -1, true);
 
     addHighlighter();
+  }
+
+  @Override
+  public int compareTo(Bookmark o) {
+    int i = myMnemonic != 0 ? o.myMnemonic != 0 ? myMnemonic - o.myMnemonic : -1: o.myMnemonic != 0 ? 1 : 0;
+    if (i != 0) return i;
+    i = myProject.getName().compareTo(o.myProject.getName());
+    if (i != 0) return i;
+    i = myFile.getName().compareTo(o.getFile().getName());
+    if (i != 0) return i;
+    return myTarget.compareTo(o.myTarget);
   }
 
   public void updateHighlighter() {
@@ -341,7 +354,13 @@ public class Bookmark implements Navigatable {
     }
   }
 
-  private static class MyCheckedIcon implements Icon {
+  private static class MyCheckedIcon implements Icon, RetrievableIcon {
+    @Nullable
+    @Override
+    public Icon retrieveIcon() {
+      return PlatformIcons.CHECK_ICON;
+    }
+
     @Override
     public void paintIcon(Component c, Graphics g, int x, int y) {
       (darkBackground() ? AllIcons.Actions.CheckedGrey : AllIcons.Actions.CheckedBlack).paintIcon(c, g, x, y);
@@ -366,7 +385,7 @@ public class Bookmark implements Navigatable {
     return ColorUtil.isDark(gutterBackground);
   }
 
-  private static class MyGutterIconRenderer extends GutterIconRenderer {
+  private static class MyGutterIconRenderer extends GutterIconRenderer implements DumbAware {
     private final Bookmark myBookmark;
 
     public MyGutterIconRenderer(@NotNull Bookmark bookmark) {

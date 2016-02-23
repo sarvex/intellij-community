@@ -30,6 +30,9 @@ import com.intellij.openapi.wm.StatusBar;
 import com.intellij.openapi.wm.WindowManager;
 import org.jetbrains.annotations.Nullable;
 
+import static com.intellij.openapi.util.text.StringUtil.escapeMnemonics;
+import static com.intellij.openapi.util.text.StringUtil.firstLast;
+
 public class SynchronizeCurrentFileAction extends AnAction implements DumbAware {
   @Override
   public void update(AnActionEvent e) {
@@ -39,14 +42,12 @@ public class SynchronizeCurrentFileAction extends AnAction implements DumbAware 
       e.getPresentation().setEnabledAndVisible(false);
       return;
     }
-
-    String message = getMessage(files);
     e.getPresentation().setEnabledAndVisible(true);
-    e.getPresentation().setText(message.replace("_", "__").replace("&", "&&"));
+    e.getPresentation().setText(getMessage(files));
   }
 
   private static String getMessage(VirtualFile[] files) {
-    return files.length == 1 ? IdeBundle.message("action.synchronize.file", files[0].getName())
+    return files.length == 1 ? IdeBundle.message("action.synchronize.file", escapeMnemonics(firstLast(files[0].getName(), 20)))
                              : IdeBundle.message("action.synchronize.selected.files");
   }
 

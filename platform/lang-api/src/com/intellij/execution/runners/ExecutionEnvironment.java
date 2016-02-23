@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,50 +66,17 @@ public class ExecutionEnvironment extends UserDataHolderBase implements Disposab
 
   public ExecutionEnvironment(@NotNull Executor executor,
                               @NotNull ProgramRunner runner,
-                              @NotNull RunnerAndConfigurationSettings configuration,
+                              @NotNull RunnerAndConfigurationSettings settings,
                               @NotNull Project project) {
-    this(configuration.getConfiguration(),
+    this(settings.getConfiguration(),
          executor,
          DefaultExecutionTarget.INSTANCE,
          project,
-         configuration.getRunnerSettings(runner),
-         configuration.getConfigurationSettings(runner),
+         settings.getRunnerSettings(runner),
+         settings.getConfigurationSettings(runner),
          null,
-         null,
+         settings,
          runner);
-  }
-
-  /**
-   * @deprecated, use {@link com.intellij.execution.runners.ExecutionEnvironmentBuilder} instead
-   * to remove in IDEA 14
-   */
-  @TestOnly
-  public ExecutionEnvironment(@NotNull Executor executor,
-                              @NotNull final ProgramRunner runner,
-                              @NotNull final ExecutionTarget target,
-                              @NotNull final RunnerAndConfigurationSettings configuration,
-                              @NotNull Project project) {
-    this(configuration.getConfiguration(),
-         executor,
-         target,
-         project,
-         configuration.getRunnerSettings(runner),
-         configuration.getConfigurationSettings(runner),
-         null,
-         configuration,
-         runner);
-  }
-
-  /**
-   * @deprecated, use {@link com.intellij.execution.runners.ExecutionEnvironmentBuilder} instead
-   * to remove in IDEA 15
-   */
-  public ExecutionEnvironment(@NotNull RunProfile runProfile,
-                              @NotNull Executor executor,
-                              @NotNull Project project,
-                              @Nullable RunnerSettings runnerSettings) {
-    //noinspection ConstantConditions
-    this(runProfile, executor, DefaultExecutionTarget.INSTANCE, project, runnerSettings, null, null, null, RunnerRegistry.getInstance().getRunner(executor.getId(), runProfile));
   }
 
   ExecutionEnvironment(@NotNull RunProfile runProfile,
@@ -169,16 +136,6 @@ public class ExecutionEnvironment extends UserDataHolderBase implements Disposab
     if (contentToReuse != null) {
       Disposer.register(contentToReuse, this);
     }
-  }
-
-  @Nullable
-  @Deprecated
-  /**
-   * Use {@link #getRunner()} instead
-   * to remove in IDEA 15
-   */
-  public String getRunnerId() {
-    return myRunner.getRunnerId();
   }
 
   @NotNull

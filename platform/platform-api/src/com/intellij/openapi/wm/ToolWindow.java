@@ -149,9 +149,10 @@ public interface ToolWindow extends BusyObject {
    */
   void setAvailable(boolean available, @Nullable Runnable runnable);
 
-  void setContentUiType(ToolWindowContentUiType type, @Nullable Runnable runnable);
+  void setContentUiType(@NotNull ToolWindowContentUiType type, @Nullable Runnable runnable);
   void setDefaultContentUiType(@NotNull ToolWindowContentUiType type);
 
+  @NotNull
   ToolWindowContentUiType getContentUiType();
 
   void installWatcher(ContentManager contentManager);
@@ -171,6 +172,14 @@ public interface ToolWindow extends BusyObject {
   void setToHideOnEmptyContent(boolean hideOnEmpty);
 
   boolean isToHideOnEmptyContent();
+
+  /**
+   *
+   * @param show if <code>false</code> stripe button would be hidden
+   */
+  void setShowStripeButton(boolean show);
+
+  boolean isShowStripeButton();
   
   boolean isDisposed();
 

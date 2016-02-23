@@ -63,7 +63,7 @@ public class XmlSerializer {
 
   @Nullable
   @SuppressWarnings({"unchecked"})
-  public static <T> T deserialize(Element element, Class<T> aClass) throws XmlSerializationException {
+  public static <T> T deserialize(@NotNull Element element, @NotNull Class<T> aClass) throws XmlSerializationException {
     try {
       return (T)XmlSerializerImpl.getBinding(aClass).deserialize(null, element);
     }
@@ -87,7 +87,7 @@ public class XmlSerializer {
   }
 
   @Nullable
-  public static <T> T deserialize(URL url, Class<T> aClass) throws XmlSerializationException {
+  public static <T> T deserialize(@NotNull URL url, Class<T> aClass) throws XmlSerializationException {
     try {
       Document document = JDOMUtil.loadDocument(url);
       document = JDOMXIncluder.resolve(document, url.toExternalForm());

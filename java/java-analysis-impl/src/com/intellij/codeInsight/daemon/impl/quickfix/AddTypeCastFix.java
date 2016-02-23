@@ -26,12 +26,14 @@ package com.intellij.codeInsight.daemon.impl.quickfix;
 
 import com.intellij.codeInsight.FileModificationService;
 import com.intellij.codeInsight.daemon.QuickFixBundle;
+import com.intellij.codeInsight.intention.HighPriorityAction;
 import com.intellij.codeInspection.LocalQuickFixAndIntentionActionOnPsiElement;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CodeStyleManager;
 import com.intellij.psi.codeStyle.JavaCodeStyleManager;
+import com.intellij.psi.util.PsiTypesUtil;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.TypeConversionUtil;
 import org.jetbrains.annotations.NotNull;
@@ -39,7 +41,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static com.intellij.util.ObjectUtils.assertNotNull;
 
-public class AddTypeCastFix extends LocalQuickFixAndIntentionActionOnPsiElement {
+public class AddTypeCastFix extends LocalQuickFixAndIntentionActionOnPsiElement implements HighPriorityAction {
   private final PsiType myType;
 
   public AddTypeCastFix(@NotNull PsiType type, @NotNull PsiExpression expression) {
@@ -64,7 +66,10 @@ public class AddTypeCastFix extends LocalQuickFixAndIntentionActionOnPsiElement 
                              @NotNull PsiFile file,
                              @NotNull PsiElement startElement,
                              @NotNull PsiElement endElement) {
-    return myType.isValid() && startElement.isValid() && startElement.getManager().isInProject(startElement);
+    return myType.isValid() &&
+           PsiTypesUtil.isDenotableType(myType) &&
+           startElement.isValid() && 
+           startElement.getManager().isInProject(startElement);
   }
 
   @Override

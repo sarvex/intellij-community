@@ -3,7 +3,7 @@ namespace math = "http://www.w3.org/1998/Math/MathML"
 namespace rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 
 include "svg11/svg11-inc.rnc"
-include "inkscape/inkscape.rnc"
+include "svg11/inkscape.rnc"
 include "mml3/mathml3-inc.rnc"
 include "rdf/rdf.rnc"
 
@@ -27,6 +27,10 @@ annotation-xml.model.xhtml |=
 	(	html.elem
 	|	common.elem.flow
 	)
+
+SVG.desc.content |= ( common.elem.flow & text )*
+SVG.title.content |= ( common.elem.flow & text )*
+SVG.metadata.content |= ( common.elem.flow & text )*
 
 # in our integration, <mtext> is the only MathML "token element" that can
 # contain HTML element content; the <mi>, <mn>, <mo> and <ms> elements

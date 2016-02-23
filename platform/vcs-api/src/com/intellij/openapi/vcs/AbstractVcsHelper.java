@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.intellij.openapi.vcs.changes.CommitResultHandler;
 import com.intellij.openapi.vcs.changes.LocalChangeList;
 import com.intellij.openapi.vcs.history.VcsFileRevision;
 import com.intellij.openapi.vcs.history.VcsHistoryProvider;
+import com.intellij.openapi.vcs.history.VcsRevisionNumber;
 import com.intellij.openapi.vcs.merge.MergeDialogCustomizer;
 import com.intellij.openapi.vcs.merge.MergeProvider;
 import com.intellij.openapi.vcs.versionBrowser.ChangeBrowserSettings;
@@ -146,12 +147,17 @@ public abstract class AbstractVcsHelper {
     return showMergeDialog(files, provider);
   }
 
-  public abstract void showFileHistory(VcsHistoryProvider vcsHistoryProvider, FilePath path, final AbstractVcs vcs,
-                                       final String repositoryPath);
+  public abstract void showFileHistory(@NotNull VcsHistoryProvider historyProvider,
+                                       @NotNull FilePath path,
+                                       @NotNull AbstractVcs vcs,
+                                       @Nullable String repositoryPath);
 
-  public abstract void showFileHistory(VcsHistoryProvider vcsHistoryProvider, AnnotationProvider annotationProvider, FilePath path,
-                                       final String repositoryPath, final AbstractVcs vcs);
-
+  public abstract void showFileHistory(@NotNull VcsHistoryProvider historyProvider,
+                                       @Nullable AnnotationProvider annotationProvider,
+                                       @NotNull FilePath path,
+                                       @Nullable String repositoryPath,
+                                       @NotNull final AbstractVcs vcs);
+  
   /**
    * Shows the "Rollback Changes" dialog with the specified list of changes.
    *
@@ -196,4 +202,12 @@ public abstract class AbstractVcsHelper {
    */
   public abstract boolean commitChanges(@NotNull Collection<Change> changes, @NotNull LocalChangeList initialChangeList,
                                @NotNull String commitMessage, @Nullable CommitResultHandler customResultHandler);
+
+  public abstract void loadAndShowCommittedChangesDetails(@NotNull Project project,
+                                                          @NotNull VcsRevisionNumber revision,
+                                                          @NotNull VirtualFile file,
+                                                          @NotNull VcsKey key,
+                                                          @Nullable RepositoryLocation location,
+                                                          boolean local);
+
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.intellij.ide.hierarchy;
 
+import com.intellij.ide.CommonActionsManager;
 import com.intellij.ide.DefaultTreeExpander;
 import com.intellij.ide.actions.CloseTabToolbarAction;
 import com.intellij.ide.actions.ContextHelpAction;
@@ -42,9 +43,10 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreeModel;
 import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
-import java.util.ArrayList;
+import java.util.*;
 
 /**
  * @author yole
@@ -96,7 +98,8 @@ public abstract class HierarchyBrowserBase extends SimpleToolWindowPanel impleme
 
   protected void appendActions(@NotNull DefaultActionGroup actionGroup, @Nullable String helpID) {
     actionGroup.add(myAutoScrollToSourceHandler.createToggleAction());
-    actionGroup.add(ActionManager.getInstance().getAction(IdeActions.ACTION_EXPAND_ALL));
+    final ActionManager actionManager = ActionManager.getInstance();
+    actionGroup.add(actionManager.getAction(IdeActions.ACTION_EXPAND_ALL));
     actionGroup.add(new PinToolwindowTabAction(){
       @Override
       public void update(AnActionEvent event) {
@@ -105,6 +108,7 @@ public abstract class HierarchyBrowserBase extends SimpleToolWindowPanel impleme
         event.getPresentation().setVisible(myContent != null);
       }
     });
+    actionGroup.add(CommonActionsManager.getInstance().createExportToTextFileAction(new ExporterToTextFileHierarchy(this)));
     actionGroup.add(new CloseAction());
     if (helpID != null) {
       actionGroup.add(new ContextHelpAction(helpID));
@@ -142,6 +146,43 @@ public abstract class HierarchyBrowserBase extends SimpleToolWindowPanel impleme
       return (HierarchyNodeDescriptor)userObject;
     }
     return null;
+  }
+
+  public PsiElement[] getAvailableElements() {
+    final JTree tree = getCurrentTree();
+    if (tree == null) {
+      return PsiElement.EMPTY_ARRAY;
+    }
+    final TreeModel model = tree.getModel();
+    final Object root = model.getRoot();
+    if (!(root instanceof DefaultMutableTreeNode)) {
+      return PsiElement.EMPTY_ARRAY;
+    }
+    final DefaultMutableTreeNode node = (DefaultMutableTreeNode)root;
+    final HierarchyNodeDescriptor descriptor = getDescriptor(node);
+    final Set<PsiElement> result = new HashSet<PsiElement>();
+    collectElements(descriptor, result);
+    return result.toArray(PsiElement.EMPTY_ARRAY);
+  }
+
+  private void collectElements(HierarchyNodeDescriptor descriptor, Set<PsiElement> out) {
+    if (descriptor == null) {
+      return;
+    }
+    final PsiElement element = getElementFromDescriptor(descriptor);
+    if (element != null) {
+      out.add(element.getNavigationElement());
+    }
+    final Object[] children = descriptor.getCachedChildren();
+    if (children == null) {
+      return;
+    }
+    for (Object child : children) {
+      if (child instanceof HierarchyNodeDescriptor) {
+        final HierarchyNodeDescriptor childDescriptor = (HierarchyNodeDescriptor)child;
+        collectElements(childDescriptor, out);
+      }
+    }
   }
 
   public final HierarchyNodeDescriptor[] getSelectedDescriptors() {

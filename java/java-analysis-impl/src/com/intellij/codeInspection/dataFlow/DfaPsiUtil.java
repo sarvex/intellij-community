@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.intellij.codeInspection.dataFlow.instructions.Instruction;
 import com.intellij.codeInspection.dataFlow.instructions.MethodCallInstruction;
 import com.intellij.codeInspection.dataFlow.instructions.ReturnInstruction;
 import com.intellij.codeInspection.dataFlow.value.DfaValueFactory;
+import com.intellij.lang.java.JavaLanguage;
 import com.intellij.openapi.util.Ref;
 import com.intellij.psi.*;
 import com.intellij.psi.search.LocalSearchScope;
@@ -65,15 +66,21 @@ public class DfaPsiUtil {
 
   @NotNull
   public static Nullness getElementNullability(@Nullable PsiType resultType, @Nullable PsiModifierListOwner owner) {
-    if (owner == null) {
+    if (owner == null || resultType instanceof PsiPrimitiveType) {
       return Nullness.UNKNOWN;
     }
 
-    if (NullableNotNullManager.isNullable(owner)) {
-      return Nullness.NULLABLE;
-    }
-    if (NullableNotNullManager.isNotNull(owner)) {
+    if (owner instanceof PsiEnumConstant || PsiUtil.isAnnotationMethod(owner)) {
       return Nullness.NOT_NULL;
+    }
+    if (owner instanceof PsiMethod) {
+      PsiMethod method = (PsiMethod)owner;
+      if ("valueOf".equals(method.getName()) && method.hasModifierProperty(PsiModifier.STATIC)) {
+        PsiClass containingClass = method.getContainingClass();
+        if (containingClass != null && containingClass.isEnum()) {
+          return Nullness.NOT_NULL;
+        }
+      }
     }
 
     if (resultType != null) {
@@ -92,6 +99,13 @@ public class DfaPsiUtil {
           return Nullness.NOT_NULL;
         }
       }
+    }
+
+    if (NullableNotNullManager.isNullable(owner)) {
+      return Nullness.NULLABLE;
+    }
+    if (NullableNotNullManager.isNotNull(owner)) {
+      return Nullness.NOT_NULL;
     }
 
     return Nullness.UNKNOWN;
@@ -113,8 +127,11 @@ public class DfaPsiUtil {
   }
 
   private static Set<PsiField> getNotNullInitializedFields(final PsiMethod constructor, final PsiClass containingClass) {
+    if (!constructor.getLanguage().isKindOf(JavaLanguage.INSTANCE)) return Collections.emptySet();
+    
     final PsiCodeBlock body = constructor.getBody();
     if (body == null) return Collections.emptySet();
+    
     return CachedValuesManager.getCachedValue(constructor, new CachedValueProvider<Set<PsiField>>() {
       @Nullable
       @Override
@@ -122,13 +139,6 @@ public class DfaPsiUtil {
         final PsiCodeBlock body = constructor.getBody();
         final Map<PsiField, Boolean> map = ContainerUtil.newHashMap();
         final StandardDataFlowRunner dfaRunner = new StandardDataFlowRunner(false, false) {
-          boolean shouldCheck;
-
-          @Override
-          protected void prepareAnalysis(@NotNull PsiElement psiBlock, Iterable<DfaMemoryState> initialStates) {
-            super.prepareAnalysis(psiBlock, initialStates);
-            shouldCheck = psiBlock == body;
-          }
 
           private boolean isCallExposingNonInitializedFields(Instruction instruction) {
             if (!(instruction instanceof MethodCallInstruction) ||
@@ -154,21 +164,20 @@ public class DfaPsiUtil {
             return false;
           }
 
+          @NotNull
           @Override
-          protected DfaInstructionState[] acceptInstruction(InstructionVisitor visitor, DfaInstructionState instructionState) {
-            if (shouldCheck) {
-              Instruction instruction = instructionState.getInstruction();
-              if (isCallExposingNonInitializedFields(instruction) ||
-                  instruction instanceof ReturnInstruction && !((ReturnInstruction)instruction).isViaException()) {
-                for (PsiField field : containingClass.getFields()) {
-                  if (!instructionState.getMemoryState().isNotNull(getFactory().getVarFactory().createVariableValue(field, false))) {
-                    map.put(field, false);
-                  } else if (!map.containsKey(field)) {
-                    map.put(field, true);
-                  }
+          protected DfaInstructionState[] acceptInstruction(@NotNull InstructionVisitor visitor, @NotNull DfaInstructionState instructionState) {
+            Instruction instruction = instructionState.getInstruction();
+            if (isCallExposingNonInitializedFields(instruction) ||
+                instruction instanceof ReturnInstruction && !((ReturnInstruction)instruction).isViaException()) {
+              for (PsiField field : containingClass.getFields()) {
+                if (!instructionState.getMemoryState().isNotNull(getFactory().getVarFactory().createVariableValue(field, false))) {
+                  map.put(field, false);
+                } else if (!map.containsKey(field)) {
+                  map.put(field, true);
                 }
-                return DfaInstructionState.EMPTY_ARRAY;
               }
+              return DfaInstructionState.EMPTY_ARRAY;
             }
             return super.acceptInstruction(visitor, instructionState);
           }
@@ -200,6 +209,7 @@ public class DfaPsiUtil {
 
   private static MultiMap<PsiField, PsiExpression> getAllConstructorFieldInitializers(final PsiClass psiClass) {
     if (psiClass instanceof PsiCompiledElement) {
+      //noinspection unchecked
       return MultiMap.EMPTY;
     }
 
@@ -231,7 +241,9 @@ public class DfaPsiUtil {
         };
 
         for (PsiMethod constructor : psiClass.getConstructors()) {
-          constructor.accept(visitor);
+          if (constructor.getLanguage().isKindOf(JavaLanguage.INSTANCE)) {
+            constructor.accept(visitor);
+          }
         }
 
         return Result.create(result, psiClass);
@@ -241,14 +253,14 @@ public class DfaPsiUtil {
 
   @Nullable
   public static PsiCodeBlock getTopmostBlockInSameClass(@NotNull PsiElement position) {
-    PsiCodeBlock block = PsiTreeUtil.getParentOfType(position, PsiCodeBlock.class, false, PsiMember.class, PsiFile.class);
+    PsiCodeBlock block = PsiTreeUtil.getParentOfType(position, PsiCodeBlock.class, false, PsiMember.class, PsiFile.class, PsiLambdaExpression.class);
     if (block == null) {
       return null;
     }
 
     PsiCodeBlock lastBlock = block;
     while (true) {
-      block = PsiTreeUtil.getParentOfType(block, PsiCodeBlock.class, true, PsiMember.class, PsiFile.class);
+      block = PsiTreeUtil.getParentOfType(block, PsiCodeBlock.class, true, PsiMember.class, PsiFile.class, PsiLambdaExpression.class);
       if (block == null) {
         return lastBlock;
       }

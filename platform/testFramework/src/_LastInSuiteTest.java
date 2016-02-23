@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.impl.ApplicationImpl;
 import com.intellij.openapi.command.WriteCommandAction;
@@ -33,10 +34,24 @@ import java.lang.reflect.Method;
 @SuppressWarnings("JUnitTestClassNamingConvention")
 public class _LastInSuiteTest extends TestCase {
   public void testProjectLeak() throws Exception {
+    UIUtil.invokeAndWaitIfNeeded(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          LightPlatformTestCase.initApplication(); // in case nobody cared to init. LightPlatformTestCase.disposeApplication() would not work otherwise.
+        }
+        catch (RuntimeException e) {
+          throw e;
+        }
+        catch (Exception e) {
+          throw new RuntimeException(e);
+        }
+      }
+    });
+
     new WriteCommandAction.Simple(null) {
       @Override
       protected void run() throws Throwable {
-        LightPlatformTestCase.initApplication(); // in case nobody cared to init. LightPlatformTestCase.disposeApplication() would not work otherwise.
         LightPlatformTestCase.closeAndDeleteProject();
       }
     }.execute().throwException();
@@ -45,15 +60,23 @@ public class _LastInSuiteTest extends TestCase {
     UIUtil.invokeAndWaitIfNeeded(new Runnable() {
       @Override
       public void run() {
-        ((ApplicationImpl)ApplicationManager.getApplication()).setDisposeInProgress(true);
+        ApplicationImpl application = (ApplicationImpl)ApplicationManager.getApplication();
+        application.setDisposeInProgress(true);
         LightPlatformTestCase.disposeApplication();
         UIUtil.dispatchAllInvocationEvents();
+
+        System.out.println(application.writeActionStatistics());
+        System.out.println(ActionUtil.ACTION_UPDATE_PAUSES.statistics());
       }
     });
 
     try {
       LeakHunter.checkProjectLeak();
       Disposer.assertIsEmpty(true);
+    }
+    catch (AssertionError e) {
+      captureMemorySnapshot();
+      throw e;
     }
     catch (Exception e) {
       captureMemorySnapshot();
@@ -76,6 +99,7 @@ public class _LastInSuiteTest extends TestCase {
       Method snapshot = ReflectionUtil.getMethod(Class.forName("com.intellij.util.ProfilingUtil"), "forceCaptureMemorySnapshot");
       if (snapshot != null) {
         snapshot.invoke(null);
+        System.out.println("Memory snapshot captured");
       }
     }
     catch (Exception ignored) { }

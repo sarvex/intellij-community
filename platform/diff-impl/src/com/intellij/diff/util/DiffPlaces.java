@@ -20,4 +20,6 @@ public interface DiffPlaces {
   String CHANGES_VIEW = "ChangesView";
   String COMMIT_DIALOG = "CommitDialog";
   String TESTS_FAILED_ASSERTIONS = "TestsFiledAssertions";
+  String MERGE = "Merge";
+  String DIR_DIFF = "DirDiff";
 }

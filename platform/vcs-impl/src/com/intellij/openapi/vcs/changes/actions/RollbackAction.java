@@ -45,6 +45,7 @@ import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
+import com.intellij.util.ThreeState;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.vcsUtil.RollbackUtil;
@@ -84,7 +85,7 @@ public class RollbackAction extends AnAction implements DumbAware {
       ChangeListManager clManager = ChangeListManager.getInstance(project);
       Set<VirtualFile> modifiedWithoutEditing = ContainerUtil.newHashSet(clManager.getModifiedWithoutEditing());
       for (VirtualFile file : files) {
-        if (!clManager.getChangesIn(file).isEmpty() || modifiedWithoutEditing.contains(file)) {
+        if (clManager.haveChangesUnder(file) != ThreeState.NO || clManager.isFileAffected(file)  || modifiedWithoutEditing.contains(file)) {
           return true;
         }
       }
@@ -133,8 +134,12 @@ public class RollbackAction extends AnAction implements DumbAware {
       });
     }
 
-    if (!changes.isEmpty() || !hasChanges) {
+    if (!changes.isEmpty()) {
       RollbackChangesDialog.rollbackChanges(project, changes);
+    }
+    else if (!hasChanges) {
+      LocalChangeList currentChangeList = ChangeListManager.getInstance(project).getDefaultChangeList();
+      RollbackChangesDialog.rollbackChanges(project, currentChangeList);
     }
   }
 
@@ -157,13 +162,6 @@ public class RollbackAction extends AnAction implements DumbAware {
     if (changes != null && changes.length > 0) {
       return ContainerUtil.newArrayList(changes);
     }
-
-    final ChangeListManager clManager = ChangeListManager.getInstance(project);
-    ChangeList list = clManager.getDefaultChangeList();
-    if (list != null) {
-      return ContainerUtil.newArrayList(list.getChanges());
-    }
-
     return Collections.emptyList();
   }
 

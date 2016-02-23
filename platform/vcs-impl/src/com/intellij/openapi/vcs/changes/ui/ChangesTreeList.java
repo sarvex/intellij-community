@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,13 @@
 package com.intellij.openapi.vcs.changes.ui;
 
 import com.intellij.icons.AllIcons;
+import com.intellij.ide.CopyProvider;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.ide.util.treeView.TreeState;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diff.DiffBundle;
+import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.keymap.KeymapManager;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
@@ -32,7 +34,6 @@ import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.FilePath;
-import com.intellij.openapi.vcs.FilePathImpl;
 import com.intellij.openapi.vcs.VcsBundle;
 import com.intellij.openapi.vcs.changes.Change;
 import com.intellij.openapi.vcs.changes.ChangesUtil;
@@ -45,6 +46,7 @@ import com.intellij.ui.components.panels.NonOpaquePanel;
 import com.intellij.ui.treeStructure.Tree;
 import com.intellij.ui.treeStructure.actions.CollapseAllAction;
 import com.intellij.ui.treeStructure.actions.ExpandAllAction;
+import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.Convertor;
 import com.intellij.util.ui.UIUtil;
@@ -65,6 +67,7 @@ import javax.swing.event.TreeSelectionEvent;
 import javax.swing.event.TreeSelectionListener;
 import javax.swing.tree.*;
 import java.awt.*;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
 import java.util.*;
 import java.util.List;
@@ -82,8 +85,8 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
   private final boolean myHighlightProblems;
   private boolean myShowFlatten;
 
-  private final Collection<T> myIncludedChanges;
-  private Runnable myDoubleClickHandler = EmptyRunnable.getInstance();
+  private final Set<T> myIncludedChanges;
+  @NotNull private Runnable myDoubleClickHandler = EmptyRunnable.getInstance();
   private boolean myAlwaysExpandList;
 
   @NonNls private static final String TREE_CARD = "Tree";
@@ -93,12 +96,18 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
 
   @NonNls private final static String FLATTEN_OPTION_KEY = "ChangesBrowser.SHOW_FLATTEN";
 
-  private final Runnable myInclusionListener;
+  @Nullable private final Runnable myInclusionListener;
   @Nullable private ChangeNodeDecorator myChangeDecorator;
   private Runnable myGenericSelectionListener;
+  @NotNull private final CopyProvider myTreeCopyProvider;
+  @NotNull private final ChangesBrowserNodeListCopyProvider myListCopyProvider;
 
-  public ChangesTreeList(final Project project, Collection<T> initiallyIncluded, final boolean showCheckboxes,
-                         final boolean highlightProblems, @Nullable final Runnable inclusionListener, @Nullable final ChangeNodeDecorator decorator) {
+  public ChangesTreeList(@NotNull final Project project,
+                         @NotNull Collection<T> initiallyIncluded,
+                         final boolean showCheckboxes,
+                         final boolean highlightProblems,
+                         @Nullable final Runnable inclusionListener,
+                         @Nullable final ChangeNodeDecorator decorator) {
     myProject = project;
     myShowCheckboxes = showCheckboxes;
     myHighlightProblems = highlightProblems;
@@ -149,7 +158,7 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
       registerKeyboardAction(new ActionListener() {
         @Override
         public void actionPerformed(ActionEvent e) {
-          includeSelection();
+          includeChanges(getSelectedChangesOrAllIfNone());
         }
 
       }, KeyStroke.getKeyStroke(KeyEvent.VK_INSERT, 0), JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
@@ -157,7 +166,7 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
       registerKeyboardAction(new ActionListener() {
         @Override
         public void actionPerformed(ActionEvent e) {
-          excludeSelection();
+          excludeChanges(getSelectedChangesOrAllIfNone());
         }
       }, KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
     }
@@ -192,15 +201,18 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
     new ClickListener() {
       @Override
       public boolean onClick(@NotNull MouseEvent e, int clickCount) {
+        if (!myList.isEnabled()) return false;
         final int idx = myList.locationToIndex(e.getPoint());
         if (idx >= 0) {
-          final Rectangle baseRect = myList.getCellBounds(idx, idx);
-          baseRect.setSize(checkboxWidth, baseRect.height);
-          if (baseRect.contains(e.getPoint())) {
-            toggleSelection();
-            return true;
+          if (myShowCheckboxes) {
+            final Rectangle baseRect = myList.getCellBounds(idx, idx);
+            baseRect.setSize(checkboxWidth, baseRect.height);
+            if (baseRect.contains(e.getPoint())) {
+              toggleSelection();
+              return true;
+            }
           }
-          else if (clickCount == 2) {
+          if (clickCount == 2) {
             myDoubleClickHandler.run();
             return true;
           }
@@ -217,6 +229,15 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
                                    : myTree.getPathForLocation(e.getX(), e.getY());
         if (clickPath == null) return false;
 
+        final int row = myTree.getRowForLocation(e.getPoint().x, e.getPoint().y);
+        if (row >= 0) {
+          if (myShowCheckboxes) {
+            final Rectangle baseRect = myTree.getRowBounds(row);
+            baseRect.setSize(checkboxWidth, baseRect.height);
+            if (baseRect.contains(e.getPoint())) return false;
+          }
+        }
+
         myDoubleClickHandler.run();
         return true;
       }
@@ -226,6 +247,9 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
 
     String emptyText = StringUtil.capitalize(DiffBundle.message("diff.count.differences.status.text", 0));
     setEmptyText(emptyText);
+
+    myTreeCopyProvider = new ChangesBrowserNodeCopyProvider(myTree);
+    myListCopyProvider = new ChangesBrowserNodeListCopyProvider(myProject, myList);
   }
 
   public void setEmptyText(@NotNull String emptyText) {
@@ -254,7 +278,7 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
     myChangeDecorator = changeDecorator;
   }
 
-  public void setDoubleClickHandler(final Runnable doubleClickHandler) {
+  public void setDoubleClickHandler(@NotNull final Runnable doubleClickHandler) {
     myDoubleClickHandler = doubleClickHandler;
   }
 
@@ -475,40 +499,8 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
 
   protected abstract DefaultTreeModel buildTreeModel(final List<T> changes, final ChangeNodeDecorator changeNodeDecorator);
 
-  @SuppressWarnings({"SuspiciousMethodCalls"})
   private void toggleSelection() {
-    boolean hasExcluded = false;
-    for (T value : getSelectedChanges()) {
-      if (!myIncludedChanges.contains(value)) {
-        hasExcluded = true;
-      }
-    }
-
-    if (hasExcluded) {
-      includeSelection();
-    }
-    else {
-      excludeSelection();
-    }
-
-    repaint();
-  }
-
-  private void includeSelection() {
-    for (T change : getSelectedChanges()) {
-      myIncludedChanges.add(change);
-    }
-    notifyInclusionListener();
-    repaint();
-  }
-
-  @SuppressWarnings({"SuspiciousMethodCalls"})
-  private void excludeSelection() {
-    for (T change : getSelectedChanges()) {
-      myIncludedChanges.remove(change);
-    }
-    notifyInclusionListener();
-    repaint();
+    toggleChanges(getSelectedChanges());
   }
 
   public List<T> getChanges() {
@@ -572,6 +564,13 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
         return ContainerUtil.newArrayList(changes);
       }
     }
+  }
+
+  @NotNull
+  private List<T> getSelectedChangesOrAllIfNone() {
+    List<T> changes = getSelectedChanges();
+    if (!changes.isEmpty()) return changes;
+    return getChanges();
   }
 
   protected abstract List<T> getSelectedObjects(final ChangesBrowserNode<T> node);
@@ -653,6 +652,23 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
     notifyInclusionListener();
     myTree.repaint();
     myList.repaint();
+  }
+
+  private void toggleChanges(final Collection<T> changes) {
+    boolean hasExcluded = false;
+    for (T value : changes) {
+      if (!myIncludedChanges.contains(value)) {
+        hasExcluded = true;
+        break;
+      }
+    }
+
+    if (hasExcluded) {
+      includeChanges(changes);
+    }
+    else {
+      excludeChanges(changes);
+    }
   }
 
   public boolean isIncluded(final T change) {
@@ -752,7 +768,7 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
         @SuppressWarnings("unchecked")
         CheckboxTree.NodeState state = getNodeStatus((ChangesBrowserNode)value);
         myCheckBox.setSelected(state != CheckboxTree.NodeState.CLEAR);
-        myCheckBox.setEnabled(state != CheckboxTree.NodeState.PARTIAL);
+        myCheckBox.setEnabled(state != CheckboxTree.NodeState.PARTIAL && tree.isEnabled());
         revalidate();
 
         return this;
@@ -856,6 +872,7 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
       if (myShowCheckboxes) {
         //noinspection SuspiciousMethodCalls
         myCheckbox.setSelected(myIncludedChanges.contains(value));
+        myCheckbox.setEnabled(list.isEnabled());
         return this;
       }
       else {
@@ -867,7 +884,7 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
   private class MyToggleSelectionAction extends AnAction implements DumbAware {
     @Override
     public void actionPerformed(AnActionEvent e) {
-      toggleSelection();
+      toggleChanges(getSelectedChangesOrAllIfNone());
     }
   }
 
@@ -928,6 +945,7 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
       }
     });
     myTree.setSelectionPaths(treeSelection.toArray(new TreePath[treeSelection.size()]));
+    if (treeSelection.size() == 1) myTree.scrollPathToVisible(treeSelection.get(0));
 
     // list
     final ListModel model = myList.getModel();
@@ -941,6 +959,7 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
       }
     }
     myList.setSelectedIndices(int2int(listSelection));
+    if (listSelection.size() == 1) myList.ensureIndexIsVisible(listSelection.get(0));
   }
 
   private static int[] int2int(List<Integer> treeSelection) {
@@ -955,6 +974,7 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
 
   public void enableSelection(final boolean value) {
     myTree.setEnabled(value);
+    myList.setEnabled(value);
   }
 
   public void setAlwaysExpandList(boolean alwaysExpandList) {
@@ -968,6 +988,9 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
 
   @Override
   public void calcData(DataKey key, DataSink sink) {
+    if (PlatformDataKeys.COPY_PROVIDER == key) {
+      sink.put(PlatformDataKeys.COPY_PROVIDER, myShowFlatten ? myListCopyProvider : myTreeCopyProvider);
+    }
   }
 
   private class MyTree extends Tree implements TypeSafeDataProvider {
@@ -998,8 +1021,8 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
     @Override
     public Color getFileColorFor(Object object) {
       VirtualFile file = null;
-      if (object instanceof FilePathImpl) {
-        file = LocalFileSystem.getInstance().findFileByPath(((FilePathImpl)object).getPath());
+      if (object instanceof FilePath) {
+        file = LocalFileSystem.getInstance().findFileByPath(((FilePath)object).getPath());
       } else if (object instanceof Change) {
         file = ((Change)object).getVirtualFile();
       }
@@ -1043,6 +1066,38 @@ public abstract class ChangesTreeList<T> extends JPanel implements TypeSafeDataP
     public void calcData(DataKey key, DataSink sink) {
       // just delegate to the change list
       ChangesTreeList.this.calcData(key, sink);
+    }
+  }
+
+  private static class ChangesBrowserNodeListCopyProvider implements CopyProvider {
+
+    @NotNull private final Project myProject;
+    @NotNull private final JList myList;
+
+    ChangesBrowserNodeListCopyProvider(@NotNull Project project, @NotNull JList list) {
+      myProject = project;
+      myList = list;
+    }
+
+    @Override
+    public void performCopy(@NotNull DataContext dataContext) {
+      CopyPasteManager.getInstance().setContents(new StringSelection(StringUtil.join(myList.getSelectedValues(),
+                                                                                     new Function<Object, String>() {
+        @Override
+        public String fun(Object object) {
+          return ChangesBrowserNode.create(myProject, object).getTextPresentation();
+        }
+      }, "\n")));
+    }
+
+    @Override
+    public boolean isCopyEnabled(@NotNull DataContext dataContext) {
+      return !myList.isSelectionEmpty();
+    }
+
+    @Override
+    public boolean isCopyVisible(@NotNull DataContext dataContext) {
+      return true;
     }
   }
 }

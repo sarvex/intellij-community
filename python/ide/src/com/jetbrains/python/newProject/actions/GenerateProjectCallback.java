@@ -15,6 +15,7 @@
  */
 package com.jetbrains.python.newProject.actions;
 
+import com.intellij.ide.util.projectWizard.AbstractNewProjectStep;
 import com.intellij.ide.util.projectWizard.ProjectSettingsStepBase;
 import com.intellij.ide.util.projectWizard.WebProjectTemplate;
 import com.intellij.openapi.application.ApplicationManager;
@@ -22,7 +23,6 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
-import com.intellij.openapi.projectRoots.ProjectJdkTable;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.projectRoots.SdkAdditionalData;
 import com.intellij.openapi.projectRoots.impl.SdkConfigurationUtil;
@@ -31,16 +31,12 @@ import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.platform.DirectoryProjectGenerator;
-import com.intellij.platform.NewDirectoryProjectAction;
 import com.intellij.util.Function;
 import com.intellij.util.NullableConsumer;
 import com.jetbrains.python.configuration.PyConfigurableInterpreterList;
 import com.jetbrains.python.newProject.PyNewProjectSettings;
 import com.jetbrains.python.newProject.PythonProjectGenerator;
-import com.jetbrains.python.sdk.PyDetectedSdk;
-import com.jetbrains.python.sdk.PySdkService;
-import com.jetbrains.python.sdk.PythonSdkAdditionalData;
-import com.jetbrains.python.sdk.PythonSdkType;
+import com.jetbrains.python.sdk.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -67,8 +63,11 @@ public class GenerateProjectCallback implements NullableConsumer<ProjectSettings
         }
       });
       PySdkService.getInstance().solidifySdk(sdk);
-      sdk = SdkConfigurationUtil.setupSdk(ProjectJdkTable.getInstance().getAllJdks(), sdkHome, PythonSdkType.getInstance(), true, null,
-                                          null);
+      sdk = SdkConfigurationUtil.createAndAddSDK(sdkHome.getPath(), PythonSdkType.getInstance());
+      if (sdk != null) {
+        PythonSdkUpdater.updateOrShowError(sdk, null, project, null);
+      }
+
       model.addSdk(sdk);
       settingsStep.setSdk(sdk);
       try {
@@ -95,8 +94,8 @@ public class GenerateProjectCallback implements NullableConsumer<ProjectSettings
   private static Project generateProject(@NotNull final Project project,
                                          @NotNull final ProjectSettingsStepBase settings) {
     final DirectoryProjectGenerator generator = settings.getProjectGenerator();
-    return NewDirectoryProjectAction.doGenerateProject(project, settings.getProjectLocation(), generator,
-                                                       new Function<VirtualFile, Object>() {
+    return AbstractNewProjectStep.doGenerateProject(project, settings.getProjectLocation(), generator,
+                                                    new Function<VirtualFile, Object>() {
                                                          @Override
                                                          public Object fun(VirtualFile file) {
                                                            return computeProjectSettings(generator, (ProjectSpecificSettingsStep)settings);

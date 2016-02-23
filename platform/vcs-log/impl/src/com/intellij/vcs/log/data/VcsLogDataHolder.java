@@ -68,7 +68,7 @@ public class VcsLogDataHolder implements Disposable, VcsLogDataProvider {
 
   private final VcsUserRegistryImpl myUserRegistry;
 
-  private final VcsLogHashMap myHashMap;
+  private final VcsLogHashMapImpl myHashMap;
   private final ContainingBranchesGetter myContainingBranchesGetter;
 
   @NotNull private final VcsLogRefresher myRefresher;
@@ -84,17 +84,17 @@ public class VcsLogDataHolder implements Disposable, VcsLogDataProvider {
     myProject = project;
     myLogProviders = logProviders;
     myDataLoaderQueue = new BackgroundTaskQueue(project, "Loading history...");
-    myMiniDetailsGetter = new MiniDetailsGetter(this, logProviders);
-    myDetailsGetter = new CommitDetailsGetter(this, logProviders);
     mySettings = settings;
     myUserRegistry = (VcsUserRegistryImpl)ServiceManager.getService(project, VcsUserRegistry.class);
 
     try {
-      myHashMap = new VcsLogHashMap(myProject, logProviders);
+      myHashMap = new VcsLogHashMapImpl(myProject, logProviders);
     }
     catch (IOException e) {
       throw new RuntimeException(e); // TODO: show a message to the user & fallback to using in-memory Hashes
     }
+    myMiniDetailsGetter = new MiniDetailsGetter(myHashMap, logProviders, myTopCommitsDetailsCache, this);
+    myDetailsGetter = new CommitDetailsGetter(myHashMap, logProviders, this);
     myContainingBranchesGetter = new ContainingBranchesGetter(this, this);
 
     myFilterer = new VcsLogFiltererImpl(myProject, myLogProviders, myHashMap, myTopCommitsDetailsCache, myDetailsGetter,
@@ -126,17 +126,17 @@ public class VcsLogDataHolder implements Disposable, VcsLogDataProvider {
 
   @Override
   @NotNull
-  public Hash getHash(int commitIndex) {
-    return myHashMap.getHash(commitIndex);
+  public CommitId getCommitId(int commitIndex) {
+    return myHashMap.getCommitId(commitIndex);
   }
 
   @Override
-  public int getCommitIndex(@NotNull Hash hash) {
-    return myHashMap.getCommitIndex(hash);
+  public int getCommitIndex(@NotNull Hash hash, @NotNull VirtualFile root) {
+    return myHashMap.getCommitIndex(hash, root);
   }
 
   @NotNull
-  public VcsLogHashMap getHashMap() {
+  public VcsLogHashMapImpl getHashMap() {
     return myHashMap;
   }
 
@@ -153,7 +153,7 @@ public class VcsLogDataHolder implements Disposable, VcsLogDataProvider {
         myDataPackUpdateHandler.consume(dataPack);
         initSw.report();
       }
-    }, "Loading recent history...");
+    }, "Loading History...");
   }
 
   private void readCurrentUser() {
@@ -218,10 +218,11 @@ public class VcsLogDataHolder implements Disposable, VcsLogDataProvider {
     return myContainingBranchesGetter;
   }
 
-  void runInBackground(final ThrowableConsumer<ProgressIndicator, VcsException> task, final String title) {
-    myDataLoaderQueue.run(new Task.Backgroundable(myProject, title) {
+  private void runInBackground(final ThrowableConsumer<ProgressIndicator, VcsException> task, final String title) {
+    myDataLoaderQueue.run(new Task.Backgroundable(myProject, title, false) {
       @Override
       public void run(@NotNull ProgressIndicator indicator) {
+        indicator.setIndeterminate(true);
         try {
           task.consume(indicator);
         }

@@ -30,7 +30,7 @@ import org.jetbrains.annotations.NotNull;
 /**
  * @author Dmitry Batkovich
  */
-public class WrongPropertyKeyValueDelimiterInspection extends PropertySuppressableInspectionBase {
+public class WrongPropertyKeyValueDelimiterInspection extends PropertySuppressableInspectionBase implements CleanupLocalInspectionTool {
 
   @NotNull
   @Override
@@ -39,13 +39,13 @@ public class WrongPropertyKeyValueDelimiterInspection extends PropertySuppressab
       return PsiElementVisitor.EMPTY_VISITOR;
     }
     final PropertiesCodeStyleSettings codeStyleSettings = PropertiesCodeStyleSettings.getInstance(holder.getProject());
-    final char codeStyleKeyValueDelimiter = codeStyleSettings.KEY_VALUE_DELIMITER;
+    final char codeStyleKeyValueDelimiter = codeStyleSettings.getDelimiter();
     return new PsiElementVisitor() {
       @Override
       public void visitElement(PsiElement element) {
         if (element instanceof PropertyImpl) {
-          final Character delimiter = ((PropertyImpl)element).getKeyValueDelimiter();
-          if (delimiter != null && !delimiter.equals(codeStyleKeyValueDelimiter)) {
+          final char delimiter = ((PropertyImpl)element).getKeyValueDelimiter();
+          if (delimiter != codeStyleKeyValueDelimiter) {
             holder.registerProblem(element, PropertiesBundle.message("wrong.property.key.value.delimiter.inspection.display.name"), new ReplaceKeyValueDelimiterQuickFix(element));
           }
         }
@@ -72,7 +72,7 @@ public class WrongPropertyKeyValueDelimiterInspection extends PropertySuppressab
     @NotNull
     @Override
     public String getFamilyName() {
-      return "Replace Property Key/Value Delimiter According Code Style";
+      return "Replace property key/value delimiter according code style";
     }
   }
 }

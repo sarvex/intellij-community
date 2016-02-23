@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 package com.siyeh.ig.resources;
 
 import com.intellij.codeInspection.LocalInspectionTool;
+import com.intellij.testFramework.LightProjectDescriptor;
 import com.siyeh.ig.LightInspectionTestCase;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * @author Bas Leijdekkers
@@ -34,6 +36,42 @@ public class AutoCloseableResourceInspectionTest extends LightInspectionTestCase
            "            str.close();" +
            "        }" +
            "    }" +
+           "}");
+  }
+
+  public void testEscape() {
+    doTest("import java.io.*;" +
+           "class X {" +
+           "  void m() throws IOException {" +
+           "    n(new FileInputStream(\"file.name\"));" +
+           "  }" +
+           "  void n(Closeable c) {" +
+           "    System.out.println(c);" +
+           "  }" +
+           "}");
+  }
+
+  public void testEscape2() {
+    final AutoCloseableResourceInspection inspection = new AutoCloseableResourceInspection();
+    inspection.anyMethodMayClose = false;
+    myFixture.enableInspections(inspection);
+    doTest("import java.io.*;" +
+           "class X {" +
+           "  void m() throws IOException {" +
+           "    n(new /*'FileInputStream' used without 'try'-with-resources statement*/FileInputStream/**/(\"file.name\"));" +
+           "  }" +
+           "  void n(Closeable c) {" +
+           "    System.out.println(c);" +
+           "  }" +
+           "}");
+  }
+
+  public void testEscape3() {
+    doTest("import java.io.*;" +
+           "class X {" +
+           "  void m() throws IOException {" +
+           "    System.out.println(new FileInputStream(\"file.name\"));" +
+           "  }" +
            "}");
   }
 
@@ -68,8 +106,54 @@ public class AutoCloseableResourceInspectionTest extends LightInspectionTestCase
            "}");
   }
 
+  public void testMethodReference() {
+    doTest("import java.util.*;" +
+           "class X {" +
+           "  void m(List<String> list) {" +
+           "    final Z<String, Y> f = /*'X.Y' used without 'try'-with-resources statement*/Y::new/**/;" +
+           "  }" +
+           "  class Y implements java.io.Closeable {" +
+           "    Y(String s) {}" +
+           "    public void close() throws java.io.IOException {}" +
+           "  }" +
+           "  interface Z<T, R> {\n" +
+           "    R apply(T t);" +
+           "  }" +
+           "}");
+  }
+
+  public void testFormatter() {
+    doTest("import java.util.*;" +
+           "class TryWithResourcesFalsePositiveForFormatterFormat {" +
+           "    public void useFormatter( Formatter output ) {" +
+           "        output.format( \"Hello, world!%n\" );" +
+           "    }" +
+           "}");
+  }
+
+  public void testWriterAppend() {
+    doTest("import java.io.*;" +
+           "class A {" +
+           "    private static void write(Writer writer) throws IOException {" +
+           "        writer.append(\"command\");" +
+           "    }" +
+           "}");
+  }
+
   @Override
   protected LocalInspectionTool getInspection() {
     return new AutoCloseableResourceInspection();
+  }
+
+  @Override
+  protected String[] getEnvironmentClasses() {
+    return new String[] {
+      "package java.util;" +
+      "public final class Formatter implements Closeable {" +
+      "    public Formatter format(String format, Object ... args) {" +
+      "      return this;" +
+      "    }" +
+      "}"
+    };
   }
 }

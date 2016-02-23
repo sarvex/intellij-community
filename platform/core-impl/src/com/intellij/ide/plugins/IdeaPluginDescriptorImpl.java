@@ -80,10 +80,10 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
   private Map<PluginId, String> myOptionalConfigs;
   private Map<PluginId, IdeaPluginDescriptorImpl> myOptionalDescriptors;
   @Nullable private List<Element> myActionsElements;
-  private ComponentConfig[] myAppComponents = null;
-  private ComponentConfig[] myProjectComponents = null;
-  private ComponentConfig[] myModuleComponents = null;
-  private boolean myDeleted = false;
+  private ComponentConfig[] myAppComponents;
+  private ComponentConfig[] myProjectComponents;
+  private ComponentConfig[] myModuleComponents;
+  private boolean myDeleted;
   private ClassLoader myLoader;
   private HelpSetPath[] myHelpSets;
   @Nullable private MultiMap<String, Element> myExtensions;
@@ -93,11 +93,12 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
   private long myDate;
   private boolean myUseIdeaClassLoader;
   private boolean myUseCoreClassLoader;
+  private boolean myAllowBundledUpdate;
   private boolean myEnabled = true;
   private String mySinceBuild;
   private String myUntilBuild;
   private Boolean mySkipped;
-  private List<String> myModules = null;
+  private List<String> myModules;
 
   public IdeaPluginDescriptorImpl(@NotNull File pluginPath) {
     myPath = pluginPath;
@@ -105,7 +106,7 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
 
   /**
    * @deprecated
-   * use {@link com.intellij.util.containers.StringInterner#intern(Object)} directly instead
+   * use {@link StringInterner#intern(Object)} directly instead
    */
   @NotNull
   @Deprecated
@@ -115,7 +116,7 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
 
   /**
    * @deprecated 
-   * use {@link com.intellij.openapi.util.JDOMUtil#internElement(org.jdom.Element, com.intellij.util.containers.StringInterner)}
+   * use {@link JDOMUtil#internElement(Element, StringInterner)}
    */
   @SuppressWarnings("unused")
   @Deprecated
@@ -138,7 +139,7 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
     return result;
   }
 
-  @SuppressWarnings({"HardCodedStringLiteral"})
+  @SuppressWarnings("HardCodedStringLiteral")
   private static String createDescriptionKey(final PluginId id) {
     return "plugin." + id + ".description";
   }
@@ -190,7 +191,8 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
     }
   }
 
-  private void readExternal(@NotNull Element element) {
+  // used in upsource
+  protected void readExternal(@NotNull Element element) {
     final PluginBean pluginBean = XmlSerializer.deserialize(element, PluginBean.class);
 
     url = pluginBean.url;
@@ -212,6 +214,7 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
       }
     }
     myUseIdeaClassLoader = pluginBean.useIdeaClassLoader;
+    myAllowBundledUpdate = pluginBean.allowBundledUpdate;
     if (pluginBean.ideaVersion != null) {
       mySinceBuild = pluginBean.ideaVersion.sinceBuild;
       myUntilBuild = pluginBean.ideaVersion.untilBuild;
@@ -222,6 +225,10 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
     myDescriptionChildText = pluginBean.description;
     myChangeNotes = pluginBean.changeNotes;
     myVersion = pluginBean.pluginVersion;
+    if (myVersion == null) {
+      myVersion = PluginManagerCore.getBuildNumber().getBaselineVersion() + ".SNAPSHOT";
+    }
+
     myCategory = pluginBean.category;
 
 
@@ -392,7 +399,7 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
     return myExtensions;
   }
 
-  @SuppressWarnings({"HardCodedStringLiteral"})
+  @SuppressWarnings("HardCodedStringLiteral")
   @NotNull
   public List<File> getClassPath() {
     if (myPath.isDirectory()) {
@@ -627,7 +634,7 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
     return myOptionalDescriptors;
   }
 
-  void setOptionalDescriptors(final Map<PluginId, IdeaPluginDescriptorImpl> optionalDescriptors) {
+  void setOptionalDescriptors(@NotNull Map<PluginId, IdeaPluginDescriptorImpl> optionalDescriptors) {
     myOptionalDescriptors = optionalDescriptors;
   }
 
@@ -668,6 +675,10 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
 
   @Override
   public boolean isBundled() {
+    if (PluginManagerCore.CORE_PLUGIN_ID.equals(myId.getIdString())) {
+      return true;
+    }
+
     String path;
     try {
       //to avoid paths like this /home/kb/IDEA/bin/../config/plugins/APlugin
@@ -675,13 +686,22 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
     } catch (IOException e) {
       path = getPath().getAbsolutePath();
     }
-    if (ApplicationManager.getApplication() != null && ApplicationManager.getApplication().isInternal()) {
+    Application app = ApplicationManager.getApplication();
+    if (app != null && app.isInternal()) {
       if (path.startsWith(PathManager.getHomePath() + File.separator + "out" + File.separator + "classes")) {
+        return true;
+      }
+      if (app.isUnitTestMode() && !path.startsWith(PathManager.getPluginsPath() + File.separatorChar)) {
         return true;
       }
     }
 
     return path.startsWith(PathManager.getPreInstalledPluginsPath());
+  }
+
+  @Override
+  public boolean allowBundledUpdate() {
+    return myAllowBundledUpdate;
   }
 
   @Nullable

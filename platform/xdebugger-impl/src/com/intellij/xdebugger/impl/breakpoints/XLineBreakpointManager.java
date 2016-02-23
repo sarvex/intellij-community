@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ package com.intellij.xdebugger.impl.breakpoints;
 
 import com.intellij.execution.impl.ConsoleViewUtil;
 import com.intellij.ide.startup.StartupManagerEx;
-import com.intellij.openapi.Disposable;
+import com.intellij.openapi.actionSystem.IdeActions;
 import com.intellij.openapi.actionSystem.ex.ActionManagerEx;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.editor.Document;
@@ -35,7 +35,6 @@ import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.fileEditor.FileEditor;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.TextEditor;
-import com.intellij.openapi.project.DumbAwareRunnable;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.startup.StartupManager;
 import com.intellij.openapi.util.Disposer;
@@ -52,7 +51,7 @@ import com.intellij.util.ui.update.Update;
 import com.intellij.xdebugger.XDebuggerManager;
 import com.intellij.xdebugger.breakpoints.SuspendPolicy;
 import com.intellij.xdebugger.breakpoints.XBreakpoint;
-import com.intellij.xdebugger.breakpoints.XLineBreakpoint;
+import com.intellij.xdebugger.impl.XSourcePositionImpl;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import gnu.trove.TIntHashSet;
 import org.jetbrains.annotations.NotNull;
@@ -85,12 +84,7 @@ public class XLineBreakpointManager {
 
       final MyDependentBreakpointListener myDependentBreakpointListener = new MyDependentBreakpointListener();
       myDependentBreakpointManager.addListener(myDependentBreakpointListener);
-      Disposer.register(project, new Disposable() {
-        @Override
-        public void dispose() {
-          myDependentBreakpointManager.removeListener(myDependentBreakpointListener);
-        }
-      });
+      Disposer.register(project, () -> myDependentBreakpointManager.removeListener(myDependentBreakpointListener));
       VirtualFileManager.getInstance().addVirtualFileListener(new VirtualFileUrlChangeAdapter() {
         @Override
         protected void fileUrlChanged(String oldUrl, String newUrl) {
@@ -126,12 +120,9 @@ public class XLineBreakpointManager {
   public void updateBreakpointsUI() {
     if (myProject.isDefault()) return;
 
-    Runnable runnable = new DumbAwareRunnable() {
-      @Override
-      public void run() {
-        for (XLineBreakpointImpl breakpoint : myBreakpoints.keySet()) {
-          breakpoint.updateUI();
-        }
+    Runnable runnable = () -> {
+      for (XLineBreakpointImpl breakpoint : myBreakpoints.keySet()) {
+        breakpoint.updateUI();
       }
     };
 
@@ -192,12 +183,9 @@ public class XLineBreakpointManager {
       return;
     }
 
-    ApplicationManager.getApplication().runWriteAction(new Runnable() {
-      @Override
-      public void run() {
-        for (XBreakpoint<?> breakpoint : toRemove) {
-          XDebuggerManager.getInstance(myProject).getBreakpointManager().removeBreakpoint(breakpoint);
-        }
+    ApplicationManager.getApplication().runWriteAction(() -> {
+      for (XBreakpoint<?> breakpoint : toRemove) {
+        XDebuggerManager.getInstance(myProject).getBreakpointManager().removeBreakpoint(breakpoint);
       }
     });
   }
@@ -284,21 +272,18 @@ public class XLineBreakpointManager {
         return;
       }
 
-      PsiDocumentManager.getInstance(myProject).commitAndRunReadAction(new Runnable() {
-        @Override
-        public void run() {
-          final int line = EditorUtil.yPositionToLogicalLine(editor, mouseEvent);
-          final Document document = editor.getDocument();
-          final VirtualFile file = FileDocumentManager.getInstance().getFile(document);
-          if (line >= 0 && line < document.getLineCount() && file != null) {
-            ApplicationManager.getApplication().invokeLater(new Runnable() {
-              @Override
-              public void run() {
-                if (!myProject.isDisposed() && myProject.isInitialized() && file.isValid()) {
-                  ActionManagerEx.getInstanceEx().fireBeforeActionPerformed("ToggleLineBreakpoint", e.getMouseEvent());
+      PsiDocumentManager.getInstance(myProject).commitAndRunReadAction(() -> {
+        final int line = EditorUtil.yPositionToLogicalLine(editor, mouseEvent);
+        final Document document = editor.getDocument();
+        final VirtualFile file = FileDocumentManager.getInstance().getFile(document);
+        if (line >= 0 && line < document.getLineCount() && file != null) {
+          ApplicationManager.getApplication().invokeLater(() -> {
+            if (!myProject.isDisposed() && myProject.isInitialized() && file.isValid()) {
+              ActionManagerEx.getInstanceEx().fireBeforeActionPerformed(IdeActions.ACTION_TOGGLE_LINE_BREAKPOINT, e.getMouseEvent());
 
-                  XLineBreakpoint breakpoint =
-                      XBreakpointUtil.toggleLineBreakpoint(myProject, file, editor, line, mouseEvent.isAltDown(), false);
+              XBreakpointUtil
+                .toggleLineBreakpoint(myProject, XSourcePositionImpl.create(file, line), editor, mouseEvent.isAltDown(), false)
+                .done(breakpoint -> {
                   if (!mouseEvent.isAltDown() && mouseEvent.isShiftDown() && breakpoint != null) {
                     breakpoint.setSuspendPolicy(SuspendPolicy.NONE);
                     String selection = editor.getSelectionModel().getSelectedText();
@@ -309,12 +294,13 @@ public class XLineBreakpointManager {
                       breakpoint.setLogMessage(true);
                     }
                     // edit breakpoint
-                    DebuggerUIUtil.showXBreakpointEditorBalloon(myProject, mouseEvent.getPoint(), ((EditorEx)editor).getGutterComponentEx(), false, breakpoint);
+                    DebuggerUIUtil
+                      .showXBreakpointEditorBalloon(myProject, mouseEvent.getPoint(), ((EditorEx)editor).getGutterComponentEx(),
+                                                    false, breakpoint);
                   }
-                }
-              }
-            });
-          }
+                });
+            }
+          });
         }
       });
     }

@@ -19,9 +19,11 @@ import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.wm.ToolWindowId;
 import com.intellij.openapi.wm.ToolWindowManager;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
@@ -44,6 +46,10 @@ public class RunContentExecutor implements Disposable {
   private String myTitle = "Output";
   private String myHelpId = null;
   private boolean myActivateToolWindow = true;
+  /**
+   * User-provided console that has to be used instead of newly created
+   */
+  private ConsoleView myUserProvidedConsole;
 
   public RunContentExecutor(@NotNull Project project, @NotNull ProcessHandler process) {
     myProject = project;
@@ -86,30 +92,23 @@ public class RunContentExecutor implements Disposable {
     return this;
   }
 
-  private ConsoleView createConsole(@NotNull Project project, @NotNull ProcessHandler processHandler) {
+  private ConsoleView createConsole(@NotNull Project project) {
     TextConsoleBuilder consoleBuilder = TextConsoleBuilderFactory.getInstance().createBuilder(project);
     consoleBuilder.filters(myFilterList);
-    ConsoleView console = consoleBuilder.getConsole();
-    console.attachToProcess(processHandler);
-    return console;
-  }
-
-  public void run() {
-    FileDocumentManager.getInstance().saveAllDocuments();
-
-    ConsoleView view = createConsole(myProject, myProcess);
+    final ConsoleView console = consoleBuilder.getConsole();
 
     if (myHelpId != null) {
-      view.setHelpId(myHelpId);
+      console.setHelpId(myHelpId);
     }
     Executor executor = DefaultRunExecutor.getRunExecutorInstance();
     DefaultActionGroup actions = new DefaultActionGroup();
 
-    final JComponent consolePanel = createConsolePanel(view, actions);
-    RunContentDescriptor descriptor = new RunContentDescriptor(view, myProcess, consolePanel, myTitle);
+    final JComponent consolePanel = createConsolePanel(console, actions);
+    RunContentDescriptor descriptor = new RunContentDescriptor(console, myProcess, consolePanel, myTitle);
 
-    Disposer.register(this, descriptor);
-
+    Disposer.register(descriptor, this);
+    Disposer.register(descriptor, console);
+    
     actions.add(new RerunAction(consolePanel));
     actions.add(new StopAction());
     actions.add(new CloseAction(executor, descriptor, myProject));
@@ -119,7 +118,16 @@ public class RunContentExecutor implements Disposable {
     if (myActivateToolWindow) {
       activateToolWindow();
     }
+    
+    return console;
+  }
 
+  public void run() {
+    FileDocumentManager.getInstance().saveAllDocuments();
+
+    // Use user-provided console if exist. Create new otherwise
+    ConsoleView view = (myUserProvidedConsole != null ? myUserProvidedConsole :  createConsole(myProject));
+    view.attachToProcess(myProcess);
     if (myAfterCompletion != null) {
       myProcess.addProcessListener(new ProcessAdapter() {
         @Override
@@ -128,7 +136,6 @@ public class RunContentExecutor implements Disposable {
         }
       });
     }
-
     myProcess.startNotify();
   }
 
@@ -156,10 +163,18 @@ public class RunContentExecutor implements Disposable {
 
   @Override
   public void dispose() {
-    Disposer.dispose(this);
   }
 
-  private class RerunAction extends AnAction implements DumbAware {
+  /**
+   * @param console console to use instead of new one. Pass null to always create new
+   */
+  @NotNull
+  public RunContentExecutor withConsole(@Nullable ConsoleView console) {
+    myUserProvidedConsole = console;
+    return this;
+  }
+
+  private class RerunAction extends AnAction {
     public RerunAction(JComponent consolePanel) {
       super("Rerun", "Rerun",
             AllIcons.Actions.Restart);
@@ -174,6 +189,12 @@ public class RunContentExecutor implements Disposable {
     @Override
     public void update(AnActionEvent e) {
       e.getPresentation().setVisible(myRerunAction != null);
+      e.getPresentation().setEnabled(myRerunAction != null);
+    }
+
+    @Override
+    public boolean isDumbAware() {
+      return Registry.is("dumb.aware.run.configurations");
     }
   }
 

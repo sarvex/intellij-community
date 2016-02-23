@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,9 +23,7 @@ import com.intellij.notification.NotificationType;
 import com.intellij.notification.Notifications;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.InvalidDataException;
-import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.WriteExternalException;
-import com.intellij.profile.codeInspection.InspectionProfileManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiElementVisitor;
 import com.intellij.structuralsearch.MatchResult;
@@ -41,7 +39,6 @@ import com.intellij.structuralsearch.plugin.replace.impl.Replacer;
 import com.intellij.structuralsearch.plugin.replace.ui.ReplaceConfiguration;
 import com.intellij.structuralsearch.plugin.ui.Configuration;
 import com.intellij.structuralsearch.plugin.ui.ConfigurationManager;
-import com.intellij.structuralsearch.plugin.ui.SearchContext;
 import com.intellij.util.PairProcessor;
 import org.jdom.Element;
 import org.jetbrains.annotations.NonNls;
@@ -56,30 +53,37 @@ import java.util.*;
  * @author cdr
  */
 public class SSBasedInspection extends LocalInspectionTool {
-  static final String SHORT_NAME = "SSBasedInspection";
-  private List<Configuration> myConfigurations = new ArrayList<Configuration>();
-  private Set<String> myProblemsReported = new HashSet<String>(1);
+  private static final Object LOCK = new Object(); // hack to avoid race conditions in SSR
 
+  static final String SHORT_NAME = "SSBasedInspection";
+  private final List<Configuration> myConfigurations = new ArrayList<Configuration>();
+  private final Set<String> myProblemsReported = new HashSet<String>(1);
+
+  @Override
   public void writeSettings(@NotNull Element node) throws WriteExternalException {
     ConfigurationManager.writeConfigurations(node, myConfigurations, Collections.<Configuration>emptyList());
   }
 
+  @Override
   public void readSettings(@NotNull Element node) throws InvalidDataException {
     myProblemsReported.clear();
     myConfigurations.clear();
     ConfigurationManager.readConfigurations(node, myConfigurations, new ArrayList<Configuration>());
   }
 
+  @Override
   @NotNull
   public String getGroupDisplayName() {
     return GENERAL_GROUP_NAME;
   }
 
+  @Override
   @NotNull
   public String getDisplayName() {
     return SSRBundle.message("SSRInspection.display.name");
   }
 
+  @Override
   @NotNull
   @NonNls
   public String getShortName() {
@@ -89,15 +93,15 @@ public class SSBasedInspection extends LocalInspectionTool {
   @NotNull
   @Override
   public PsiElementVisitor buildVisitor(@NotNull final ProblemsHolder holder, final boolean isOnTheFly) {
-    final MatcherImpl.CompiledOptions compiledOptions =
-      SSBasedInspectionCompiledPatternsCache.getCompiledOptions(holder.getProject());
+    final Map<Configuration, MatchContext> compiledOptions =
+      SSBasedInspectionCompiledPatternsCache.getCompiledOptions(myConfigurations, holder.getProject());
 
-    if (compiledOptions == null) return super.buildVisitor(holder, isOnTheFly);
+    if (compiledOptions.isEmpty()) return super.buildVisitor(holder, isOnTheFly);
 
     return new PsiElementVisitor() {
-      final List<Pair<MatchContext,Configuration>> contexts = compiledOptions.getMatchContexts();
       final Matcher matcher = new Matcher(holder.getManager().getProject());
       final PairProcessor<MatchResult, Configuration> processor = new PairProcessor<MatchResult, Configuration>() {
+        @Override
         public boolean process(MatchResult matchResult, Configuration configuration) {
           PsiElement element = matchResult.getMatch();
           String name = configuration.getName();
@@ -111,26 +115,27 @@ public class SSBasedInspection extends LocalInspectionTool {
 
       @Override
       public void visitElement(PsiElement element) {
-        if (LexicalNodesFilter.getInstance().accepts(element)) return;
-        final SsrFilteringNodeIterator matchedNodes = new SsrFilteringNodeIterator(element);
-        for (Pair<MatchContext, Configuration> pair : contexts) {
-          Configuration configuration = pair.second;
-          MatchContext context = pair.first;
+        synchronized (LOCK) {
+          if (LexicalNodesFilter.getInstance().accepts(element)) return;
+          final SsrFilteringNodeIterator matchedNodes = new SsrFilteringNodeIterator(element);
+          for (Configuration configuration : myConfigurations) {
+            final MatchContext context = compiledOptions.get(configuration);
 
-          if (MatcherImpl.checkIfShouldAttemptToMatch(context, matchedNodes)) {
-            final int nodeCount = context.getPattern().getNodeCount();
-            try {
-              matcher.processMatchesInElement(context, configuration, new CountingNodeIterator(nodeCount, matchedNodes), processor);
-            }
-            catch (StructuralSearchException e) {
-              if (myProblemsReported.add(configuration.getName())) { // don't overwhelm the user with messages
-                Notifications.Bus.notify(new Notification(SSRBundle.message("structural.search.title"),
-                                                          SSRBundle.message("template.problem", configuration.getName()),
-                                                          e.getMessage(),
-                                                          NotificationType.ERROR), element.getProject());
+            if (MatcherImpl.checkIfShouldAttemptToMatch(context, matchedNodes)) {
+              final int nodeCount = context.getPattern().getNodeCount();
+              try {
+                matcher.processMatchesInElement(context, configuration, new CountingNodeIterator(nodeCount, matchedNodes), processor);
               }
+              catch (StructuralSearchException e) {
+                if (myProblemsReported.add(configuration.getName())) { // don't overwhelm the user with messages
+                  Notifications.Bus.notify(new Notification(SSRBundle.message("structural.search.title"),
+                                                            SSRBundle.message("template.problem", configuration.getName()),
+                                                            e.getMessage(),
+                                                            NotificationType.ERROR), element.getProject());
+                }
+              }
+              matchedNodes.reset();
             }
-            matchedNodes.reset();
           }
         }
       }
@@ -144,11 +149,13 @@ public class SSBasedInspection extends LocalInspectionTool {
     final ReplacementInfo replacementInfo = replacer.buildReplacement(matchResult);
 
     return new LocalQuickFix() {
+      @Override
       @NotNull
       public String getName() {
         return SSRBundle.message("SSRInspection.replace.with", replacementInfo.getReplacement());
       }
 
+      @Override
       public void applyFix(@NotNull Project project, @NotNull ProblemDescriptor descriptor) {
         PsiElement element = descriptor.getPsiElement();
         if (element != null && FileModificationService.getInstance().preparePsiElementsForWrite(element)) {
@@ -156,6 +163,7 @@ public class SSBasedInspection extends LocalInspectionTool {
         }
       }
 
+      @Override
       @NotNull
       public String getFamilyName() {
         return SSRBundle.message("SSRInspection.family.name");
@@ -163,24 +171,15 @@ public class SSBasedInspection extends LocalInspectionTool {
     };
   }
 
+  @Override
   @Nullable
   public JComponent createOptionsPanel() {
-    return new SSBasedInspectionOptions(myConfigurations){
-      public void configurationsChanged(final SearchContext searchContext) {
-        super.configurationsChanged(searchContext);
-        SSBasedInspectionCompiledPatternsCache.precompileConfigurations(searchContext.getProject(), SSBasedInspection.this);
-        InspectionProfileManager.getInstance().fireProfileChanged(null);
-      }
-    }.getComponent();
+    return new SSBasedInspectionOptions(myConfigurations).getComponent();
   }
 
   @TestOnly
-  public void setConfigurations(final List<Configuration> configurations, final Project project) {
-    myConfigurations = configurations;
-    SSBasedInspectionCompiledPatternsCache.setCompiledOptions(project, configurations);
-  }
-
-  public List<Configuration> getConfigurations() {
-    return myConfigurations;
+  public void setConfigurations(@NotNull final List<Configuration> configurations, @NotNull final Project project) {
+    myConfigurations.clear();
+    myConfigurations.addAll(configurations);
   }
 }

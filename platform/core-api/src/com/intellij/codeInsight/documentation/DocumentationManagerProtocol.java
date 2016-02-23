@@ -27,5 +27,10 @@ public interface DocumentationManagerProtocol {
    * @see DocumentationManagerUtil
    */
   @NonNls String PSI_ELEMENT_PROTOCOL = "psi_element://";
-  @NonNls String DOC_ELEMENT_PROTOCOL = "doc_element://";
+  
+  /**
+   * Separator between PSI element link and a reference to specific text fragment, which should be scrolled to on navigation. Can be used 
+   * with {@link #PSI_ELEMENT_PROTOCOL} links, full link should look like {@code psi_element://link###ref}.
+   */
+  @NonNls String PSI_ELEMENT_PROTOCOL_REF_SEPARATOR = "###";
 }

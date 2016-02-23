@@ -44,7 +44,7 @@ public class JUnit4TestRunnerUtil {
    */
   private static final ResourceBundle ourBundle = ResourceBundle.getBundle("RuntimeBundle");
 
-  public static Request buildRequest(String[] suiteClassNames, String name, boolean notForked) {
+  public static Request buildRequest(String[] suiteClassNames, final String name, boolean notForked) {
     if (suiteClassNames.length == 0) {
       return null;
     }
@@ -101,7 +101,29 @@ public class JUnit4TestRunnerUtil {
               public boolean shouldRun(Description description) {
                 if (description.isTest()) {
                   final Set methods = (Set)classMethods.get(JUnit4ReflectionUtil.getClassName(description));
-                  return methods == null || methods.contains(JUnit4ReflectionUtil.getMethodName(description));
+                  if (methods == null) {
+                    return true;
+                  }
+                  String methodName = JUnit4ReflectionUtil.getMethodName(description);
+                  if (methods.contains(methodName)) {
+                    return true;
+                  }
+                  if (name != null) {
+                    return methodName.endsWith(name) &&
+                           methods.contains(methodName.substring(0, methodName.length() - name.length()));
+                  }
+
+                  final Class testClass = description.getTestClass();
+                  if (testClass != null) {
+                    final RunWith classAnnotation = (RunWith)testClass.getAnnotation(RunWith.class);
+                    if (classAnnotation != null && Parameterized.class.isAssignableFrom(classAnnotation.value())) {
+                      final int idx = methodName.indexOf("[");
+                      if (idx > -1) {
+                        return methods.contains(methodName.substring(0, idx));
+                      }
+                    }
+                  }
+                  return false;
                 }
                 return true;
               }
@@ -231,7 +253,7 @@ public class JUnit4TestRunnerUtil {
             }
 
             //filter only selected method
-            if (methodName != null && descriptionMethodName != null && !descriptionMethodName.startsWith(methodName)) {
+            if (methodName != null && descriptionMethodName != null && !descriptionMethodName.startsWith(methodName + "[")) {
               return false;
             }
             return true;

@@ -33,7 +33,6 @@ import org.codehaus.groovy.tools.javac.JavaCompiler;
 import org.codehaus.groovy.tools.javac.JavaCompilerFactory;
 
 import java.io.*;
-import java.lang.reflect.*;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.*;
@@ -47,7 +46,7 @@ public class DependentGroovycRunner {
   public static final String[] RESOURCES_TO_MASK = {"META-INF/services/org.codehaus.groovy.transform.ASTTransformation", "META-INF/services/org.codehaus.groovy.runtime.ExtensionModule"};
   private static final String STUB_DIR = "stubDir";
 
-  public static boolean runGroovyc(boolean forStubs, String argsPath, Queue mailbox) {
+  public static boolean runGroovyc(boolean forStubs, String argsPath, String configScript, Queue mailbox) {
     File argsFile = new File(argsPath);
     final CompilerConfiguration config = new CompilerConfiguration();
     config.setClasspath("");
@@ -84,8 +83,7 @@ public class DependentGroovycRunner {
     catch (NoSuchMethodError ignored) { // old groovyc's don't have optimization options
     }
 
-    String configScript = System.getProperty(GroovyRtConstants.GROOVYC_CONFIG_SCRIPT);
-    if (configScript != null) {
+    if (configScript != null && configScript.length() > 0) {
       try {
         applyConfigurationScript(new File(configScript), config);
       }
@@ -197,10 +195,12 @@ public class DependentGroovycRunner {
           }
         }
         else if (line.startsWith(GroovyRtConstants.PATCHERS)) {
+          final ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
           String s;
           while (!GroovyRtConstants.END.equals(s = reader.readLine())) {
             try {
-              final CompilationUnitPatcher patcher = (CompilationUnitPatcher)Class.forName(s).newInstance();
+              final Class<?> patcherClass = classLoader.loadClass(s);
+              final CompilationUnitPatcher patcher = (CompilationUnitPatcher)patcherClass.newInstance();
               patchers.add(patcher);
             }
             catch (InstantiationException e) {
@@ -467,6 +467,14 @@ public class DependentGroovycRunner {
   }
 
   static GroovyClassLoader buildClassLoaderFor(final CompilerConfiguration compilerConfiguration, final AstAwareResourceLoader resourceLoader) {
+    final ClassDependencyLoader checkWellFormed = new ClassDependencyLoader() {
+      @Override
+      protected void loadClassDependencies(Class aClass) throws ClassNotFoundException {
+        if (resourceLoader.getSourceFile(aClass.getName()) == null) return;
+        super.loadClassDependencies(aClass);
+      }
+    };
+    
     GroovyClassLoader classLoader = AccessController.doPrivileged(new PrivilegedAction<GroovyClassLoader>() {
       public GroovyClassLoader run() {
         return new GroovyClassLoader(Thread.currentThread().getContextClassLoader(), compilerConfiguration) {
@@ -482,83 +490,7 @@ public class DependentGroovycRunner {
             catch (LinkageError e) {
               throw new RuntimeException("Problem loading class " + name, e);
             }
-
-            ensureWellFormed(aClass, new HashSet<Class>());
-
-            return aClass;
-          }
-
-          private void ensureWellFormed(Type aClass, Set<Class> visited) throws ClassNotFoundException {
-            if (aClass instanceof Class) {
-              ensureWellFormed((Class)aClass, visited);
-            }
-            else if (aClass instanceof ParameterizedType) {
-              ensureWellFormed(((ParameterizedType)aClass).getOwnerType(), visited);
-              for (Type type : ((ParameterizedType)aClass).getActualTypeArguments()) {
-                ensureWellFormed(type, visited);
-              }
-            }
-            else if (aClass instanceof WildcardType) {
-              for (Type type : ((WildcardType)aClass).getLowerBounds()) {
-                ensureWellFormed(type, visited);
-              }
-              for (Type type : ((WildcardType)aClass).getUpperBounds()) {
-                ensureWellFormed(type, visited);
-              }
-            }
-            else if (aClass instanceof GenericArrayType) {
-              ensureWellFormed(((GenericArrayType)aClass).getGenericComponentType(), visited);
-            }
-          }
-
-          private void ensureWellFormed(Class aClass, Set<Class> visited) throws ClassNotFoundException {
-            String name = aClass.getName();
-            if (resourceLoader.getSourceFile(name) != null && visited.add(aClass)) {
-              try {
-                for (Method method : aClass.getDeclaredMethods()) {
-                  ensureWellFormed(method.getGenericReturnType(), visited);
-                  for (Type type : method.getGenericExceptionTypes()) {
-                    ensureWellFormed(type, visited);
-                  }
-                  for (Type type : method.getGenericParameterTypes()) {
-                    ensureWellFormed(type, visited);
-                  }
-                }
-                for (Constructor method : aClass.getDeclaredConstructors()) {
-                  for (Type type : method.getGenericExceptionTypes()) {
-                    ensureWellFormed(type, visited);
-                  }
-                  for (Type type : method.getGenericParameterTypes()) {
-                    ensureWellFormed(type, visited);
-                  }
-                }
-
-                for (Field field : aClass.getDeclaredFields()) {
-                  ensureWellFormed(field.getGenericType(), visited);
-                }
-
-                Type superclass = aClass.getGenericSuperclass();
-                if (superclass != null) {
-                  ensureWellFormed(aClass, visited);
-                }
-
-                for (Type intf : aClass.getGenericInterfaces()) {
-                  ensureWellFormed(intf, visited);
-                }
-
-                aClass.getAnnotations();
-                Package aPackage = aClass.getPackage();
-                if (aPackage != null) {
-                  aPackage.getAnnotations();
-                }
-              }
-              catch (LinkageError e) {
-                throw new ClassNotFoundException(name);
-              }
-              catch (TypeNotPresentException e) {
-                throw new ClassNotFoundException(name);
-              }
-            }
+            return checkWellFormed.loadDependencies(aClass);
           }
         };
       }

@@ -26,6 +26,7 @@ import com.intellij.openapi.editor.markup.EffectType;
 import com.intellij.openapi.editor.markup.TextAttributes;
 import com.intellij.openapi.ui.popup.PopupChooserBuilder;
 import com.intellij.openapi.util.Iconable;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vcs.FileStatus;
 import com.intellij.openapi.vcs.FileStatusManager;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -43,18 +44,41 @@ import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.accessibility.Accessible;
+import javax.accessibility.AccessibleContext;
 import javax.swing.*;
 import java.awt.*;
 import java.util.Comparator;
 
 public abstract class PsiElementListCellRenderer<T extends PsiElement> extends JPanel implements ListCellRenderer, MatcherHolder {
 
+  private static final String LEFT = BorderLayout.WEST;
+
   private Matcher myMatcher;
-  private boolean myFocusBorderEnabled = true;
+  private boolean myFocusBorderEnabled = Registry.is("psi.element.list.cell.renderer.focus.border.enabled");
   protected int myRightComponentWidth;
 
   protected PsiElementListCellRenderer() {
     super(new BorderLayout());
+  }
+
+  private class MyAccessibleContext extends JPanel.AccessibleJPanel {
+    @Override
+    public String getAccessibleName() {
+      LayoutManager lm = PsiElementListCellRenderer.this.getLayout();
+      assert lm instanceof BorderLayout;
+      Component leftCellRendererComp = ((BorderLayout)lm).getLayoutComponent(LEFT);
+      return leftCellRendererComp instanceof Accessible ?
+             leftCellRendererComp.getAccessibleContext().getAccessibleName() : super.getAccessibleName();
+    }
+  }
+
+  @Override
+  public AccessibleContext getAccessibleContext() {
+    if (accessibleContext == null) {
+      accessibleContext = new MyAccessibleContext();
+    }
+    return accessibleContext;
   }
 
   @Override
@@ -142,7 +166,7 @@ public abstract class PsiElementListCellRenderer<T extends PsiElement> extends J
         }
         setIcon(PsiElementListCellRenderer.this.getIcon(element));
 
-        String containerText = getContainerText(element, name + (myModuleName != null ? myModuleName + "        " : ""));
+        String containerText = getContainerTextForLeftComponent(element, name + (myModuleName != null ? myModuleName + "        " : ""));
         if (containerText != null) {
           append(" " + containerText, new SimpleTextAttributes(Font.PLAIN, JBColor.GRAY));
         }
@@ -153,11 +177,10 @@ public abstract class PsiElementListCellRenderer<T extends PsiElement> extends J
       }
       setBackground(selected ? UIUtil.getListSelectionBackground() : bgColor);
     }
-
   }
 
   @Nullable
-  protected static TextAttributes getNavigationItemAttributes(Object value) {
+  protected TextAttributes getNavigationItemAttributes(Object value) {
     TextAttributes attributes = null;
 
     if (value instanceof NavigationItem) {
@@ -191,7 +214,7 @@ public abstract class PsiElementListCellRenderer<T extends PsiElement> extends J
 
     ListCellRenderer leftRenderer = new LeftRenderer(null, myMatcher);
     final Component leftCellRendererComponent = leftRenderer.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-    add(leftCellRendererComponent, BorderLayout.WEST);
+    add(leftCellRendererComponent, LEFT);
     final Color bg = isSelected ? UIUtil.getListSelectionBackground() : leftCellRendererComponent.getBackground();
     setBackground(bg);
     if (rightCellRendererComponent != null) {
@@ -233,6 +256,11 @@ public abstract class PsiElementListCellRenderer<T extends PsiElement> extends J
 
   @Nullable
   protected abstract String getContainerText(T element, final String name);
+
+  @Nullable
+  protected String getContainerTextForLeftComponent(T element, final String name) {
+    return getContainerText(element, name);
+  }
 
   @Iconable.IconFlags
   protected abstract int getIconFlags();

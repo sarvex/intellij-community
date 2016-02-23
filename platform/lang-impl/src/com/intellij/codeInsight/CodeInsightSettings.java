@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,10 @@
 package com.intellij.codeInsight;
 
 import com.intellij.codeInsight.editorActions.SmartBackspaceMode;
-import com.intellij.openapi.components.*;
+import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.ServiceManager;
+import com.intellij.openapi.components.State;
+import com.intellij.openapi.components.Storage;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.xmlb.SkipDefaultValuesSerializationFilters;
@@ -33,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
 
 @State(
   name = "CodeInsightSettings",
-  storages = @Storage(file = StoragePathMacros.APP_CONFIG + "/editor.codeinsight.xml")
+  storages = @Storage("editor.codeinsight.xml")
 )
 public class CodeInsightSettings implements PersistentStateComponent<Element>, Cloneable {
   private static final Logger LOG = Logger.getInstance("#com.intellij.codeInsight.CodeInsightSettings");
@@ -65,20 +68,22 @@ public class CodeInsightSettings implements PersistentStateComponent<Element>, C
   public static final int NONE = 2;
   public static final int FIRST_LETTER = 3;
 
-  @MagicConstant(intValues = {NEVER, SMART, ALWAYS})
-  public int AUTOPOPUP_FOCUS_POLICY = SMART;
-  public static final int NEVER = 1;
-  public static final int SMART = 2;
-  public static final int ALWAYS = 3;
-
   public boolean SELECT_AUTOPOPUP_SUGGESTIONS_BY_CHARS = false;
   public boolean AUTOCOMPLETE_ON_CODE_COMPLETION = true;
   public boolean AUTOCOMPLETE_ON_SMART_TYPE_COMPLETION = true;
+
+  /** todo remove in IDEA 16 */
   @Deprecated public boolean AUTOCOMPLETE_ON_CLASS_NAME_COMPLETION = false;
+
   public boolean AUTOCOMPLETE_COMMON_PREFIX = true;
+
+  /** todo remove in IDEA 16 */
+  @Deprecated
   public boolean SHOW_STATIC_AFTER_INSTANCE = false;
 
   public boolean SHOW_FULL_SIGNATURES_IN_PARAMETER_INFO = false;
+
+  public boolean SHOW_SOURCE_INFERRED_ANNOTATIONS = true;
 
   @OptionTag
   private int SMART_BACKSPACE = SmartBackspaceMode.AUTOINDENT.ordinal();
@@ -133,8 +138,14 @@ public class CodeInsightSettings implements PersistentStateComponent<Element>, C
 
   public boolean OPTIMIZE_IMPORTS_ON_THE_FLY = false;
   public boolean ADD_UNAMBIGIOUS_IMPORTS_ON_THE_FLY = false;
+  public boolean ADD_MEMBER_IMPORTS_ON_THE_FLY = true;
   public boolean JSP_ADD_UNAMBIGIOUS_IMPORTS_ON_THE_FLY = false;
 
+  /**
+   * Names of classes and packages excluded from (Java) auto-import and completion. These are only IDE-specific settings
+   * and don't take project-specific settings into account.
+   * So please don't reference this field directly, use JavaProjectCodeInsightSettings instead.
+   */
   @Property(surroundWithTag = false)
   @AbstractCollection(
     surroundWithTag = false,

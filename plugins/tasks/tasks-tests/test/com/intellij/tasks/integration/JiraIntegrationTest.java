@@ -18,6 +18,7 @@ package com.intellij.tasks.integration;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.intellij.openapi.util.Couple;
 import com.intellij.tasks.*;
 import com.intellij.tasks.config.TaskSettings;
 import com.intellij.tasks.impl.LocalTaskImpl;
@@ -37,7 +38,6 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
 import java.net.URL;
-import java.text.SimpleDateFormat;
 import java.util.*;
 
 import static com.intellij.tasks.jira.JiraRemoteApi.ApiType.REST_2_0;
@@ -59,17 +59,12 @@ public class JiraIntegrationTest extends TaskManagerTestCase {
    */
   @NonNls private static final String JIRA_5_TEST_SERVER_URL = "http://trackers-tests.labs.intellij.net:8015";
 
-  private static final SimpleDateFormat SHORT_TIMESTAMP_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm");
-  static {
-    SHORT_TIMESTAMP_FORMAT.setTimeZone(TimeZone.getTimeZone("UTC"));
-  }
-
   private JiraRepository myRepository;
 
   public void testGerman() throws Exception {
     myRepository.setUsername("german");
     myRepository.setPassword("german");
-    Task[] issues = myRepository.getIssues(null, 50, 0);
+    final Task[] issues = myRepository.getIssues(null, 50, 0);
     assertEquals(3, issues.length);
     assertEquals(TaskState.OPEN, issues[0].getState());
     assertFalse(issues[0].isClosed());
@@ -79,7 +74,7 @@ public class JiraIntegrationTest extends TaskManagerTestCase {
     myRepository.setUsername("german");
     myRepository.setUsername("wrong password");
     //noinspection ConstantConditions
-    Exception exception = myRepository.createCancellableConnection().call();
+    final Exception exception = myRepository.createCancellableConnection().call();
     assertNotNull(exception);
     assertEquals(TaskBundle.message("failure.login"), exception.getMessage());
   }
@@ -111,7 +106,7 @@ public class JiraIntegrationTest extends TaskManagerTestCase {
    * If query string looks like task ID, separate request will be made to download issue.
    */
   public void testFindSingleIssue() throws Exception {
-    Task[] found = myRepository.getIssues("UT-6", 0, 1, true);
+    final Task[] found = myRepository.getIssues("UT-6", 0, 1, true);
     assertEquals(1, found.length);
     assertEquals("Summary contains 'bar'", found[0].getSummary());
   }
@@ -178,14 +173,14 @@ public class JiraIntegrationTest extends TaskManagerTestCase {
   private String createIssueViaXmlRpc(@NotNull String project, @NotNull String summary) throws Exception {
     final URL url = new URL(myRepository.getUrl() + "/rpc/xmlrpc");
     final XmlRpcClient xmlRpcClient = new XmlRpcClient(url);
-    final Map<String, Object> issue = new Hashtable<String, Object>();
+    final Map<String, Object> issue = new Hashtable<>();
     issue.put("summary", summary);
     issue.put("project", project);
     issue.put("assignee", myRepository.getUsername());
     issue.put("type", 1); // Bug
     issue.put("state", 1); // Open
 
-    final Vector<Object> params = new Vector<Object>(Arrays.asList("", issue)); // empty token because of HTTP basic auth
+    final Vector<Object> params = new Vector<>(Arrays.asList("", issue)); // empty token because of HTTP basic auth
     final Hashtable result = (Hashtable)xmlRpcClient.execute(new XmlRpcRequest("jira1.createIssue", params),
                                                              new CommonsXmlRpcTransport(url, myRepository.getHttpClient()));
     return (String)result.get("key");
@@ -203,34 +198,32 @@ public class JiraIntegrationTest extends TaskManagerTestCase {
   public void testSetTimeSpend() throws Exception {
     // only REST API 2.0 supports this feature
     myRepository.setUrl(JIRA_5_TEST_SERVER_URL);
-    Task task = myRepository.findTask("UT-9");
+    final String issueId = createIssueViaRestApi("BTTTU", "Test issue for time tracking updates (" + SHORT_TIMESTAMP_FORMAT.format(new Date()) + ")");
+    final Task task = myRepository.findTask(issueId);
     assertNotNull("Test task not found", task);
 
     // timestamp as comment
-    String comment = "Timestamp: " + TaskUtil.formatDate(new Date());
+    final String comment = "Timestamp: " + TaskUtil.formatDate(new Date());
+    final Couple<Integer> duration = generateWorkItemDuration();
 
-    // semi-unique duration as timeSpend
-    // should be no longer than 8 hours in total, because it's considered as one full day
-    int minutes = (int)(System.currentTimeMillis() % 240) + 1;
-    String duration = String.format("%dh %dm", minutes / 60, minutes % 60);
-    myRepository.updateTimeSpent(new LocalTaskImpl(task), duration, comment);
+    final int hours = duration.getFirst(), minutes = duration.getSecond();
+    myRepository.updateTimeSpent(new LocalTaskImpl(task), String.format("%dh %dm", hours, minutes), comment);
 
-    // possible race conditions?
-    GetMethod request = new GetMethod(myRepository.getRestUrl("issue", task.getId(), "worklog"));
-    String response = myRepository.executeMethod(request);
-    JsonObject object = new Gson().fromJson(response, JsonObject.class);
-    JsonArray worklogs = object.get("worklogs").getAsJsonArray();
-    JsonObject last = worklogs.get(worklogs.size() - 1).getAsJsonObject();
+    final GetMethod request = new GetMethod(myRepository.getRestUrl("issue", task.getId(), "worklog"));
+    final String response = myRepository.executeMethod(request);
+    final JsonObject object = new Gson().fromJson(response, JsonObject.class);
+    final JsonArray worklogs = object.get("worklogs").getAsJsonArray();
+    final JsonObject last = worklogs.get(worklogs.size() - 1).getAsJsonObject();
 
     assertEquals(comment, last.get("comment").getAsString());
     // don't depend on concrete response format: zero hours stripping, zero padding and so on
-    assertEquals(minutes * 60, last.get("timeSpentSeconds").getAsInt());
+    assertEquals((hours * 60 + minutes) * 60, last.get("timeSpentSeconds").getAsInt());
   }
 
   public void testParseVersionNumbers() throws Exception {
-    assertEquals(new JiraVersion("6.1-OD-09-WN").toString(), "6.1.9");
-    assertEquals(new JiraVersion("5.0.6").toString(), "5.0.6");
-    assertEquals(new JiraVersion("4.4.5").toString(), "4.4.5");
+    assertEquals("6.1.9", new JiraVersion("6.1-OD-09-WN").toString());
+    assertEquals("5.0.6", new JiraVersion("5.0.6").toString());
+    assertEquals("4.4.5", new JiraVersion("4.4.5").toString());
   }
 
   @Override

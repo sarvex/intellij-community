@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,9 @@ package com.intellij.patterns;
 
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Key;
+import com.intellij.util.Function;
 import com.intellij.util.ProcessingContext;
+import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -44,6 +46,16 @@ public class StandardPatterns {
 
   public static <T> ObjectPattern.Capture<T> instanceOf(Class<T> aClass) {
     return new ObjectPattern.Capture<T>(aClass);
+  }
+
+  public static <T> ElementPattern<T> instanceOf(@NotNull Class<T>... classes) {
+    ElementPattern[] patterns = ContainerUtil.map(classes, new Function<Class<T>, ElementPattern>() {
+      @Override
+      public ElementPattern fun(Class<T> aClass) {
+        return instanceOf(aClass);
+      }
+    }, new ElementPattern[0]);
+    return or(patterns);
   }
 
   public static <T> ElementPattern save(final Key<T> key) {
@@ -122,32 +134,42 @@ public class StandardPatterns {
   }
 
   public static <E> ElementPattern<E> and(final ElementPattern<? extends E>... patterns) {
-    return new ObjectPattern.Capture<E>(new InitialPatternConditionPlus(Object.class) {
-      @Override
-      public boolean accepts(@Nullable final Object o, final ProcessingContext context) {
-        for (final ElementPattern pattern : patterns) {
-          if (!pattern.accepts(o, context)) return false;
-        }
-        return true;
+    final List<InitialPatternCondition> initial = ContainerUtil.newSmartList();
+    for (ElementPattern<?> pattern : patterns) {
+      initial.add(pattern.getCondition().getInitialCondition());
+    }
+    ObjectPattern.Capture<E> result = composeInitialConditions(initial);
+    for (ElementPattern pattern : patterns) {
+      for (PatternCondition<?> condition : (List<PatternCondition<?>>)pattern.getCondition().getConditions()) {
+        result = result.with((PatternCondition<? super E>)condition);
       }
+    }
+    return result;
+  }
 
-      @Override
-      public void append(@NotNull @NonNls final StringBuilder builder, final String indent) {
-        boolean first = true;
-        for (final ElementPattern pattern : patterns) {
-          if (!first) {
-            builder.append("\n").append(indent);
+  @NotNull
+  private static <E> ObjectPattern.Capture<E> composeInitialConditions(final List<InitialPatternCondition> initial) {
+    return new ObjectPattern.Capture<E>(new InitialPatternCondition(Object.class) {
+        @Override
+        public boolean accepts(@Nullable final Object o, final ProcessingContext context) {
+          for (final InitialPatternCondition pattern : initial) {
+            if (!pattern.accepts(o, context)) return false;
           }
-          first = false;
-          pattern.getCondition().append(builder, indent + "  ");
+          return true;
         }
-      }
-
-      @Override
-      public List<ElementPattern<?>> getPatterns() {
-        return Arrays.<ElementPattern<?>>asList(patterns);
-      }
-    });
+  
+        @Override
+        public void append(@NotNull @NonNls final StringBuilder builder, final String indent) {
+          boolean first = true;
+          for (final InitialPatternCondition pattern : initial) {
+            if (!first) {
+              builder.append("\n").append(indent);
+            }
+            first = false;
+            pattern.append(builder, indent + "  ");
+          }
+        }
+      });
   }
 
   public static <E> ObjectPattern.Capture<E> not(final ElementPattern<E> pattern) {

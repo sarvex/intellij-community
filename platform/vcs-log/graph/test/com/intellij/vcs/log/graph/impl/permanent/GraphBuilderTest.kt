@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import java.io.IOException
 
 import org.junit.Assert.assertEquals
 
-public abstract class GraphBuilderTest<CommitId : Comparable<CommitId>> : AbstractTestWithTwoTextFile("graphBuilder/") {
+abstract class GraphBuilderTest<CommitId : Comparable<CommitId>> : AbstractTestWithTwoTextFile("graphBuilder/") {
 
   override fun runTest(`in`: String, out: String) {
     val commits = getCommitIdManager().parseCommitList(`in`)
@@ -43,67 +43,49 @@ public abstract class GraphBuilderTest<CommitId : Comparable<CommitId>> : Abstra
 
   protected abstract fun getCommitIdManager(): CommitIdManager<CommitId>
 
-  Test
-  throws(javaClass<IOException>())
-  public fun simple() {
+  @Test fun simple() {
     doTest("simple")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun manyNodes() {
+  @Test fun manyNodes() {
     doTest("manyNodes")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun manyUpNodes() {
+  @Test fun manyUpNodes() {
     doTest("manyUpNodes")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun manyDownNodes() {
+  @Test fun manyDownNodes() {
     doTest("manyDownNodes")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun oneNode() {
+  @Test fun oneNode() {
     doTest("oneNode")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun oneNodeNotFullGraph() {
+  @Test fun oneNodeNotFullGraph() {
     doTest("oneNodeNotFullGraph")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun notFullGraph() {
+  @Test fun notFullGraph() {
     doTest("notFullGraph")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun parentsOrder() {
+  @Test fun parentsOrder() {
     doTest("parentsOrder")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun duplicateParents() {
+  @Test fun duplicateParents() {
     doTest("duplicateParents")
   }
 
-  public class StringTest : GraphBuilderTest<String>() {
+  class StringTest : GraphBuilderTest<String>() {
     override fun getCommitIdManager(): CommitIdManager<String> {
       return CommitIdManager.STRING_COMMIT_ID_MANAGER
     }
   }
 
-  public class IntegerTest : GraphBuilderTest<Int>() {
+  class IntegerTest : GraphBuilderTest<Int>() {
     override fun getCommitIdManager(): CommitIdManager<Int> {
       return CommitIdManager.INTEGER_COMMIT_ID_MANAGER
     }

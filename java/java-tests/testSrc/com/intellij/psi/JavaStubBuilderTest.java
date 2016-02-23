@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,26 +25,23 @@ import com.intellij.psi.impl.source.JavaLightStubBuilder;
 import com.intellij.psi.stubs.StubElement;
 import com.intellij.testFramework.LightIdeaTestCase;
 import com.intellij.testFramework.PlatformTestUtil;
-import com.intellij.util.ThrowableRunnable;
-import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.security.SecureRandom;
 
 @SuppressWarnings("SpellCheckingInspection")
 public class JavaStubBuilderTest extends LightIdeaTestCase {
-  private static final StubBuilder NEW_BUILDER = new JavaLightStubBuilder();
+  private final StubBuilder myBuilder = new JavaLightStubBuilder();
 
   @Override
   public void setUp() throws Exception {
     super.setUp();
-    doTest("@interface A { int i() default 42; }\n class C { void m(int p) throws E { } }", null);  // warm up
     LanguageLevelProjectExtension.getInstance(getProject()).setLanguageLevel(LanguageLevel.HIGHEST);
   }
 
   public void testEmpty() {
     doTest("/**/",
+
            "PsiJavaFileStub []\n" +
            "  IMPORT_LIST:PsiImportListStub\n");
   }
@@ -285,6 +282,7 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
            "    try (Resource r = new Resource() {\n" +
            "           @Override public void close() { }\n" +
            "         }) { }\n" +
+           "    try (new Resource()) { }" +
            "  }\n" +
            "}",
 
@@ -373,7 +371,7 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
            "\n" +
            "class C<@A T extends @A C> implements @A I<@A T> {\n" +
            "  @TA T<@A T1, @A ? extends @A T2> f;\n" +
-           "  @TA T m(/*@A C this,*/ @TA int p) throws @A E {\n" +
+           "  @TA T m(@A C this, @TA int p) throws @A E {\n" +
            "    o.<@A1 C>m();\n" +
            "    new <T> @A2 C();\n" +
            "    C.@A3 B v = (@A4 C)v.new @A5 C();\n" +
@@ -460,9 +458,35 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
            "      THROWS_LIST:PsiRefListStub[THROWS_LIST:]\n");
   }
 
+  public void testLocalClass() {
+    doTest("class C {\n" +
+           "  void m() {\n" +
+           "    class L { }\n" +
+           "  }\n" +
+           "}",
+
+           "PsiJavaFileStub []\n" +
+           "  IMPORT_LIST:PsiImportListStub\n" +
+           "  CLASS:PsiClassStub[name=C fqn=C]\n" +
+           "    MODIFIER_LIST:PsiModifierListStub[mask=4096]\n" +
+           "    TYPE_PARAMETER_LIST:PsiTypeParameterListStub\n" +
+           "    EXTENDS_LIST:PsiRefListStub[EXTENDS_LIST:]\n" +
+           "    IMPLEMENTS_LIST:PsiRefListStub[IMPLEMENTS_LIST:]\n" +
+           "    METHOD:PsiMethodStub[m:void]\n" +
+           "      MODIFIER_LIST:PsiModifierListStub[mask=4096]\n" +
+           "      TYPE_PARAMETER_LIST:PsiTypeParameterListStub\n" +
+           "      PARAMETER_LIST:PsiParameterListStub\n" +
+           "      THROWS_LIST:PsiRefListStub[THROWS_LIST:]\n" +
+           "      CLASS:PsiClassStub[name=L fqn=null]\n" +
+           "        MODIFIER_LIST:PsiModifierListStub[mask=4096]\n" +
+           "        TYPE_PARAMETER_LIST:PsiTypeParameterListStub\n" +
+           "        EXTENDS_LIST:PsiRefListStub[EXTENDS_LIST:]\n" +
+           "        IMPLEMENTS_LIST:PsiRefListStub[IMPLEMENTS_LIST:]\n");
+  }
+
   public void testSOEProof() {
-    final StringBuilder sb = new StringBuilder();
-    final SecureRandom random = new SecureRandom();
+    StringBuilder sb = new StringBuilder();
+    SecureRandom random = new SecureRandom();
     sb.append("class SOE_test {\n BigInteger BIG = new BigInteger(\n");
     int i;
     for (i = 0; i < 100000; i++) {
@@ -470,9 +494,9 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
     }
     sb.append("  \"\");\n}");
 
-    final PsiJavaFile file = (PsiJavaFile)createLightFile("SOE_test.java", sb.toString());
+    PsiJavaFile file = (PsiJavaFile)createLightFile("SOE_test.java", sb.toString());
     long t = System.currentTimeMillis();
-    final StubElement tree = NEW_BUILDER.buildStubTree(file);
+    StubElement tree = myBuilder.buildStubTree(file);
     t = System.currentTimeMillis() - t;
     assertEquals("PsiJavaFileStub []\n" +
                  "  IMPORT_LIST:PsiImportListStub\n" +
@@ -488,51 +512,27 @@ public class JavaStubBuilderTest extends LightIdeaTestCase {
   }
 
   public void testPerformance() throws Exception {
-    final String path = PathManagerEx.getTestDataPath() + "/psi/stub/StubPerformanceTest.java";
+    String path = PathManagerEx.getTestDataPath() + "/psi/stub/StubPerformanceTest.java";
     String text = FileUtil.loadFile(new File(path));
-    final PsiJavaFile file = (PsiJavaFile)createLightFile("test.java", text);
-
-    PlatformTestUtil.startPerformanceTest("Source file size: " + text.length(), 2000, new ThrowableRunnable() {
-      @Override
-      public void run() throws Exception {
-        NEW_BUILDER.buildStubTree(file);
-      }
-    }).cpuBound().assertTiming();
+    PsiJavaFile file = (PsiJavaFile)createLightFile("test.java", text);
+    String message = "Source file size: " + text.length();
+    PlatformTestUtil.startPerformanceTest(message, 2000, () -> myBuilder.buildStubTree(file)).cpuBound().useLegacyScaling().assertTiming();
   }
 
-  private static void doTest(@NonNls final String source, @NonNls @Nullable final String tree) {
-    final PsiJavaFile file = (PsiJavaFile)createLightFile("test.java", source);
-    final FileASTNode fileNode = file.getNode();
+  private void doTest(String source, String expected) {
+    PsiJavaFile file = (PsiJavaFile)createLightFile("test.java", source);
+    FileASTNode fileNode = file.getNode();
     assertNotNull(fileNode);
     assertFalse(fileNode.isParsed());
 
-    long t1 = System.nanoTime();
-    final StubElement lighterTree = NEW_BUILDER.buildStubTree(file);
-    t1 = Math.max((System.nanoTime() - t1)/1000, 1);
+    StubElement lightTree = myBuilder.buildStubTree(file);
     assertFalse(fileNode.isParsed());
 
     file.getNode().getChildren(null); // force switch to AST
+    StubElement astBasedTree = myBuilder.buildStubTree(file);
+    assertTrue(fileNode.isParsed());
 
-    long t2 = System.nanoTime();
-    final StubElement lighterTree2 = NEW_BUILDER.buildStubTree(file);  // build over AST
-    t2 = Math.max((System.nanoTime() - t2)/1000, 1);
-
-    file.accept(new PsiRecursiveElementWalkingVisitor() {
-      @Override
-      public void visitElement(PsiElement element) {
-        assert !(element instanceof PsiErrorElement) : element;
-        super.visitElement(element);
-      }
-    });
-
-    final String lightStr = DebugUtil.stubTreeToString(lighterTree);
-    final String lightStr2 = DebugUtil.stubTreeToString(lighterTree2);
-    if (tree != null) {
-      System.out.println("light=" + t1 + "mks, heavy=" + t2 + "mks");
-      if (!tree.isEmpty()) {
-        assertEquals("light tree differs", tree, lightStr);
-        assertEquals("light tree (2nd) differs", tree, lightStr2);
-      }
-    }
+    assertEquals("light tree differs", expected, DebugUtil.stubTreeToString(lightTree));
+    assertEquals("AST-based tree differs", expected, DebugUtil.stubTreeToString(astBasedTree));
   }
 }

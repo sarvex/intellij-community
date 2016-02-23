@@ -15,7 +15,7 @@
  */
 package com.intellij.ide.actions;
 
-import com.intellij.codeInsight.TargetElementUtilBase;
+import com.intellij.codeInsight.TargetElementUtil;
 import com.intellij.codeInsight.daemon.impl.IdentifierUtil;
 import com.intellij.codeInsight.highlighting.HighlightManager;
 import com.intellij.ide.IdeBundle;
@@ -35,6 +35,7 @@ import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.openapi.roots.ProjectRootManager;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
@@ -121,7 +122,7 @@ public class CopyReferenceAction extends DumbAwareAction {
       if (nameIdentifier != null) {
         highlightManager.addOccurrenceHighlights(editor, new PsiElement[]{nameIdentifier}, attributes, true, null);
       } else {
-        PsiReference reference = TargetElementUtilBase.findReference(editor, editor.getCaretModel().getOffset());
+        PsiReference reference = TargetElementUtil.findReference(editor, editor.getCaretModel().getOffset());
         if (reference != null) {
           highlightManager.addOccurrenceHighlights(editor, new PsiReference[]{reference}, attributes, true, null);
         } else if (element != PsiDocumentManager.getInstance(project).getCachedPsiFile(editor.getDocument())) {
@@ -135,7 +136,7 @@ public class CopyReferenceAction extends DumbAwareAction {
   private static List<PsiElement> getElementsToCopy(@Nullable final Editor editor, final DataContext dataContext) {
     List<PsiElement> elements = ContainerUtil.newArrayList();
     if (editor != null) {
-      PsiReference reference = TargetElementUtilBase.findReference(editor);
+      PsiReference reference = TargetElementUtil.findReference(editor);
       if (reference != null) {
         ContainerUtil.addIfNotNull(elements, reference.getElement());
       }
@@ -241,7 +242,7 @@ public class CopyReferenceAction extends DumbAwareAction {
     if (result != null) return result;
 
     if (editor != null) { //IDEA-70346
-      PsiReference reference = TargetElementUtilBase.findReference(editor, editor.getCaretModel().getOffset());
+      PsiReference reference = TargetElementUtil.findReference(editor, editor.getCaretModel().getOffset());
       if (reference != null) {
         result = getQualifiedNameFromProviders(reference.resolve());
         if (result != null) return result;
@@ -282,14 +283,23 @@ public class CopyReferenceAction extends DumbAwareAction {
 
   private static String getVirtualFileFqn(@NotNull VirtualFile virtualFile, @NotNull Project project) {
     final LogicalRoot logicalRoot = LogicalRootsManager.getLogicalRootsManager(project).findLogicalRoot(virtualFile);
-    if (logicalRoot != null && logicalRoot.getVirtualFile() != null) {
-      return ObjectUtils.assertNotNull(VfsUtilCore.getRelativePath(virtualFile, logicalRoot.getVirtualFile(), '/'));
+    VirtualFile logicalRootFile = logicalRoot != null ? logicalRoot.getVirtualFile() : null; 
+    if (logicalRootFile != null && !virtualFile.equals(logicalRootFile)) {
+      return ObjectUtils.assertNotNull(VfsUtilCore.getRelativePath(virtualFile, logicalRootFile, '/'));
     }
 
-    final VirtualFile contentRoot = ProjectRootManager.getInstance(project).getFileIndex().getContentRootForFile(virtualFile);
-    if (contentRoot != null) {
-      return ObjectUtils.assertNotNull(VfsUtilCore.getRelativePath(virtualFile, contentRoot, '/'));
+    VirtualFile outerMostRoot = null;
+    VirtualFile each = virtualFile;
+    ProjectFileIndex index = ProjectRootManager.getInstance(project).getFileIndex();
+    while (each != null && (each = index.getContentRootForFile(each, false)) != null) {
+      outerMostRoot = each;
+      each = each.getParent();
     }
+
+    if (outerMostRoot != null && !outerMostRoot.equals(virtualFile)) {
+      return ObjectUtils.assertNotNull(VfsUtilCore.getRelativePath(virtualFile, outerMostRoot, '/'));
+    }
+
     return virtualFile.getPath();
   }
 }

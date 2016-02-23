@@ -513,6 +513,41 @@ class Test {
 '''
   }
 
+  public void testShortNameIfInnerClass() {
+    javaSettings.CLASS_NAMES_IN_JAVADOC = JavaCodeStyleSettings.FULLY_QUALIFY_NAMES_IF_NOT_IMPORTED
+    def text = '''
+package pkg;
+
+class Foo {
+
+    /**
+     * @throws FooE<caret>
+     */
+    void foo() {
+    }
+
+    static class FooException extends RuntimeException {}
+}
+'''
+    myFixture.configureByText "a.java", text
+    myFixture.completeBasic()
+    myFixture.type('\t')
+    myFixture.checkResult '''
+package pkg;
+
+class Foo {
+
+    /**
+     * @throws FooException 
+     */
+    void foo() {
+    }
+
+    static class FooException extends RuntimeException {}
+}
+'''
+  }
+
   public void testCustomReferenceProvider() throws Exception {
     PsiReferenceRegistrarImpl registrar =
       (PsiReferenceRegistrarImpl) ReferenceProvidersRegistry.getInstance().getRegistrar(StdLanguages.JAVA);
@@ -544,5 +579,46 @@ class Test {
     finally {
       registrar.unregisterReferenceProvider(PsiDocTag.class, provider);
     }
+  }
+
+  public void "test complete author name"() {
+    def userName = SystemProperties.userName
+    assert userName
+    myFixture.configureByText 'a.java', "/** @author <caret> */"
+    myFixture.completeBasic()
+    myFixture.type('\n')
+    myFixture.checkResult "/** @author $userName<caret> */"
+  }
+
+  public void "test insert link to class"() {
+    myFixture.configureByText 'a.java', "/** FileNotFoEx<caret> */"
+    myFixture.completeBasic()
+    myFixture.checkResult "/** {@link java.io.FileNotFoundException<caret>} */"
+  }
+
+  public void "test insert link to inner class"() {
+    myFixture.addClass('package zoo; public class Outer { public static class FooBarGoo{}}')
+    myFixture.configureByText 'a.java', "/** FooBarGo<caret> */"
+    myFixture.completeBasic()
+    myFixture.checkResult "/** {@link zoo.Outer#FooBarGoo<caret>} */"
+  }
+
+  public void "test insert link to imported class"() {
+    myFixture.configureByText 'a.java', "import java.io.*; /** FileNotFoEx<caret> */ class A{}"
+    myFixture.completeBasic()
+    myFixture.checkResult "import java.io.*; /** {@link FileNotFoundException<caret>} */ class A{}"
+  }
+
+  public void "test insert link to method"() {
+    myFixture.configureByText 'a.java', "/** a. #fo<caret> */ interface Foo { void foo(int a); }}"
+    myFixture.completeBasic()
+    myFixture.type('\n')
+    myFixture.checkResult "/** a. {@link #foo(int)}<caret> */ interface Foo { void foo(int a); }}"
+  }
+
+  public void "test wrap null into code tag"() {
+    myFixture.configureByText 'a.java', "/** nul<caret> */"
+    myFixture.completeBasic()
+    myFixture.checkResult "/** {@code null}<caret> */"
   }
 }

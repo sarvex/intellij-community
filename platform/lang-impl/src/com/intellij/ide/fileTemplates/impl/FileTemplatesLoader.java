@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ import java.util.*;
 public class FileTemplatesLoader {
   private static final Logger LOG = Logger.getInstance("#" + FileTemplatesLoader.class.getName());
 
-  private static final String TEMPLATES_DIR = "fileTemplates";
+  static final String TEMPLATES_DIR = "fileTemplates";
   private static final String DEFAULT_TEMPLATES_ROOT = TEMPLATES_DIR;
   public static final String DESCRIPTION_FILE_EXTENSION = "html";
   private static final String DESCRIPTION_EXTENSION_SUFFIX = "." + DESCRIPTION_FILE_EXTENSION;
@@ -57,7 +57,7 @@ public class FileTemplatesLoader {
 
   private static final String INTERNAL_DIR = "internal";
   private static final String INCLUDES_DIR = "includes";
-  private static final String CODETEMPLATES_DIR = "code";
+  private static final String CODE_TEMPLATES_DIR = "code";
   private static final String J2EE_TEMPLATES_DIR = "j2ee";
   private static final String ROOT_DIR = ".";
   private final FileTypeManagerEx myTypeManager;
@@ -70,7 +70,7 @@ public class FileTemplatesLoader {
     myDefaultTemplatesManager = new FTManager(FileTemplateManager.DEFAULT_TEMPLATES_CATEGORY, ROOT_DIR);
     myInternalTemplatesManager = new FTManager(FileTemplateManager.INTERNAL_TEMPLATES_CATEGORY, INTERNAL_DIR, true);
     myPatternsManager = new FTManager(FileTemplateManager.INCLUDES_TEMPLATES_CATEGORY, INCLUDES_DIR);
-    myCodeTemplatesManager = new FTManager(FileTemplateManager.CODE_TEMPLATES_CATEGORY, CODETEMPLATES_DIR);
+    myCodeTemplatesManager = new FTManager(FileTemplateManager.CODE_TEMPLATES_CATEGORY, CODE_TEMPLATES_DIR);
     myJ2eeTemplatesManager = new FTManager(FileTemplateManager.J2EE_TEMPLATES_CATEGORY, J2EE_TEMPLATES_DIR);
     myAllManagers = new FTManager[]{
       myDefaultTemplatesManager,
@@ -82,7 +82,7 @@ public class FileTemplatesLoader {
     myDirToManagerMap.put("", myDefaultTemplatesManager);
     myDirToManagerMap.put(INTERNAL_DIR + "/", myInternalTemplatesManager);
     myDirToManagerMap.put(INCLUDES_DIR + "/", myPatternsManager);
-    myDirToManagerMap.put(CODETEMPLATES_DIR + "/", myCodeTemplatesManager);
+    myDirToManagerMap.put(CODE_TEMPLATES_DIR + "/", myCodeTemplatesManager);
     myDirToManagerMap.put(J2EE_TEMPLATES_DIR + "/", myJ2eeTemplatesManager);
 
     loadDefaultTemplates();
@@ -133,7 +133,7 @@ public class FileTemplatesLoader {
         }
         try {
           final Enumeration<URL> systemResources = loader.getResources(DEFAULT_TEMPLATES_ROOT);
-          if (systemResources != null && systemResources.hasMoreElements()) {
+          if (systemResources.hasMoreElements()) {
             while (systemResources.hasMoreElements()) {
               final URL url = systemResources.nextElement();
               if (processedUrls.contains(url)) {

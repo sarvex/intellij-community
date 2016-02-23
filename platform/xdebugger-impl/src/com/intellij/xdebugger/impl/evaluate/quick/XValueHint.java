@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@
  */
 package com.intellij.xdebugger.impl.evaluate.quick;
 
-import com.intellij.codeInsight.hint.HintManager;
 import com.intellij.codeInsight.hint.HintUtil;
 import com.intellij.execution.console.LanguageConsoleView;
 import com.intellij.execution.impl.ConsoleViewImpl;
@@ -184,12 +183,13 @@ public class XValueHint extends AbstractValueHint {
               SimpleColoredComponent component = HintUtil.createInformationComponent();
               text.appendToComponent(component);
               if (myFullValueEvaluator != null) {
-                component.append(myFullValueEvaluator.getLinkText(), XDebuggerTreeNodeHyperlink.TEXT_ATTRIBUTES, new Consumer<MouseEvent>() {
-                  @Override
-                  public void consume(MouseEvent event) {
-                    DebuggerUIUtil.showValuePopup(myFullValueEvaluator, event, getProject(), getEditor());
-                  }
-                });
+                component.append(myFullValueEvaluator.getLinkText(), XDebuggerTreeNodeHyperlink.TEXT_ATTRIBUTES,
+                                 new Consumer<MouseEvent>() {
+                                   @Override
+                                   public void consume(MouseEvent event) {
+                                     DebuggerUIUtil.showValuePopup(myFullValueEvaluator, event, getProject(), getEditor());
+                                   }
+                                 });
                 LinkMouseListenerBase.installSingleTagOn(component);
               }
               showHint(component);
@@ -230,20 +230,14 @@ public class XValueHint extends AbstractValueHint {
 
       @Override
       public void errorOccurred(@NotNull final String errorMessage) {
-        ApplicationManager.getApplication().invokeLater(new Runnable() {
-          @Override
-          public void run() {
-            int start = 0, end = 0;
-            if (getCurrentRange() != null) {
-              start = getCurrentRange().getStartOffset();
-              end = getCurrentRange().getEndOffset();
+        if (getType() == ValueHintType.MOUSE_CLICK_HINT) {
+          ApplicationManager.getApplication().invokeLater(new Runnable() {
+            @Override
+            public void run() {
+              showHint(HintUtil.createErrorLabel(errorMessage));
             }
-            HintManager.getInstance().showErrorHint(getEditor(), errorMessage, start,
-                                                    end, HintManager.ABOVE,
-                                                    HintManager.HIDE_BY_ESCAPE | HintManager.HIDE_BY_TEXT_CHANGE,
-                                                    0);
-          }
-        });
+          });
+        }
         LOG.debug("Cannot evaluate '" + myExpression + "':" + errorMessage);
       }
     }, myExpressionPosition);

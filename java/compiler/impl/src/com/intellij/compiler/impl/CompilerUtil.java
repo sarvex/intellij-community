@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,16 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-/**
- * created at Jan 3, 2002
- * @author Jeka
- */
 package com.intellij.compiler.impl;
 
 import com.intellij.openapi.compiler.CompileContext;
 import com.intellij.openapi.compiler.CompilerBundle;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
@@ -38,6 +34,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+/**
+ * @author Jeka
+ * @since Jan 3, 2002
+ */
 public class CompilerUtil {
   private static final Logger LOG = Logger.getInstance("#com.intellij.compiler.impl.CompilerUtil");
 
@@ -49,10 +49,6 @@ public class CompilerUtil {
     return path;
   }
 
-  /**
-   * must not be called inside ReadAction
-   * @param files
-   */
   public static void refreshIOFiles(@NotNull final Collection<File> files) {
     if (!files.isEmpty()) {
       LocalFileSystem.getInstance().refreshIoFiles(files);
@@ -60,16 +56,8 @@ public class CompilerUtil {
   }
 
   public static void refreshIODirectories(@NotNull final Collection<File> files) {
-    final LocalFileSystem lfs = LocalFileSystem.getInstance();
-    final List<VirtualFile> filesToRefresh = new ArrayList<VirtualFile>();
-    for (File file : files) {
-      final VirtualFile virtualFile = lfs.refreshAndFindFileByIoFile(file);
-      if (virtualFile != null) {
-        filesToRefresh.add(virtualFile);
-      }
-    }
-    if (!filesToRefresh.isEmpty()) {
-      RefreshQueue.getInstance().refresh(false, true, null, filesToRefresh);
+    if (!files.isEmpty()) {
+      LocalFileSystem.getInstance().refreshIoFiles(files, false, true, null);
     }
   }
 
@@ -185,16 +173,17 @@ public class CompilerUtil {
   }
 
   public static <T extends Throwable> void runInContext(CompileContext context, String title, ThrowableRunnable<T> action) throws T {
+    ProgressIndicator indicator = context.getProgressIndicator();
     if (title != null) {
-      context.getProgressIndicator().pushState();
-      context.getProgressIndicator().setText(title);
+      indicator.pushState();
+      indicator.setText(title);
     }
     try {
       action.run();
     }
     finally {
       if (title != null) {
-        context.getProgressIndicator().popState();
+        indicator.popState();
       }
     }
   }

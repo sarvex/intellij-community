@@ -31,8 +31,6 @@ import com.intellij.execution.configurations.RemoteConnection;
 import com.intellij.execution.configurations.RunProfileState;
 import com.intellij.execution.executors.DefaultDebugExecutor;
 import com.intellij.execution.runners.ExecutionEnvironment;
-import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
-import com.intellij.execution.runners.ProgramRunner;
 import com.intellij.execution.ui.RunContentDescriptor;
 import com.intellij.execution.ui.RunContentManager;
 import com.intellij.execution.ui.RunContentWithExecutorListener;
@@ -55,25 +53,6 @@ public class DebuggerPanelsManager implements ProjectComponent {
 
   private DebuggerStateManager getContextManager() {
     return DebuggerManagerEx.getInstanceEx(myProject).getContextManager();
-  }
-
-  @Nullable
-  @Deprecated
-  /**
-   * @deprecated to remove in IDEA 15
-   */
-  public RunContentDescriptor attachVirtualMachine(Executor executor,
-                                                   @NotNull ProgramRunner runner,
-                                                   @NotNull ExecutionEnvironment environment,
-                                                   RunProfileState state,
-                                                   RunContentDescriptor reuseContent,
-                                                   RemoteConnection remoteConnection,
-                                                   boolean pollConnection) throws ExecutionException {
-    return attachVirtualMachine(new ExecutionEnvironmentBuilder(environment)
-                                  .executor(executor)
-                                  .runner(runner)
-                                  .contentToReuse(reuseContent)
-                                  .build(), state, remoteConnection, pollConnection);
   }
 
   @Nullable
@@ -123,10 +102,10 @@ public class DebuggerPanelsManager implements ProjectComponent {
         if (executor == DefaultDebugExecutor.getDebugExecutorInstance()) {
           DebuggerSession session = descriptor == null ? null : getSession(myProject, descriptor);
           if (session != null) {
-            getContextManager().setState(session.getContextManager().getContext(), session.getState(), DebuggerSession.EVENT_CONTEXT, null);
+            getContextManager().setState(session.getContextManager().getContext(), session.getState(), DebuggerSession.Event.CONTEXT, null);
           }
           else {
-            getContextManager().setState(DebuggerContextImpl.EMPTY_CONTEXT, DebuggerSession.STATE_DISPOSED, DebuggerSession.EVENT_CONTEXT, null);
+            getContextManager().setState(DebuggerContextImpl.EMPTY_CONTEXT, DebuggerSession.State.DISPOSED, DebuggerSession.Event.CONTEXT, null);
           }
         }
       }

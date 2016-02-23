@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,8 +39,10 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.util.ClassUtil;
 import com.intellij.psi.util.InheritanceUtil;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.StringBuilderSpinAllocator;
+import com.intellij.util.containers.ContainerUtil;
 import com.sun.jdi.*;
 import org.jdom.Element;
 import org.jetbrains.annotations.NonNls;
@@ -148,7 +150,7 @@ public abstract class DebuggerUtils {
   }
 
   @Nullable
-  public static Method findMethod(ReferenceType refType, @NonNls String methodName, @NonNls String methodSignature) {
+  public static Method findMethod(@NotNull ReferenceType refType, @NonNls String methodName, @Nullable @NonNls String methodSignature) {
     if (refType instanceof ArrayType) {
       // for array types methodByName() in JDI always returns empty list
       final Method method = findMethod(refType.virtualMachine().classesByName(CommonClassNames.JAVA_LANG_OBJECT).get(0), methodName, methodSignature);
@@ -163,20 +165,11 @@ public abstract class DebuggerUtils {
         method = ((ClassType)refType).concreteMethodByName(methodName, methodSignature);
       }
       if (method == null) {
-        final List<Method> methods = refType.methodsByName(methodName, methodSignature);
-        if (methods.size() > 0) {
-          method = methods.get(0);
-        }
+        method = ContainerUtil.getFirstItem(refType.methodsByName(methodName, methodSignature));
       }
     }
     else {
-      List<Method> methods = null;
-      if (refType instanceof ClassType) {
-        methods = refType.methodsByName(methodName);
-      }
-      if (methods != null && methods.size() > 0) {
-        method = methods.get(0);
-      }
+      method = ContainerUtil.getFirstItem(refType.methodsByName(methodName));
     }
     return method;
   }
@@ -265,8 +258,11 @@ public abstract class DebuggerUtils {
     return false;
   }
 
-  public static Type getSuperType(Type subType, String superType) {
-    if(CommonClassNames.JAVA_LANG_OBJECT.equals(superType)) {
+  @Nullable
+  public static Type getSuperType(@Nullable Type subType, @NotNull String superType) {
+    if (subType == null) return null;
+
+    if (CommonClassNames.JAVA_LANG_OBJECT.equals(superType)) {
       List list = subType.virtualMachine().classesByName(CommonClassNames.JAVA_LANG_OBJECT);
       if(list.size() > 0) {
         return (ReferenceType)list.get(0);
@@ -277,23 +273,23 @@ public abstract class DebuggerUtils {
     return getSuperTypeInt(subType, superType);
   }
 
-  private static boolean typeEquals(Type type, String typeName) {
+  private static boolean typeEquals(@NotNull Type type, @NotNull String typeName) {
+    int genericPos = typeName.indexOf('<');
+    if (genericPos > -1) {
+      typeName = typeName.substring(0, genericPos);
+    }
     return type.name().replace('$', '.').equals(typeName.replace('$', '.'));
   }
 
-  private static Type getSuperTypeInt(Type subType, String superType) {
-    Type result;
-    if (subType == null) {
-      return null;
-    }
-
+  private static Type getSuperTypeInt(@NotNull Type subType, @NotNull String superType) {
     if (typeEquals(subType, superType)) {
       return subType;
     }
 
+    Type result;
     if (subType instanceof ClassType) {
       try {
-        final ClassType clsType = (ClassType)subType;
+        ClassType clsType = (ClassType)subType;
         result = getSuperType(clsType.superclass(), superType);
         if (result != null) {
           return result;
@@ -353,7 +349,7 @@ public abstract class DebuggerUtils {
     return null;
   }
 
-  public static boolean instanceOf(Type subType, String superType) {
+  public static boolean instanceOf(@Nullable Type subType, @NotNull String superType) {
     return getSuperType(subType, superType) != null;
   }
 
@@ -361,21 +357,20 @@ public abstract class DebuggerUtils {
   public static PsiClass findClass(@NotNull final String className, @NotNull Project project, final GlobalSearchScope scope) {
     ApplicationManager.getApplication().assertReadAccessAllowed();
     try {
-      final PsiManager psiManager = PsiManager.getInstance(project);
-      final JavaPsiFacade javaPsiFacade = JavaPsiFacade.getInstance(psiManager.getProject());
       if (getArrayClass(className) != null) {
-        return javaPsiFacade.getElementFactory()
-          .getArrayClass(LanguageLevelProjectExtension.getInstance(psiManager.getProject()).getLanguageLevel());
+        return JavaPsiFacade.getInstance(project).getElementFactory()
+          .getArrayClass(LanguageLevelProjectExtension.getInstance(project).getLanguageLevel());
       }
       if (project.isDefault()) {
         return null;
       }
 
-      PsiClass psiClass = ClassUtil.findPsiClass(PsiManager.getInstance(project), className, null, true, scope);
+      PsiManager psiManager = PsiManager.getInstance(project);
+      PsiClass psiClass = ClassUtil.findPsiClass(psiManager, className, null, true, scope);
       if (psiClass == null) {
         GlobalSearchScope globalScope = GlobalSearchScope.allScope(project);
         if (!globalScope.equals(scope)) {
-          psiClass = ClassUtil.findPsiClass(PsiManager.getInstance(project), className, null, true, globalScope);
+          psiClass = ClassUtil.findPsiClass(psiManager, className, null, true, globalScope);
         }
       }
 
@@ -498,9 +493,24 @@ public abstract class DebuggerUtils {
     return false;
   }
 
+  /**
+   * @deprecated use {@link #isInsideSimpleGetter(PsiElement)} instead
+   */
+  @Deprecated
   public static boolean isSimpleGetter(PsiMethod method) {
     for (SimpleGetterProvider provider : SimpleGetterProvider.EP_NAME.getExtensions()) {
       if (provider.isSimpleGetter(method)) return true;
+    }
+    return false;
+  }
+
+  public static boolean isInsideSimpleGetter(@NotNull PsiElement contextElement) {
+    for (SimpleGetterProvider provider : SimpleGetterProvider.EP_NAME.getExtensions()) {
+      PsiMethod psiMethod = PsiTreeUtil.getParentOfType(contextElement, PsiMethod.class);
+      if (psiMethod != null && provider.isSimpleGetter(psiMethod)) return true;
+    }
+    for (SimplePropertyGetterProvider provider : SimplePropertyGetterProvider.EP_NAME.getExtensions()) {
+      if (provider.isInsideSimpleGetter(contextElement)) return true;
     }
     return false;
   }

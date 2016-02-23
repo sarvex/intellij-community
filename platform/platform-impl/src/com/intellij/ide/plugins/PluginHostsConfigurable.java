@@ -17,6 +17,7 @@ package com.intellij.ide.plugins;
 
 import com.intellij.ide.IdeBundle;
 import com.intellij.openapi.options.BaseConfigurable;
+import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
@@ -44,7 +45,7 @@ import java.awt.event.ActionEvent;
 import java.util.ArrayList;
 import java.util.List;
 
-public class PluginHostsConfigurable extends BaseConfigurable {
+public class PluginHostsConfigurable extends BaseConfigurable implements Configurable.NoScroll {
   private CustomPluginRepositoriesPanel myUpdatesSettingsPanel;
 
   @Override
@@ -193,7 +194,7 @@ public class PluginHostsConfigurable extends BaseConfigurable {
               public void run(@NotNull ProgressIndicator indicator) {
                 String host = correctRepositoryRule(getTextField().getText());
                 try {
-                  result = RepositoryHelper.loadPlugins(host, null, indicator).size();
+                  result = RepositoryHelper.loadPlugins(host, indicator).size();
                 }
                 catch (Exception e) {
                   error = e;

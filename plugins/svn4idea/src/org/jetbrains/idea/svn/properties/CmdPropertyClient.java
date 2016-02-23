@@ -8,10 +8,9 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.svn.SvnUtil;
 import org.jetbrains.idea.svn.api.BaseSvnClient;
 import org.jetbrains.idea.svn.api.Depth;
-import org.jetbrains.idea.svn.commandLine.CommandExecutor;
-import org.jetbrains.idea.svn.commandLine.CommandUtil;
-import org.jetbrains.idea.svn.commandLine.SvnCommandName;
+import org.jetbrains.idea.svn.commandLine.*;
 import org.jetbrains.idea.svn.info.Info;
+import org.tmatesoft.svn.core.SVNErrorCode;
 import org.tmatesoft.svn.core.SVNException;
 import org.tmatesoft.svn.core.SVNURL;
 import org.tmatesoft.svn.core.wc.SVNRevision;
@@ -60,8 +59,17 @@ public class CmdPropertyClient extends BaseSvnClient implements PropertyClient {
     // is critical for some parts of merge logic
     parameters.add("--xml");
 
-    CommandExecutor command = execute(myVcs, target, SvnCommandName.propget, parameters, null);
-    PropertyData data = parseSingleProperty(target, command);
+    PropertyData data = null;
+
+    try {
+      CommandExecutor command = execute(myVcs, target, SvnCommandName.propget, parameters, null);
+      data = parseSingleProperty(target, command);
+    }
+    catch (SvnBindException e) {
+      if (!isPropertyNotFoundError(e)) {
+        throw e;
+      }
+    }
 
     return data != null ? data.getValue() : null;
   }
@@ -77,8 +85,15 @@ public class CmdPropertyClient extends BaseSvnClient implements PropertyClient {
     parameters.add(property);
     fillListParameters(target, revision, depth, parameters, false);
 
-    CommandExecutor command = execute(myVcs, target, SvnCommandName.propget, parameters, null);
-    parseOutput(target, command, handler);
+    try {
+      CommandExecutor command = execute(myVcs, target, SvnCommandName.propget, parameters, null);
+      parseOutput(target, command, handler);
+    }
+    catch (SvnBindException e) {
+      if (!isPropertyNotFoundError(e)) {
+        throw e;
+      }
+    }
   }
 
   @Override
@@ -110,6 +125,13 @@ public class CmdPropertyClient extends BaseSvnClient implements PropertyClient {
     for (Map.Entry<String, PropertyValue> entry : currentProperties.entrySet()) {
       setProperty(file, entry.getKey(), entry.getValue(), Depth.EMPTY, true);
     }
+  }
+
+  /**
+   * Such error is thrown (if there is no requested property on the given target) by svn 1.9 client.
+   */
+  private static boolean isPropertyNotFoundError(@NotNull SvnBindException e) {
+    return e.contains(SVNErrorCode.BASE) && e.contains(SVNErrorCode.PROPERTY_NOT_FOUND);
   }
 
   @NotNull
@@ -150,28 +172,23 @@ public class CmdPropertyClient extends BaseSvnClient implements PropertyClient {
                               @Nullable Depth depth,
                               @Nullable PropertyValue value,
                               boolean force) throws VcsException {
-    List<String> parameters = new ArrayList<String>();
     boolean isDelete = value == null;
+    Command command = newCommand(isDelete ? SvnCommandName.propdel : SvnCommandName.propset);
 
-    parameters.add(property);
+    command.put(property);
     if (revision != null) {
-      parameters.add("--revprop");
-      CommandUtil.put(parameters, revision);
+      command.put("--revprop");
+      command.put(revision);
     }
     if (!isDelete) {
-      parameters.add(PropertyValue.toString(value));
+      command.setPropertyValue(value);
       // --force could only be used in "propset" command, but not in "propdel" command
-      CommandUtil.put(parameters, force, "--force");
+      command.put("--force", force);
     }
-    CommandUtil.put(parameters, target);
-    CommandUtil.put(parameters, depth);
+    command.put(target);
+    command.put(depth);
 
-    // For some reason, command setting ignore property when working directory equals target directory (like
-    // "svn propset svn:ignore *.java . --depth empty") tries to set ignore also on child files and fails with error like
-    // "svn: E200009: Cannot set 'svn:ignore' on a file ('...File1.java')". So here we manually force home directory to be used.
-    // NOTE: that setting other properties (not svn:ignore) does not cause such error.
-    execute(myVcs, target, CommandUtil.getHomeDirectory(), isDelete ? SvnCommandName.propdel : SvnCommandName.propset, parameters,
-            null);
+    execute(myVcs, target, null, command, null);
   }
 
   private void fillListParameters(@NotNull SvnTarget target,

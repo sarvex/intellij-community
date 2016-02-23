@@ -20,23 +20,19 @@ import com.intellij.diff.DiffContextEx;
 import com.intellij.diff.FrameDiffTool;
 import com.intellij.diff.contents.DiffContent;
 import com.intellij.diff.contents.FileContent;
-import com.intellij.diff.requests.ContentDiffRequest;
-import com.intellij.diff.requests.DiffRequest;
-import com.intellij.diff.requests.MessageDiffRequest;
+import com.intellij.diff.requests.*;
 import com.intellij.diff.util.DiffUtil;
-import com.intellij.openapi.fileTypes.FileType;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
+import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.fileTypes.FileTypes;
-import com.intellij.openapi.fileTypes.ex.FileTypeChooser;
-import com.intellij.openapi.vcs.changes.issueLinks.LinkMouseListenerBase;
+import com.intellij.openapi.fileTypes.UnknownFileType;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.ui.SimpleColoredComponent;
-import com.intellij.ui.SimpleTextAttributes;
-import com.intellij.util.ui.UIUtil;
+import com.intellij.util.ui.JBUI;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import java.awt.*;
 import java.util.List;
 
 public class ErrorDiffTool implements FrameDiffTool {
@@ -69,8 +65,7 @@ public class ErrorDiffTool implements FrameDiffTool {
       myContext = context;
       myRequest = request;
 
-      myPanel = new JPanel(new BorderLayout());
-      myPanel.add(createComponent(request), BorderLayout.CENTER);
+      myPanel = JBUI.Panels.simplePanel(createComponent(request));
     }
 
     @NotNull
@@ -80,26 +75,17 @@ public class ErrorDiffTool implements FrameDiffTool {
         String message = ((MessageDiffRequest)request).getMessage();
         return DiffUtil.createMessagePanel(message);
       }
+      if (request instanceof ComponentDiffRequest) {
+        return ((ComponentDiffRequest)request).getComponent(myContext);
+      }
       if (request instanceof ContentDiffRequest) {
         List<DiffContent> contents = ((ContentDiffRequest)request).getContents();
-        for (DiffContent content : contents) {
+        for (final DiffContent content : contents) {
           if (content instanceof FileContent && FileTypes.UNKNOWN.equals(content.getContentType())) {
             final VirtualFile file = ((FileContent)content).getFile();
 
-            final SimpleColoredComponent label = new SimpleColoredComponent();
-            label.append("Can't show diff for unknown file type. ",
-                         new SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, UIUtil.getInactiveTextColor()));
-            label.append("Associate", SimpleTextAttributes.LINK_ATTRIBUTES, new Runnable() {
-              @Override
-              public void run() {
-                FileType type = FileTypeChooser.associateFileType(file.getName());
-                if (type != null && myContext instanceof DiffContextEx) {
-                  ((DiffContextEx)myContext).reloadDiffRequest();
-                }
-              }
-            });
-            LinkMouseListenerBase.installSingleTagOn(label);
-            return DiffUtil.createMessagePanel(label);
+            UnknownFileTypeDiffRequest unknownFileTypeRequest = new UnknownFileTypeDiffRequest(file, myRequest.getTitle());
+            return unknownFileTypeRequest.getComponent(myContext);
           }
         }
       }
@@ -122,6 +108,21 @@ public class ErrorDiffTool implements FrameDiffTool {
     @NotNull
     @Override
     public ToolbarComponents init() {
+      if (myRequest instanceof UnknownFileTypeDiffRequest) {
+        String fileName = ((UnknownFileTypeDiffRequest)myRequest).getFileName();
+        if (fileName != null && FileTypeManager.getInstance().getFileTypeByFileName(fileName) != UnknownFileType.INSTANCE) {
+          // FileType was assigned elsewhere (ex: by other UnknownFileTypeDiffRequest). We should reload request.
+          if (myContext instanceof DiffContextEx) {
+            ApplicationManager.getApplication().invokeLater(new Runnable() {
+              @Override
+              public void run() {
+                ((DiffContextEx)myContext).reloadDiffRequest();
+              }
+            }, ModalityState.current());
+          }
+        }
+      }
+
       return new ToolbarComponents();
     }
 

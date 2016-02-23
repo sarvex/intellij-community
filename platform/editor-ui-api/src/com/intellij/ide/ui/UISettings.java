@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,11 @@ import com.intellij.ide.WelcomeWizardUtil;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.components.*;
+import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.ServiceManager;
+import com.intellij.openapi.components.State;
+import com.intellij.openapi.components.Storage;
+import com.intellij.openapi.util.IconLoader;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.SimpleModificationTracker;
 import com.intellij.openapi.util.SystemInfo;
@@ -43,7 +47,7 @@ import static com.intellij.util.ui.UIUtil.isValidFont;
 
 @State(
   name = "UISettings",
-  storages = @Storage(file = StoragePathMacros.APP_CONFIG + "/ui.lnf.xml")
+  storages = @Storage("ui.lnf.xml")
 )
 public class UISettings extends SimpleModificationTracker implements PersistentStateComponent<UISettings> {
   /** Not tabbed pane. */
@@ -67,7 +71,10 @@ public class UISettings extends SimpleModificationTracker implements PersistentS
   @Property(filter = FontFilter.class) public int FONT_SIZE;
   public int RECENT_FILES_LIMIT = 50;
   public int CONSOLE_COMMAND_HISTORY_LIMIT = 300;
+  public boolean OVERRIDE_CONSOLE_CYCLE_BUFFER_SIZE = false;
+  public int CONSOLE_CYCLE_BUFFER_SIZE_KB = 1024;
   public int EDITOR_TAB_LIMIT = 10;
+  public boolean REUSE_NOT_MODIFIED_TABS = false;
   public boolean ANIMATE_WINDOWS = true;
   @Deprecated //todo remove in IDEA 16
   public int ANIMATION_SPEED = 4000; // Pixels per second
@@ -94,7 +101,10 @@ public class UISettings extends SimpleModificationTracker implements PersistentS
   public boolean CLOSE_NON_MODIFIED_FILES_FIRST = false;
   public boolean ACTIVATE_MRU_EDITOR_ON_CLOSE = false;
   public boolean ACTIVATE_RIGHT_EDITOR_ON_CLOSE = false;
-  public boolean ANTIALIASING_IN_EDITOR = true;
+  public AntialiasingType IDE_AA_TYPE = AntialiasingType.SUBPIXEL;
+  public AntialiasingType EDITOR_AA_TYPE = AntialiasingType.SUBPIXEL;
+  public ColorBlindness COLOR_BLINDNESS; 
+  public boolean USE_LCD_RENDERING_IN_EDITOR = true;
   public boolean MOVE_MOUSE_ON_DEFAULT_BUTTON = false;
   public boolean ENABLE_ALPHA_MODE = false;
   public int ALPHA_MODE_DELAY = 1500;
@@ -119,6 +129,8 @@ public class UISettings extends SimpleModificationTracker implements PersistentS
   public boolean SHOW_TABS_TOOLTIPS = true;
   public boolean SHOW_DIRECTORY_FOR_NON_UNIQUE_FILENAMES = true;
   public boolean NAVIGATE_TO_PREVIEW = false;
+  public boolean SORT_BOOKMARKS = false;
+  public boolean MERGE_EQUAL_STACKTRACES = true;
 
   private final EventDispatcher<UISettingsListener> myDispatcher = EventDispatcher.create(UISettingsListener.class);
 
@@ -142,7 +154,7 @@ public class UISettings extends SimpleModificationTracker implements PersistentS
   }
 
   /**
-   * @deprecated use {@link UISettings#addUISettingsListener(com.intellij.ide.ui.UISettingsListener, Disposable disposable)} instead.
+   * @deprecated use {@link UISettings#addUISettingsListener(UISettingsListener, Disposable disposable)} instead.
    */
   public void addUISettingsListener(UISettingsListener listener) {
     myDispatcher.addListener(listener);
@@ -159,6 +171,13 @@ public class UISettings extends SimpleModificationTracker implements PersistentS
     incModificationCount();
     myDispatcher.getMulticaster().uiSettingsChanged(this);
     ApplicationManager.getApplication().getMessageBus().syncPublisher(UISettingsListener.TOPIC).uiSettingsChanged(this);
+    IconLoader.setFilter(COLOR_BLINDNESS == ColorBlindness.protanopia
+                         ? DaltonizationFilter.protanopia
+                         : COLOR_BLINDNESS == ColorBlindness.deuteranopia
+                           ? DaltonizationFilter.deuteranopia
+                           : COLOR_BLINDNESS == ColorBlindness.tritanopia
+                             ? DaltonizationFilter.tritanopia
+                             : null);
   }
 
   public void removeUISettingsListener(UISettingsListener listener) {
@@ -252,57 +271,38 @@ public class UISettings extends SimpleModificationTracker implements PersistentS
     fireUISettingsChanged();
   }
 
-  private static final boolean DEFAULT_ALIASING             =
-    SystemProperties.getBooleanProperty("idea.use.default.antialiasing.in.editor", false);
-  private static final boolean FORCE_USE_FRACTIONAL_METRICS =
+  public static final boolean FORCE_USE_FRACTIONAL_METRICS =
     SystemProperties.getBooleanProperty("idea.force.use.fractional.metrics", false);
 
-  public static void setupAntialiasing(final Graphics g) {
-    if (DEFAULT_ALIASING) return;
-
-    Graphics2D g2d = (Graphics2D)g;
-    UISettings uiSettings = getInstance();
-
-    g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-    if (!isRemoteDesktopConnected() && UIUtil.isRetina()) {
-      g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+  public static void setupFractionalMetrics(final Graphics2D g2d) {
+    if (FORCE_USE_FRACTIONAL_METRICS) {
+      g2d.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
     }
-    else {
-      if (uiSettings == null || uiSettings.ANTIALIASING_IN_EDITOR) {
-        Toolkit tk = Toolkit.getDefaultToolkit();
-        //noinspection HardCodedStringLiteral
-        Map map = (Map)tk.getDesktopProperty("awt.font.desktophints");
-        if (map != null) {
-          if (isRemoteDesktopConnected()) {
-            g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_DEFAULT);
-          }
-          else {
-            g2d.addRenderingHints(map);
-          }
-        }
-        else {
-          g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        }
-        if (FORCE_USE_FRACTIONAL_METRICS) {
-          g2d.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-        }
-      }
-      else {
-        g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
-      }
-    }
-    UIUtil.setHintingForLCDText(g2d);
   }
 
-  /**
-   * @return true when Remote Desktop (i.e. Windows RDP) is connected
+  /* This method must not be used for set up antialiasing for editor components
    */
-  // TODO[neuro]: move to UIUtil
-  public static boolean isRemoteDesktopConnected() {
-    if (System.getProperty("os.name").contains("Windows")) {
-      final Map map = (Map)Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints");
-      return map != null && RenderingHints.VALUE_TEXT_ANTIALIAS_DEFAULT.equals(map.get(RenderingHints.KEY_TEXT_ANTIALIASING));
+  public static void setupAntialiasing(final Graphics g) {
+
+    Graphics2D g2d = (Graphics2D)g;
+    g2d.setRenderingHint(RenderingHints.KEY_TEXT_LCD_CONTRAST,  UIUtil.getLcdContrastValue());
+
+    Application application = ApplicationManager.getApplication();
+    if (application == null) {
+      // We cannot use services while Application has not been loaded yet
+      // So let's apply the default hints.
+      UIUtil.applyRenderingHints(g);
+      return;
     }
-    return false;
+
+    UISettings uiSettings = getInstance();
+
+    if (uiSettings != null) {
+      g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, AntialiasingType.getKeyForCurrentScope(false));
+    } else {
+      g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
+    }
+
+      setupFractionalMetrics(g2d);
   }
 }

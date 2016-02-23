@@ -326,7 +326,7 @@ public class ControlFlowUtil {
       // process chain of goto's
       gotoOffset = promoteThroughGotoChain(flow, gotoOffset);
 
-      if (!exitPoints.contains(gotoOffset) && (gotoOffset >= end || gotoOffset < start)) {
+      if (!exitPoints.contains(gotoOffset) && (gotoOffset >= end || gotoOffset < start) && gotoOffset > 0) {
         exitPoints.add(gotoOffset);
       }
       if (gotoOffset >= end || gotoOffset < start) {
@@ -732,14 +732,23 @@ public class ControlFlowUtil {
           if (nextOffset == endOffset) {
             int lastOffset = endOffset - 1;
             Instruction lastInstruction = flow.getInstructions().get(lastOffset);
-            if (lastInstruction instanceof GoToInstruction &&
+            while (lastInstruction instanceof GoToInstruction &&
                 ((GoToInstruction)lastInstruction).role == BranchingInstruction.Role.END &&
                 !((GoToInstruction)lastInstruction).isReturn) {
-              lastOffset--;
+              if (((GoToInstruction)lastInstruction).offset == startOffset) {
+                lastOffset = -1;
+                break;
+              } 
+              else {
+                lastOffset--;
+                if (lastOffset < 0) {
+                  break;
+                }
+                lastInstruction = flow.getInstructions().get(lastOffset);
+              }
             }
 
             if (lastOffset >= 0) {
-              lastInstruction = flow.getInstructions().get(lastOffset);
               isNormal = !(lastInstruction instanceof GoToInstruction && ((GoToInstruction)lastInstruction).isReturn) &&
                          !(lastInstruction instanceof ThrowToInstruction);
             }
@@ -995,7 +1004,7 @@ public class ControlFlowUtil {
         if (isLeaf(nextOffset)) {
           exitPoints[offset].add(offset);
         }
-        else {
+        else if (exitPoints[nextOffset] != null) {
           exitPoints[offset].addAll(exitPoints[nextOffset].toArray());
         }
       }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.intellij.lang.java.parser.JavadocParser;
 import com.intellij.lexer.Lexer;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.LanguageLevelProjectExtension;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.impl.source.javadoc.*;
 import com.intellij.psi.tree.*;
@@ -38,6 +39,7 @@ import sun.reflect.ConstructorAccessor;
 import java.lang.reflect.Constructor;
 
 public interface JavaDocElementType {
+  @SuppressWarnings("deprecation")
   class JavaDocCompositeElementType extends IJavaDocElementType implements ICompositeElementType {
     private final ConstructorAccessor myConstructor;
 
@@ -60,7 +62,7 @@ public interface JavaDocElementType {
     }
 
     @Override
-    public ASTNode createNode(final CharSequence text) {
+    public ASTNode createNode(CharSequence text) {
       return new LazyParseablePsiElement(this, text);
     }
   }
@@ -122,6 +124,8 @@ public interface JavaDocElementType {
 
     @Override
     public boolean isParsable(final CharSequence buffer, Language fileLanguage, final Project project) {
+      if (!StringUtil.startsWith(buffer, "/**") || !StringUtil.endsWith(buffer, "*/")) return false;
+
       Lexer lexer = JavaParserDefinition.createLexer(LanguageLevelProjectExtension.getInstance(project).getLanguageLevel());
       lexer.start(buffer);
       if (lexer.getTokenType() == DOC_COMMENT) {

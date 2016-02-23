@@ -24,6 +24,9 @@
  */
 package com.intellij.refactoring.introduceParameter;
 
+import com.intellij.codeInspection.AnonymousCanBeLambdaInspection;
+import com.intellij.codeInspection.LambdaCanBeMethodReferenceInspection;
+import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.help.HelpManager;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.project.Project;
@@ -44,6 +47,7 @@ import java.awt.*;
 import java.util.List;
 
 public class IntroduceParameterDialog extends RefactoringDialog {
+  private static final String INTRODUCE_PARAMETER_LAMBDA = "introduce.parameter.lambda";
   private TypeSelector myTypeSelector;
   private NameSuggestionsManager myNameSuggestionsManager;
 
@@ -56,6 +60,7 @@ public class IntroduceParameterDialog extends RefactoringDialog {
   private final PsiExpression myExpression;
   private final PsiLocalVariable myLocalVar;
   protected JCheckBox myCbDeclareFinal = null;
+  protected JCheckBox myCbCollapseToLambda;
 
   //  private JComponent myParameterNameField = null;
   private NameSuggestionsField myParameterNameField;
@@ -225,7 +230,15 @@ public class IntroduceParameterDialog extends RefactoringDialog {
 
     gbConstraints.gridy++;
     myPanel.createDelegateCb(gbConstraints, panel);
-
+    
+    myCbCollapseToLambda = new NonFocusableCheckBox(RefactoringBundle.message("introduce.parameter.convert.lambda"));
+    final PsiAnonymousClass anonymClass = myExpression instanceof PsiNewExpression ? ((PsiNewExpression)myExpression).getAnonymousClass() 
+                                                                                   : null;
+    myCbCollapseToLambda.setVisible(anonymClass != null && AnonymousCanBeLambdaInspection.canBeConvertedToLambda(anonymClass, false));
+    myCbCollapseToLambda.setSelected(PropertiesComponent.getInstance(myProject).getBoolean(INTRODUCE_PARAMETER_LAMBDA));
+    gbConstraints.gridy++;
+    panel.add(myCbCollapseToLambda, gbConstraints);
+    
     return panel;
   }
 
@@ -245,6 +258,9 @@ public class IntroduceParameterDialog extends RefactoringDialog {
     if (myCbDeclareFinal != null && myCbDeclareFinal.isEnabled()) {
       settings.INTRODUCE_PARAMETER_CREATE_FINALS = Boolean.valueOf(myCbDeclareFinal.isSelected());
     }
+    if (myCbCollapseToLambda.isVisible()) {
+      PropertiesComponent.getInstance(myProject).setValue(INTRODUCE_PARAMETER_LAMBDA, myCbCollapseToLambda.isSelected());
+    }
 
     myPanel.saveSettings(settings);
 
@@ -255,16 +271,33 @@ public class IntroduceParameterDialog extends RefactoringDialog {
     PsiExpression parameterInitializer = myExpression;
     if (myLocalVar != null) {
       if (myPanel.isUseInitializer()) {
-      parameterInitializer = myLocalVar.getInitializer();      }
+        parameterInitializer = myLocalVar.getInitializer();    
+      }
       isDeleteLocalVariable = myPanel.isDeleteLocalVariable();
     }
 
+    final PsiType selectedType = getSelectedType();
     final IntroduceParameterProcessor processor = new IntroduceParameterProcessor(
       myProject, myMethodToReplaceIn, myMethodToSearchFor,
       parameterInitializer, myExpression,
       myLocalVar, isDeleteLocalVariable,
       getParameterName(), myPanel.isReplaceAllOccurences(),
-      myPanel.getReplaceFieldsWithGetters(), isDeclareFinal(), myPanel.isGenerateDelegate(), getSelectedType(), myPanel.getParametersToRemove());
+      myPanel.getReplaceFieldsWithGetters(), isDeclareFinal(), myPanel.isGenerateDelegate(), selectedType, myPanel.getParametersToRemove());
+    if (myCbCollapseToLambda.isVisible() && myCbCollapseToLambda.isSelected() && parameterInitializer != null) {
+      PsiExpression lambda = AnonymousCanBeLambdaInspection.replaceAnonymousWithLambda(parameterInitializer, selectedType);
+      if (lambda != null) {
+        final PsiParameter[] lambdaParameters = ((PsiLambdaExpression)lambda).getParameterList().getParameters();
+        final PsiCallExpression toConvertCall = LambdaCanBeMethodReferenceInspection.canBeMethodReferenceProblem(((PsiLambdaExpression)lambda).getBody(), lambdaParameters, selectedType);
+        if (toConvertCall != null) {
+          final String methodReferenceText = LambdaCanBeMethodReferenceInspection.createMethodReferenceText(toConvertCall, selectedType, lambdaParameters);
+          if (methodReferenceText != null) {
+            lambda = JavaPsiFacade.getElementFactory(getProject()).createExpressionFromText(methodReferenceText, lambda);
+          }
+        }
+
+        processor.setParameterInitializer(lambda);
+      }
+    }
     invokeRefactoring(processor);
   }
 

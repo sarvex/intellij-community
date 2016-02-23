@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@ import com.intellij.openapi.vcs.impl.ProjectLevelVcsManagerImpl;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.testFramework.PlatformTestCase;
 import com.intellij.testFramework.UsefulTestCase;
 import com.intellij.testFramework.fixtures.IdeaProjectTestFixture;
 import com.intellij.testFramework.fixtures.IdeaTestFixtureFactory;
@@ -67,11 +66,6 @@ public abstract class VcsRootPlatformTest extends UsefulTestCase {
   private RootModelImpl myRootModel;
   protected static final Collection<File> myFilesToDelete = new HashSet<File>();
   protected IdeaProjectTestFixture myProjectFixture;
-
-  @SuppressWarnings("JUnitTestCaseWithNonTrivialConstructors")
-  protected VcsRootPlatformTest() {
-    PlatformTestCase.initPlatformLangPrefix();
-  }
 
   @Override
   protected void setUp() throws Exception {
@@ -119,13 +113,17 @@ public abstract class VcsRootPlatformTest extends UsefulTestCase {
 
   @Override
   protected void tearDown() throws Exception {
-    getExtensionPoint().unregisterExtension(myExtension);
-    myVcsManager.unregisterVcs(myVcs);
-    for (File file : myFilesToDelete) {
-      delete(file);
+    try {
+      getExtensionPoint().unregisterExtension(myExtension);
+      myVcsManager.unregisterVcs(myVcs);
+      for (File file : myFilesToDelete) {
+        delete(file);
+      }
+      myProjectFixture.tearDown();
     }
-    myProjectFixture.tearDown();
-    super.tearDown();
+    finally {
+      super.tearDown();
+    }
   }
 
   private static void delete(File file) {
@@ -178,7 +176,7 @@ public abstract class VcsRootPlatformTest extends UsefulTestCase {
     myFilesToDelete.add(moduleFile);
     return new WriteAction<Module>() {
       @Override
-      protected void run(Result<Module> result) throws Throwable {
+      protected void run(@NotNull Result<Module> result) throws Throwable {
         final VirtualFile virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(moduleFile);
         assert virtualFile != null;
         Module module = ModuleManager.getInstance(project).newModule(virtualFile.getPath(), moduleType.getId());

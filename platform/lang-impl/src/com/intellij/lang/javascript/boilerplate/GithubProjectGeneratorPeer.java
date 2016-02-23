@@ -15,8 +15,8 @@
  */
 package com.intellij.lang.javascript.boilerplate;
 
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
+import com.intellij.BundleBase;
 import com.intellij.ide.util.projectWizard.SettingsStep;
 import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.text.StringUtil;
@@ -26,6 +26,7 @@ import com.intellij.ui.ListCellRendererWrapper;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.ReloadableComboBoxPanel;
+import com.intellij.util.ui.ReloadablePanel;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -116,7 +117,7 @@ public class GithubProjectGeneratorPeer implements WebProjectGenerator.Generator
   private final GithubTagListProvider myTagListProvider;
   private JComponent myComponent;
   private JPanel myVersionPanel;
-  private ReloadableComboBoxPanel<GithubTagInfo> myReloadableComboBoxPanel;
+  private ReloadablePanel<GithubTagInfo> myReloadableComboBoxPanel;
 
   public GithubProjectGeneratorPeer(@NotNull AbstractGithubTagDownloadedProjectGenerator generator) {
     String ghUserName = generator.getGithubUserName();
@@ -143,7 +144,7 @@ public class GithubProjectGeneratorPeer implements WebProjectGenerator.Generator
     myReloadableComboBoxPanel.reloadValuesInBackground();
   }
 
-  void onTagsUpdated(@NotNull ImmutableSet<GithubTagInfo> tags) {
+  void onTagsUpdated(@NotNull Set<GithubTagInfo> tags) {
     myReloadableComboBoxPanel.onUpdateValues(tags);
   }
 
@@ -180,7 +181,7 @@ public class GithubProjectGeneratorPeer implements WebProjectGenerator.Generator
 
   @Override
   public void buildUI(@NotNull SettingsStep settingsStep) {
-    settingsStep.addSettingsField("\u001BVersion:", myVersionPanel);
+    settingsStep.addSettingsField(BundleBase.replaceMnemonicAmpersand("&Version:"), myVersionPanel);
     settingsStep.addSettingsComponent(myReloadableComboBoxPanel.getErrorComponent());
   }
 

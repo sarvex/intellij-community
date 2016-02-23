@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,16 +23,41 @@ import com.intellij.debugger.jdi.ThreadReferenceProxyImpl;
 import com.intellij.openapi.diagnostic.Logger;
 import com.sun.jdi.ObjectCollectedException;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class DebuggerContextCommandImpl extends SuspendContextCommandImpl {
   private static final Logger LOG = Logger.getInstance(DebuggerContextCommandImpl.class);
 
   private final DebuggerContextImpl myDebuggerContext;
+  private final ThreadReferenceProxyImpl myCustomThread; // thread to perform command in
+  private SuspendContextImpl myCustomSuspendContext;
 
   protected DebuggerContextCommandImpl(@NotNull DebuggerContextImpl debuggerContext) {
-    super(debuggerContext.getSuspendContext());
+    this(debuggerContext, null);
+  }
 
+  protected DebuggerContextCommandImpl(@NotNull DebuggerContextImpl debuggerContext, @Nullable ThreadReferenceProxyImpl customThread) {
+    super(debuggerContext.getSuspendContext());
     myDebuggerContext = debuggerContext;
+    myCustomThread = customThread;
+  }
+
+  @Nullable
+  @Override
+  public SuspendContextImpl getSuspendContext() {
+    if (myCustomSuspendContext == null) {
+      myCustomSuspendContext = super.getSuspendContext();
+      ThreadReferenceProxyImpl thread = getThread();
+      if (myCustomThread != null &&
+          (myCustomSuspendContext == null || myCustomSuspendContext.isResumed() || !myCustomSuspendContext.suspends(thread))) {
+        myCustomSuspendContext = SuspendManagerUtil.findContextByThread(myDebuggerContext.getDebugProcess().getSuspendManager(), thread);
+      }
+    }
+    return myCustomSuspendContext;
+  }
+
+  private ThreadReferenceProxyImpl getThread() {
+    return myCustomThread != null ? myCustomThread : myDebuggerContext.getThreadProxy();
   }
 
   public final DebuggerContextImpl getDebuggerContext() {
@@ -41,11 +66,10 @@ public abstract class DebuggerContextCommandImpl extends SuspendContextCommandIm
 
   @Override
   public final void contextAction() throws Exception {
-    final SuspendManager suspendManager = myDebuggerContext.getDebugProcess().getSuspendManager();
-    final ThreadReferenceProxyImpl debuggerContextThread = myDebuggerContext.getThreadProxy();
-    final boolean isSuspendedByContext;
+    SuspendManager suspendManager = myDebuggerContext.getDebugProcess().getSuspendManager();
+    boolean isSuspendedByContext;
     try {
-      isSuspendedByContext = suspendManager.isSuspended(debuggerContextThread);
+      isSuspendedByContext = suspendManager.isSuspended(getThread());
     }
     catch (ObjectCollectedException ignored) {
       notifyCancelled();
@@ -54,13 +78,14 @@ public abstract class DebuggerContextCommandImpl extends SuspendContextCommandIm
     if (isSuspendedByContext) {
       if (LOG.isDebugEnabled()) {
         LOG.debug("Context thread " + getSuspendContext().getThread());
-        LOG.debug("Debug thread" + debuggerContextThread);
+        LOG.debug("Debug thread" + getThread());
       }
       threadAction();
     }
     else {
-      // there are no suspend context currently registered
-      SuspendContextImpl suspendContextForThread = SuspendManagerUtil.findContextByThread(suspendManager, debuggerContextThread);
+      // no suspend context currently available
+      SuspendContextImpl suspendContextForThread = myCustomThread != null ? getSuspendContext() :
+                                                   SuspendManagerUtil.findContextByThread(suspendManager, getThread());
       if (suspendContextForThread != null) {
         suspendContextForThread.postponeCommand(this);
       }

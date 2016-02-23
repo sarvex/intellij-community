@@ -30,7 +30,7 @@ import static org.jetbrains.idea.maven.utils.ManifestBuilder.getClasspathPrefix;
  * @since 5/26/2014
  */
 public abstract class ManifestImporter {
-  public static ExtensionPointName<ManifestImporter> EXTENSION_POINT_NAME =
+  public static final ExtensionPointName<ManifestImporter> EXTENSION_POINT_NAME =
     ExtensionPointName.create("org.jetbrains.idea.maven.manifestImporter");
 
   @NotNull
@@ -50,7 +50,7 @@ public abstract class ManifestImporter {
     String classpathPrefix = getClasspathPrefix(manifestConfiguration);
     for (MavenArtifact mavenArtifact : mavenProject.getDependencies()) {
       final DependencyScope scope = MavenModuleImporter.selectScope(mavenArtifact.getScope());
-      if (scope.isForProductionRuntime()) {
+      if (scope.isForProductionCompile() || scope.isForProductionRuntime()) {
         if (classpath.length() > 0) {
           classpath.append(" ");
         }

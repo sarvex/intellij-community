@@ -6,7 +6,7 @@ import string
 import time
 
 # !!! Don't forget to update VERSION and required_gen_version if necessary !!!
-VERSION = "1.136"
+VERSION = "1.138"
 
 OUT_ENCODING = 'utf-8'
 
@@ -418,15 +418,15 @@ else:
         (None, "open")] = "(file, mode='r', buffering=None, encoding=None, errors=None, newline=None, closefd=True)"
     PREDEFINED_BUILTIN_SIGS[
         ("str", "__init__")] = "(self, value='', encoding=None, errors='strict')" # overrides a fake
-    PREDEFINED_BUILTIN_SIGS[("str", "format")] = "(*args, **kwargs)"
+    PREDEFINED_BUILTIN_SIGS[("str", "format")] = "(self, *args, **kwargs)"
     PREDEFINED_BUILTIN_SIGS[
         ("bytes", "__init__")] = "(self, value=b'', encoding=None, errors='strict')" # overrides a fake
-    PREDEFINED_BUILTIN_SIGS[("bytes", "format")] = "(*args, **kwargs)"
-    PREDEFINED_BUILTIN_SIGS[(None, "print")] = "(*args, sep=' ', end='\\n', file=None)" # proper signature
+    PREDEFINED_BUILTIN_SIGS[("bytes", "format")] = "(self, *args, **kwargs)"
+    PREDEFINED_BUILTIN_SIGS[(None, "print")] = "(self, *args, sep=' ', end='\\n', file=None)" # proper signature
 
 if (2, 6) <= version < (3, 0):
-    PREDEFINED_BUILTIN_SIGS[("unicode", "format")] = "(*args, **kwargs)"
-    PREDEFINED_BUILTIN_SIGS[("str", "format")] = "(*args, **kwargs)"
+    PREDEFINED_BUILTIN_SIGS[("unicode", "format")] = "(self, *args, **kwargs)"
+    PREDEFINED_BUILTIN_SIGS[("str", "format")] = "(self, *args, **kwargs)"
 
 if version == (2, 5):
     PREDEFINED_BUILTIN_SIGS[("unicode", "splitlines")] = "(keepends=None)" # a typo in docstring there
@@ -783,7 +783,7 @@ MAC_SKIP_MODULES = ["test", "ctypes/test", "distutils/tests", "email/test",
 
 POSIX_SKIP_MODULES = ["vtemodule", "PAMmodule", "_snackmodule", "/quodlibet/_mmkeys"]
 
-BIN_MODULE_FNAME_PAT = re.compile('([a-zA-Z_]+[0-9a-zA-Z]*)\\.(?:pyc|pyo|(?:[a-zA-Z_]+-\\d\\d[a-zA-Z]*\\.|.+-linux-gnu\\.)?(?:so|pyd))')
+BIN_MODULE_FNAME_PAT = re.compile(r'([a-zA-Z_][0-9a-zA-Z_]*)\.(?:pyc|pyo|(?:(?:[a-zA-Z_0-9\-]+\.)?(?:so|pyd)))$')
 # possible binary module filename: letter,    alphanum                    architecture per PEP-3149
 TYPELIB_MODULE_FNAME_PAT = re.compile("([a-zA-Z_]+[0-9a-zA-Z]*)[0-9a-zA-Z-.]*\\.typelib")
 

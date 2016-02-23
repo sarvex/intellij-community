@@ -16,9 +16,9 @@
 package com.intellij.psi.impl.smartPointers;
 
 import com.intellij.lang.LanguageUtil;
-import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.editor.RangeMarker;
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.ProperTextRange;
+import com.intellij.openapi.util.Segment;
+import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.PsiAnchor;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
@@ -35,8 +35,9 @@ class AnchorElementInfo extends SelfElementInfo {
   private volatile long myStubElementTypeAndId; // stubId in the lower 32 bits; stubElementTypeIndex in the high 32 bits packed together for atomicity
 
   AnchorElementInfo(@NotNull PsiElement anchor, @NotNull PsiFile containingFile) {
-    super(containingFile.getProject(), ProperTextRange.create(anchor.getTextRange()), anchor.getClass(), containingFile, LanguageUtil.getRootLanguage(
-      anchor));
+    super(containingFile.getProject(), ProperTextRange.create(anchor.getTextRange()),
+          AnchorTypeInfo.obtainInfo(anchor, LanguageUtil.getRootLanguage(containingFile)),
+          containingFile, false);
     assert !(anchor instanceof PsiFile) : "FileElementInfo must be used for file: "+anchor;
     myStubElementTypeAndId = pack(-1, null);
   }
@@ -45,13 +46,17 @@ class AnchorElementInfo extends SelfElementInfo {
                     @NotNull PsiFileWithStubSupport containingFile,
                     int stubId,
                     @NotNull IStubElementType stubElementType) {
-    super(containingFile.getProject(), new ProperTextRange(0, 0), anchor.getClass(), containingFile, containingFile.getLanguage());
+    super(containingFile.getProject(), null,
+          AnchorTypeInfo.obtainInfo(anchor.getClass(), stubElementType, LanguageUtil.getRootLanguage(containingFile)),
+          containingFile, false);
     myStubElementTypeAndId = pack(stubId, stubElementType);
     assert !(anchor instanceof PsiFile) : "FileElementInfo must be used for file: "+anchor;
   }
 
   private static long pack(int stubId, IStubElementType stubElementType) {
-    return ((long)stubId) | (stubElementType == null ? 0 : (((long)stubElementType.getIndex()) << 32));
+    short index = stubElementType == null ? 0 : stubElementType.getIndex();
+    assert index >= 0 : "Unregistered token types not allowed here: " + stubElementType;
+    return ((long)stubId) | ((long)index << 32);
   }
 
   private int getStubId() {
@@ -66,57 +71,72 @@ class AnchorElementInfo extends SelfElementInfo {
     if (stubId != -1) {
       PsiFile file = restoreFile();
       if (!(file instanceof PsiFileWithStubSupport)) return null;
-      IStubElementType stubElementType = (IStubElementType)IElementType.find((short)(typeAndId >> 32));
+      short index = (short)(typeAndId >> 32);
+      IStubElementType stubElementType = (IStubElementType)IElementType.find(index);
       return PsiAnchor.restoreFromStubIndex((PsiFileWithStubSupport)file, stubId, stubElementType, false);
     }
-    if (!mySyncMarkerIsValid) return null;
+
+    Segment psiRange = getPsiRange();
+    if (psiRange == null) return null;
+
     PsiFile file = restoreFile();
     if (file == null) return null;
-    PsiElement anchor = file.findElementAt(getSyncStartOffset());
+    PsiElement anchor = findElementInside(file, psiRange.getStartOffset(), psiRange.getEndOffset(), myType);
     if (anchor == null) return null;
 
     TextRange range = anchor.getTextRange();
-    if (range.getStartOffset() != getSyncStartOffset() || range.getEndOffset() != getSyncEndOffset()) return null;
+    if (range == null || range.getStartOffset() != psiRange.getStartOffset() || range.getEndOffset() != psiRange.getEndOffset()) return null;
 
+    return restoreFromAnchor(anchor);
+  }
+
+  @Nullable
+  static PsiElement restoreFromAnchor(PsiElement anchor) {
     for (SmartPointerAnchorProvider provider : SmartPointerAnchorProvider.EP_NAME.getExtensions()) {
       final PsiElement element = provider.restoreElement(anchor);
       if (element != null) return element;
     }
-    return null;
+    return anchor;
   }
 
   @Override
   public boolean pointsToTheSameElementAs(@NotNull final SmartPointerElementInfo other) {
     if (other instanceof AnchorElementInfo) {
-      AnchorElementInfo otherAnchor = (AnchorElementInfo)other;
-      if ((getStubId() == -1) != (otherAnchor.getStubId() == -1)) {
-        return ApplicationManager.getApplication().runReadAction(new Computable<Boolean>() {
-          @Override
-          public Boolean compute() {
-            return Comparing.equal(restoreElement(), other.restoreElement());
-          }
-        });
+      if (!getVirtualFile().equals(other.getVirtualFile())) return false;
+
+      long packed1 = myStubElementTypeAndId;
+      long packed2 = ((AnchorElementInfo)other).myStubElementTypeAndId;
+
+      if (packed1 != -1 && packed2 != -1) {
+        return packed1 == packed2;
       }
-      if (myStubElementTypeAndId != otherAnchor.myStubElementTypeAndId) return false;
+      if (packed1 != -1 || packed2 != -1) {
+        return areRestoredElementsEqual(other);
+      }
     }
     return super.pointsToTheSameElementAs(other);
   }
 
   @Override
-  public void fastenBelt(int offset, RangeMarker[] cachedRangeMarker) {
+  public void fastenBelt() {
     if (getStubId() != -1) {
       switchToTree();
     }
-    super.fastenBelt(offset, cachedRangeMarker);
+    super.fastenBelt();
   }
 
   private void switchToTree() {
     PsiElement element = restoreElement();
     if (element != null) {
-      // switch to tree
-      myStubElementTypeAndId = pack(-1, null);
       PsiElement anchor = AnchorElementInfoFactory.getAnchor(element);
-      setRange((anchor == null ? element : anchor).getTextRange());
+      if (anchor == null) anchor = element;
+      myType = AnchorTypeInfo.obtainInfo(anchor, myType.getFileLanguage());
+      setRange(anchor.getTextRange());
+      MarkerCache cache = myManager.getMarkerCache(getVirtualFile());
+      if (cache != null) {
+        cache.rangeChanged();
+      }
+      myStubElementTypeAndId = pack(-1, null);
     }
   }
 
@@ -128,4 +148,17 @@ class AnchorElementInfo extends SelfElementInfo {
     return super.getRange();
   }
 
+  @Nullable
+  @Override
+  public TextRange getPsiRange() {
+    if (getStubId() != -1) {
+      switchToTree();
+    }
+    return super.getPsiRange();
+  }
+
+  @Override
+  public String toString() {
+    return super.toString() + ",stubId=" + getStubId();
+  }
 }

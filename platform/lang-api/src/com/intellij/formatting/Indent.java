@@ -83,6 +83,8 @@ import org.jetbrains.annotations.NotNull;
 public abstract class Indent {
   private static IndentFactory myFactory;
 
+  public abstract Type getType();
+
   static void setFactory(IndentFactory factory) {
     myFactory = factory;
   }
@@ -265,6 +267,10 @@ public abstract class Indent {
    */
   public static Indent getIndent(@NotNull Type type, int spaces, boolean relativeToDirectParent, boolean enforceIndentToChildren) {
     return myFactory.getIndent(type, spaces, relativeToDirectParent, enforceIndentToChildren);
+  }
+
+  public static Indent getSmartIndent(Type type) {
+    return myFactory.getSmartIndent(type);
   }
 
   public static class Type {

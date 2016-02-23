@@ -17,13 +17,13 @@ package com.intellij.ide.ui.laf.darcula.ui;
 
 import com.intellij.ide.ui.laf.darcula.DarculaUIUtil;
 import com.intellij.openapi.ui.GraphicsConfig;
+import com.intellij.ui.ColorPanel;
 import com.intellij.ui.Gray;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 
-import javax.swing.*;
+import javax.swing.JTextField;
 import javax.swing.border.Border;
-import javax.swing.plaf.InsetsUIResource;
 import javax.swing.plaf.UIResource;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
@@ -34,15 +34,17 @@ import java.awt.*;
 public class DarculaTextBorder implements Border, UIResource {
   @Override
   public Insets getBorderInsets(Component c) {
-    int vOffset = c instanceof JPasswordField ? 3 : 4;
-    if (DarculaTextFieldUI.isSearchField(c)) {
-      vOffset += 2;
-    }
-    if (DarculaTextFieldUI.isSearchFieldWithHistoryPopup(c)) {
+    int vOffset = TextFieldWithPopupHandlerUI.isSearchField(c) ? 6 : 4;
+    if (TextFieldWithPopupHandlerUI.isSearchFieldWithHistoryPopup(c)) {
       return JBUI.insets(vOffset, 7 + 16 + 3, vOffset, 7 + 16).asUIResource();
-    } else if (DarculaTextFieldUI.isSearchField(c)) {
+    }
+    else if (TextFieldWithPopupHandlerUI.isSearchField(c)) {
       return JBUI.insets(vOffset, 4 + 16 + 3, vOffset, 7 + 16).asUIResource();
-    } else {
+    }
+    else if (c instanceof JTextField && c.getParent() instanceof ColorPanel) {
+      return JBUI.insets(3, 3, 2, 2).asUIResource();
+    }
+    else {
       return JBUI.insets(vOffset, 7, vOffset, 7).asUIResource();
     }
   }
@@ -55,14 +57,15 @@ public class DarculaTextBorder implements Border, UIResource {
   @Override
   public void paintBorder(Component c, Graphics g2, int x, int y, int width, int height) {
     if (DarculaTextFieldUI.isSearchField(c)) return;
-    Graphics2D g = ((Graphics2D)g2);
+    Graphics2D g = (Graphics2D)g2;
     final GraphicsConfig config = new GraphicsConfig(g);
     g.translate(x, y);
 
     if (c.hasFocus()) {
-      DarculaUIUtil.paintFocusRing(g, 2, 2, width-4, height-4);
-    } else {
-      boolean editable = !(c instanceof JTextComponent) || (((JTextComponent)c).isEditable());
+      DarculaUIUtil.paintFocusRing(g, 2, 2, width - 4, height - 4);
+    }
+    else {
+      boolean editable = !(c instanceof JTextComponent) || ((JTextComponent)c).isEditable();
       g.setColor(getBorderColor(c.isEnabled() && editable));
       g.drawRect(1, 1, width - 2, height - 2);
     }

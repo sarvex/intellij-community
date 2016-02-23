@@ -51,6 +51,7 @@ class ImportCandidateHolder implements Comparable<ImportCandidateHolder> {
   private final PyImportElement myImportElement;
   private final PsiFileSystemItem myFile;
   private final QualifiedName myPath;
+  @Nullable private final String myAsName;
 
   /**
    * Creates new instance.
@@ -63,17 +64,21 @@ class ImportCandidateHolder implements Comparable<ImportCandidateHolder> {
    *                      For modules and packages it should be <em>qualified name of their parental package</em>
    *                      (empty for modules and packages located at source roots).
    *
-   * @see com.jetbrains.python.codeInsight.imports.PythonReferenceImporter#proposeImportFix
    */
   public ImportCandidateHolder(@NotNull PsiElement importable, @NotNull PsiFileSystemItem file,
-                               @Nullable PyImportElement importElement, @Nullable QualifiedName path) {
+                               @Nullable PyImportElement importElement, @Nullable QualifiedName path, @Nullable String asName) {
     myFile = file;
     myImportable = importable;
     myImportElement = importElement;
     myPath = path;
+    myAsName = asName;
     assert importElement != null || path != null; // one of these must be present
   }
 
+  public ImportCandidateHolder(@NotNull PsiElement importable, @NotNull PsiFileSystemItem file,
+                               @Nullable PyImportElement importElement, @Nullable QualifiedName path) {
+    this(importable, file, importElement, path, null);
+  }
   @NotNull
   public PsiElement getImportable() {
     return myImportable;
@@ -135,7 +140,7 @@ class ImportCandidateHolder implements Comparable<ImportCandidateHolder> {
       sb.append(((PyFunction)myImportable).getParameterList().getPresentableText(false));
     }
     else if (myImportable instanceof PyClass) {
-      final List<String> supers = ContainerUtil.mapNotNull(((PyClass)myImportable).getSuperClasses(), new Function<PyClass, String>() {
+      final List<String> supers = ContainerUtil.mapNotNull(((PyClass)myImportable).getSuperClasses(null), new Function<PyClass, String>() {
           @Override
           public String fun(PyClass cls) {
             return PyUtil.isObjectClass(cls) ? null : cls.getName();
@@ -186,5 +191,10 @@ class ImportCandidateHolder implements Comparable<ImportCandidateHolder> {
     // tests we don't want
     if (vFile.getParent().getName().equals("test")) return 0;
     return 1;
+  }
+
+  @Nullable
+  public String getAsName() {
+    return myAsName;
   }
 }

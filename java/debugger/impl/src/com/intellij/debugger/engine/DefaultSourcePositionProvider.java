@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@ import com.intellij.debugger.impl.DebuggerContextUtil;
 import com.intellij.debugger.impl.DebuggerSession;
 import com.intellij.debugger.impl.PositionUtil;
 import com.intellij.debugger.jdi.StackFrameProxyImpl;
+import com.intellij.debugger.ui.impl.watch.ArgumentValueDescriptorImpl;
 import com.intellij.debugger.ui.impl.watch.FieldDescriptorImpl;
+import com.intellij.debugger.ui.impl.watch.MethodReturnValueDescriptorImpl;
 import com.intellij.debugger.ui.tree.FieldDescriptor;
 import com.intellij.debugger.ui.tree.LocalVariableDescriptor;
 import com.intellij.debugger.ui.tree.NodeDescriptor;
@@ -33,6 +35,7 @@ import com.sun.jdi.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Collection;
 import java.util.List;
 
 public class DefaultSourcePositionProvider extends SourcePositionProvider {
@@ -51,16 +54,28 @@ public class DefaultSourcePositionProvider extends SourcePositionProvider {
       return getSourcePositionForField((FieldDescriptor)descriptor, project, context, nearest);
     }
     else if (descriptor instanceof LocalVariableDescriptor) {
-      return getSourcePositionForLocalVariable((LocalVariableDescriptor)descriptor, project, context, nearest);
+      return getSourcePositionForLocalVariable(descriptor.getName(), project, context, nearest);
+    }
+    else if (descriptor instanceof ArgumentValueDescriptorImpl) {
+      Collection<String> names = ((ArgumentValueDescriptorImpl)descriptor).getVariable().getMatchedNames();
+      if (!names.isEmpty()) {
+        return getSourcePositionForLocalVariable(names.iterator().next(), project, context, nearest);
+      }
+    }
+    else if (descriptor instanceof MethodReturnValueDescriptorImpl) {
+      DebugProcessImpl debugProcess = context.getDebugProcess();
+      if (debugProcess != null) {
+        return debugProcess.getPositionManager().getSourcePosition(((MethodReturnValueDescriptorImpl)descriptor).getMethod().location());
+      }
     }
     return null;
   }
 
   @Nullable
-  protected SourcePosition getSourcePositionForField(@NotNull FieldDescriptor descriptor,
-                                                     @NotNull Project project,
-                                                     @NotNull DebuggerContextImpl context,
-                                                     boolean nearest) {
+  private SourcePosition getSourcePositionForField(@NotNull FieldDescriptor descriptor,
+                                                   @NotNull Project project,
+                                                   @NotNull DebuggerContextImpl context,
+                                                   boolean nearest) {
     final ReferenceType type = descriptor.getField().declaringType();
     final JavaPsiFacade facade = JavaPsiFacade.getInstance(project);
     final String fieldName = descriptor.getField().name();
@@ -87,7 +102,7 @@ public class DefaultSourcePositionProvider extends SourcePositionProvider {
       if (nearest) {
         return DebuggerContextUtil.findNearest(context, psiVariable, aClass.getContainingFile());
       }
-      return SourcePosition.createFromOffset(psiVariable.getContainingFile(), psiVariable.getTextOffset());
+      return SourcePosition.createFromElement(psiVariable);
     }
     else {
       final DebuggerSession session = context.getDebuggerSession();
@@ -115,38 +130,32 @@ public class DefaultSourcePositionProvider extends SourcePositionProvider {
 
       if (aClass != null) {
         PsiField field = aClass.findFieldByName(fieldName, false);
-        if (field != null) {
-          PsiElement element = field.getNavigationElement();
-          if (nearest) {
-            return DebuggerContextUtil.findNearest(context, element, aClass.getContainingFile());
-          }
-          return SourcePosition.createFromOffset(element.getContainingFile(), element.getTextOffset());
+        if (field == null) return null;
+        if (nearest) {
+          return DebuggerContextUtil.findNearest(context, field.getNavigationElement(), aClass.getContainingFile());
         }
+        return SourcePosition.createFromElement(field);
       }
       return null;
     }
   }
 
   @Nullable
-  protected SourcePosition getSourcePositionForLocalVariable(@NotNull LocalVariableDescriptor descriptor,
-                                                             @NotNull Project project,
-                                                             @NotNull DebuggerContextImpl context,
-                                                             boolean nearest) {
+  private SourcePosition getSourcePositionForLocalVariable(String name,
+                                                           @NotNull Project project,
+                                                           @NotNull DebuggerContextImpl context,
+                                                           boolean nearest) {
     PsiElement place = PositionUtil.getContextElement(context);
-    if (place == null) {
-      return null;
-    }
+    if (place == null) return null;
 
-    PsiVariable psiVariable = JavaPsiFacade.getInstance(project).getResolveHelper().resolveReferencedVariable(descriptor.getName(), place);
-    if (psiVariable == null) {
-      return null;
-    }
+    PsiVariable psiVariable = JavaPsiFacade.getInstance(project).getResolveHelper().resolveReferencedVariable(name, place);
+    if (psiVariable == null) return null;
 
     PsiFile containingFile = psiVariable.getContainingFile();
     if(containingFile == null) return null;
     if (nearest) {
       return DebuggerContextUtil.findNearest(context, psiVariable, containingFile);
     }
-    return SourcePosition.createFromOffset(containingFile, psiVariable.getTextOffset());
+    return SourcePosition.createFromElement(psiVariable);
   }
 }

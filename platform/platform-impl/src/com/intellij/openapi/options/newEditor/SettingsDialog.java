@@ -21,6 +21,8 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.help.HelpManager;
 import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.options.ConfigurableGroup;
+import com.intellij.openapi.project.DumbModePermission;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import org.jetbrains.annotations.NonNls;
@@ -37,6 +39,8 @@ import java.util.ArrayList;
  * @author Sergey.Malenkov
  */
 public class SettingsDialog extends DialogWrapper implements DataProvider {
+  public static final String DIMENSION_KEY = "SettingsEditor";
+
   private final String myDimensionServiceKey;
   private final AbstractEditor myEditor;
   private boolean myApplyButtonNeeded;
@@ -62,17 +66,28 @@ public class SettingsDialog extends DialogWrapper implements DataProvider {
 
   public SettingsDialog(@NotNull Project project, @NotNull ConfigurableGroup[] groups, Configurable configurable, String filter) {
     super(project, true);
-    myDimensionServiceKey = "SettingsEditor";
+    myDimensionServiceKey = DIMENSION_KEY;
     myEditor = new SettingsEditor(myDisposable, project, groups, configurable, filter);
     myApplyButtonNeeded = true;
     init(null, project);
   }
 
+  @Override
+  public void show() {
+    DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, new Runnable() {
+      @Override
+      public void run() {
+        SettingsDialog.super.show();
+      }
+    });
+  }
+
+
   private void init(Configurable configurable, @Nullable Project project) {
     String name = configurable == null ? null : configurable.getDisplayName();
     String title = CommonBundle.settingsTitle();
     if (project != null && project.isDefault()) title = "Default " + title;
-    setTitle(name == null ? title : name.replaceAll("\n", " "));
+    setTitle(name == null ? title : name.replace('\n', ' '));
     init();
   }
 
@@ -142,7 +157,7 @@ public class SettingsDialog extends DialogWrapper implements DataProvider {
   public void doOKAction() {
     if (myEditor.apply()) {
       ApplicationManager.getApplication().saveAll();
-      super.doOKAction();
+      SettingsDialog.super.doOKAction();
     }
   }
 

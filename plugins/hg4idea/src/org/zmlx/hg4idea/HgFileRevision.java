@@ -19,12 +19,9 @@ import com.intellij.openapi.vcs.VcsException;
 import com.intellij.openapi.vcs.history.VcsFileRevision;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.zmlx.hg4idea.command.HgCatCommand;
 import org.zmlx.hg4idea.util.HgUtil;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.nio.charset.Charset;
 import java.util.Date;
 import java.util.Map;
 import java.util.Set;
@@ -41,7 +38,7 @@ public class HgFileRevision implements VcsFileRevision {
   private final Set<String> myFilesModified;
   private final Set<String> myFilesAdded;
   private final Set<String> myFilesDeleted;
-  private Map<String,String> myFilesCopied;
+  private final Map<String, String> myFilesCopied;
 
   public HgFileRevision(Project project, @NotNull HgFile hgFile, @NotNull HgRevisionNumber vcsRevisionNumber,
                         String branchName, Date revisionDate, String author, String commitMessage,
@@ -59,6 +56,7 @@ public class HgFileRevision implements VcsFileRevision {
     myFilesCopied = filesCopied;
   }
 
+  @NotNull
   public HgRevisionNumber getRevisionNumber() {
     return myRevisionNumber;
   }
@@ -77,44 +75,40 @@ public class HgFileRevision implements VcsFileRevision {
     return myRevisionDate;
   }
 
+  @Nullable
   public String getAuthor() {
     return myAuthor;
   }
 
+  @Nullable
   public String getCommitMessage() {
     return myCommitMessage;
   }
 
+  @NotNull
   public Set<String> getModifiedFiles() {
     return myFilesModified;
   }
 
+  @NotNull
   public Set<String> getAddedFiles() {
     return myFilesAdded;
   }
 
+  @NotNull
   public Set<String> getDeletedFiles() {
     return myFilesDeleted;
   }
 
+  @NotNull
   public Map<String, String> getCopiedFiles() {
     return myFilesCopied;
   }
 
+  @NotNull
   public byte[] loadContent() throws IOException, VcsException {
-    try {
-      Charset charset = myFile.toFilePath().getCharset();
-
-      HgFile fileToCat = HgUtil.getFileNameInTargetRevision(myProject, myRevisionNumber, myFile);
-      String result = new HgCatCommand(myProject).execute(fileToCat, myRevisionNumber, charset);
-      if (result == null) {
-        return new byte[0];
-      } else {
-        return result.getBytes(charset.name());
-      }
-    } catch (UnsupportedEncodingException e) {
-      throw new VcsException(e);
-    }
+    final HgFile fileToCat = HgUtil.getFileNameInTargetRevision(myProject, myRevisionNumber, myFile);
+    return HgUtil.loadContent(myProject, myRevisionNumber, fileToCat);
   }
 
   public byte[] getContent() throws IOException, VcsException {

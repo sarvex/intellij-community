@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ public class SMTRunnerConsoleTest extends BaseSMTRunnerTestCase {
     private final TestsOutputConsolePrinter myTestsOutputConsolePrinter;
 
     private MyConsoleView(final TestConsoleProperties consoleProperties, final ExecutionEnvironment environment) {
-      super(consoleProperties, environment);
+      super(consoleProperties);
 
       myTestsOutputConsolePrinter = new TestsOutputConsolePrinter(MyConsoleView.this, consoleProperties, null) {
         @Override
@@ -71,7 +71,7 @@ public class SMTRunnerConsoleTest extends BaseSMTRunnerTestCase {
     myConsole.initUI();
     myResultsViewer = myConsole.getResultsViewer();
     myRootSuite = myResultsViewer.getTestsRootNode();
-    myEventsProcessor = new GeneralToSMTRunnerEventsConvertor(myResultsViewer.getTestsRootNode(), "SMTestFramework");
+    myEventsProcessor = new GeneralToSMTRunnerEventsConvertor(consoleProperties.getProject(), myResultsViewer.getTestsRootNode(), "SMTestFramework");
 
     myEventsProcessor.onStartTesting();
   }
@@ -341,7 +341,7 @@ public class SMTRunnerConsoleTest extends BaseSMTRunnerTestCase {
                                                "method1:1\n" +
                                                "method2:2\n" +
                                                "stderr1 ", "");
-    myEventsProcessor.onTestFinished(new TestFinishedEvent("my_test", 1));
+    myEventsProcessor.onTestFinished(new TestFinishedEvent("my_test", 1l));
     myTest1.setFinished();
 
     //other output order

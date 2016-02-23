@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,11 +57,11 @@ public class SMTestRunnerResultsFormTest extends BaseSMTRunnerTestCase {
 
     final ExecutionEnvironment environment = new ExecutionEnvironment();
 
-    myConsole = new SMTRunnerConsoleView(myConsoleProperties, environment);
+    myConsole = new SMTRunnerConsoleView(myConsoleProperties);
     myConsole.initUI();
     myResultsViewer = myConsole.getResultsViewer();
     myTestsRootNode = myResultsViewer.getTestsRootNode();
-    myEventsProcessor = new GeneralToSMTRunnerEventsConvertor(myResultsViewer.getTestsRootNode(), "SMTestFramework");
+    myEventsProcessor = new GeneralToSMTRunnerEventsConvertor(myConsoleProperties.getProject(), myResultsViewer.getTestsRootNode(), "SMTestFramework");
     myEventsProcessor.addEventsListener(myResultsViewer);
     myTreeModel = myResultsViewer.getTreeView().getModel();
   }
@@ -235,14 +235,14 @@ public class SMTestRunnerResultsFormTest extends BaseSMTRunnerTestCase {
     myResultsViewer.performUpdate();
     myEventsProcessor.onTestFailure(new TestFailedEvent("test_failed", "", "", false, null, null));
     myResultsViewer.performUpdate();
-    myEventsProcessor.onTestFinished(new TestFinishedEvent("test_failed", 10));
+    myEventsProcessor.onTestFinished(new TestFinishedEvent("test_failed", 10l));
     myResultsViewer.performUpdate();
 
     myEventsProcessor.onTestStarted(new TestStartedEvent("test", null));
     myResultsViewer.performUpdate();
     assertEquals(2, myTreeModel.getChildCount(myTreeModel.getChild(myTreeModel.getRoot(), 0)));
 
-    myEventsProcessor.onTestFinished(new TestFinishedEvent("test", 10));
+    myEventsProcessor.onTestFinished(new TestFinishedEvent("test", 10l));
     assertEquals(2, myTreeModel.getChildCount(myTreeModel.getChild(myTreeModel.getRoot(), 0)));
 
     myEventsProcessor.onSuiteFinished(new TestSuiteFinishedEvent("suite"));
@@ -262,13 +262,13 @@ public class SMTestRunnerResultsFormTest extends BaseSMTRunnerTestCase {
     myResultsViewer.performUpdate();
     myEventsProcessor.onTestFailure(new TestFailedEvent("test_failed", "", "", false, null, null));
     myResultsViewer.performUpdate();
-    myEventsProcessor.onTestFinished(new TestFinishedEvent("test_failed", 10));
+    myEventsProcessor.onTestFinished(new TestFinishedEvent("test_failed", 10l));
     myResultsViewer.performUpdate();
 
     myEventsProcessor.onTestStarted(new TestStartedEvent("test", null));
     myResultsViewer.performUpdate();
 
-    myEventsProcessor.onTestFinished(new TestFinishedEvent("test", 10));
+    myEventsProcessor.onTestFinished(new TestFinishedEvent("test", 10l));
     myResultsViewer.performUpdate();
 
     myEventsProcessor.onSuiteFinished(new TestSuiteFinishedEvent("suite2"));
@@ -285,6 +285,37 @@ public class SMTestRunnerResultsFormTest extends BaseSMTRunnerTestCase {
 
     assertTrue(myResultsViewer.getTreeView().isExpanded(new TreePath(suite1Node.getPath())));
     assertFalse(myResultsViewer.getTreeView().isExpanded(new TreePath(suite2Node.getPath())));
+  }
+
+  //with test tree build before start actual tests
+  public void testPrependTreeAndSameTestsStartFinish() throws Exception {
+    //send tree
+    myEventsProcessor.onSuiteTreeStarted("suite1", null);
+    myEventsProcessor.onSuiteTreeNodeAdded("test1", null);
+    myEventsProcessor.onSuiteTreeEnded("suite1");
+
+    //start testing
+    myEventsProcessor.onStartTesting();
+    
+    //invocation count for method set to 2
+    for(int i = 0; i < 2; i++) {
+      myEventsProcessor.onSuiteStarted(new TestSuiteStartedEvent("suite1", null));
+
+      myEventsProcessor.onTestStarted(new TestStartedEvent("test1", null));
+      myResultsViewer.performUpdate();
+      myEventsProcessor.onTestFailure(new TestFailedEvent("test1", "", "", false, "a", "b"));
+      myResultsViewer.performUpdate();
+      myEventsProcessor.onTestFinished(new TestFinishedEvent("test1", 10l));
+      myResultsViewer.performUpdate();
+      myEventsProcessor.onSuiteFinished(new TestSuiteFinishedEvent("suite1"));
+      myResultsViewer.performUpdate();
+    }
+
+    myEventsProcessor.onFinishTesting();
+    myResultsViewer.performUpdate();
+
+    //ensure 2 nodes found
+    assertEquals(2, myResultsViewer.getFailedTestCount());
   }
 
   public void testCustomProgress_General() {
@@ -375,7 +406,7 @@ public class SMTestRunnerResultsFormTest extends BaseSMTRunnerTestCase {
     assertEquals(0, myResultsViewer.getFailedTestCount());
     assertEquals(1, myResultsViewer.getIgnoredTestCount());
 
-    assertEquals(SMTestRunnerResultsForm.DARK_YELLOW, myResultsViewer.getTestsStatusColor());
+    assertEquals(ColorProgressBar.GREEN, myResultsViewer.getTestsStatusColor());
   }
 
   public void testCustomProgress_Terminated() {

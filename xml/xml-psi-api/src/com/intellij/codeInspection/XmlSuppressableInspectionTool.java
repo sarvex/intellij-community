@@ -44,7 +44,7 @@ public abstract class XmlSuppressableInspectionTool extends LocalInspectionTool 
 
     protected final String myId;
     protected final XmlSuppressionProvider myProvider;
-    private ThreeState myShouldBeAppliedToInjectionHost;
+    private ThreeState myShouldBeAppliedToInjectionHost = ThreeState.UNSURE;
 
     protected XmlSuppressFix(String inspectionId, XmlSuppressionProvider suppressionProvider) {
       myId = inspectionId;
@@ -81,6 +81,11 @@ public abstract class XmlSuppressableInspectionTool extends LocalInspectionTool 
     @Override
     public void setShouldBeAppliedToInjectionHost(@NotNull ThreeState shouldBeAppliedToInjectionHost) {
       myShouldBeAppliedToInjectionHost = shouldBeAppliedToInjectionHost;
+    }
+
+    @Override
+    public boolean isSuppressAll() {
+      return false;
     }
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,12 +28,14 @@ import org.jetbrains.plugins.groovy.lang.psi.api.statements.typedef.members.GrAc
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.typedef.members.GrGdkMethod
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.typedef.members.GrMethod
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.typedef.members.GrReflectedMethod
+import org.jetbrains.plugins.groovy.lang.psi.impl.GroovyMethodResult
 import org.jetbrains.plugins.groovy.lang.psi.impl.statements.typedef.members.GrMethodImpl
-import org.jetbrains.plugins.groovy.lang.psi.impl.synthetic.GrBindingVariable
 import org.jetbrains.plugins.groovy.lang.psi.impl.synthetic.GrGdkMethodImpl
 import org.jetbrains.plugins.groovy.lang.psi.impl.synthetic.GrTraitMethod
 import org.jetbrains.plugins.groovy.lang.psi.impl.synthetic.GroovyScriptClass
+import org.jetbrains.plugins.groovy.util.NotNullCachedComputableWrapper
 import org.jetbrains.plugins.groovy.util.TestUtils
+
 /**
  * @author ven
  */
@@ -334,11 +336,6 @@ public class ResolveMethodTest extends GroovyResolveTestCase {
     PsiMethod resolved = ((GrNewExpression)ref.element.parent).resolveMethod();
     assertNotNull(resolved);
     assertEquals(0, resolved.parameterList.parametersCount);
-  }
-
-  public void testGrvy179() {
-    PsiReference ref = configureByFile("grvy179/A.groovy");
-    assertInstanceOf(ref.resolve(), GrBindingVariable);
   }
 
   public void testPrivateScriptMethod() {
@@ -733,8 +730,7 @@ class Foo {
   }
 
   void testAutoClone() {
-    def element = resolve('a.groovy')
-    assertInstanceOf element, PsiMethod
+    def element = resolve('a.groovy', PsiMethod)
     assertTrue element.containingClass.name == 'Foo'
     assertSize 1, element.throwsList.referencedTypes
   }
@@ -748,8 +744,7 @@ class Foo {
   }
 
   void testCategoryClassMethod() {
-    def resolved = resolve('a.groovy')
-    assertInstanceOf(resolved, GrReflectedMethod)
+    def resolved = resolve('a.groovy', GrReflectedMethod)
     assertTrue(resolved.modifierList.hasModifierProperty(PsiModifier.STATIC))
   }
 
@@ -881,8 +876,7 @@ i<caret>s(create())
 
 ''')
 
-    def resolved = ref.resolve()
-    assertInstanceOf resolved, PsiMethod
+    def resolved = assertInstanceOf(ref.resolve(), PsiMethod)
     assertEquals 'Other', resolved.containingClass.name
   }
 
@@ -906,8 +900,7 @@ class A {
 
 ''')
 
-    def resolved = ref.resolve()
-    assertInstanceOf resolved, PsiMethod
+    def resolved = assertInstanceOf(ref.resolve(), PsiMethod)
     assertEquals 'A', resolved.containingClass.name
   }
 
@@ -931,8 +924,7 @@ class A {
 
 ''')
 
-    def resolved = ref.resolve()
-    assertInstanceOf resolved, PsiMethod
+    def resolved = assertInstanceOf(ref.resolve(), PsiMethod)
     assertEquals 'A', resolved.containingClass.name
   }
 
@@ -2183,8 +2175,7 @@ trait B {
 class C implements A, B {
     String foo() {exe<caret>c() }
 }
-''', PsiMethod)
-    assertTrue(method instanceof GrTraitMethod)
+''', GrTraitMethod)
     assertEquals("B", method.prototype.containingClass.name)
   }
 
@@ -2228,4 +2219,30 @@ class X {
 ''', PsiMethod)
   }
 
+  void 'test static trait method generic return type'() {
+    def method = resolveByText('''
+trait GenericSourceTrait<E> {
+    static E someOtherStaticMethod() {null}
+}
+class SourceConcrete implements GenericSourceTrait<String> {})
+SourceConcrete.someOtherStatic<caret>Method()
+''', GrTraitMethod)
+    assertEquals "java.lang.String", method.returnType.canonicalText
+  }
+
+  void 'test substitutor is not computed within resolve'() {
+    def ref = configureByText('_.groovy', '''
+[1, 2, 3].with {
+  group<caret>By({2})
+}
+''', GrReferenceExpression)
+    def results = ref.multiResolve(false)
+    assert results.length > 0
+    results.each {
+      assert it instanceof GroovyMethodResult
+      def computer = it.substitutorComputer
+      assert computer instanceof NotNullCachedComputableWrapper
+      assert !computer.computed
+    }
+  }
 }

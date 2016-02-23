@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,8 +31,8 @@ import com.intellij.openapi.actionSystem.LangDataKeys;
 import com.intellij.openapi.actionSystem.PlatformDataKeys;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
-import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
@@ -43,6 +43,7 @@ import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.awt.*;
@@ -57,6 +58,7 @@ public class ConfigurationContext {
   private static final Logger LOG = Logger.getInstance("#com.intellij.execution.actions.ConfigurationContext");
   private final Location<PsiElement> myLocation;
   private RunnerAndConfigurationSettings myConfiguration;
+  private boolean myInitialized = false;
   private Ref<RunnerAndConfigurationSettings> myExistingConfiguration;
   private final Module myModule;
   private final RunConfiguration myRuntimeConfiguration;
@@ -66,6 +68,7 @@ public class ConfigurationContext {
   private List<RuntimeConfigurationProducer> myPreferredProducers;
   private List<ConfigurationFromContext> myConfigurationsFromContext;
 
+  @NotNull
   public static ConfigurationContext getFromContext(DataContext dataContext) {
     final ConfigurationContext context = new ConfigurationContext(dataContext);
     final DataManager dataManager = DataManager.getInstance();
@@ -103,14 +106,23 @@ public class ConfigurationContext {
     myLocation = new PsiLocation<PsiElement>(project, myModule, element);
   }
 
+  public ConfigurationContext(PsiElement element) {
+    myModule = ModuleUtilCore.findModuleForPsiElement(element);
+    myLocation = new PsiLocation<PsiElement>(element.getProject(), myModule, element);
+    myRuntimeConfiguration = null;
+    myContextComponent = null;
+  }
+
   /**
    * Returns the configuration created from this context.
    *
    * @return the configuration, or null if none of the producers were able to create a configuration from this context.
    */
   @Nullable
-  public RunnerAndConfigurationSettings getConfiguration() {
-    if (myConfiguration == null) createConfiguration();
+  public synchronized RunnerAndConfigurationSettings getConfiguration() {
+    if (myConfiguration == null && !myInitialized) {
+      createConfiguration();
+    }
     return myConfiguration;
   }
 
@@ -120,10 +132,12 @@ public class ConfigurationContext {
     myConfiguration = location != null && !DumbService.isDumb(location.getProject()) ?
         PreferredProducerFind.createConfiguration(location, this) :
         null;
+    myInitialized = true;
   }
 
-  public void setConfiguration(RunnerAndConfigurationSettings configuration) {
+  public synchronized void setConfiguration(@NotNull RunnerAndConfigurationSettings configuration) {
     myConfiguration = configuration;
+    myInitialized = true;
   }
 
   @Deprecated
@@ -181,7 +195,7 @@ public class ConfigurationContext {
           }
         }
       }
-      for (RunConfigurationProducer producer : Extensions.getExtensions(RunConfigurationProducer.EP_NAME)) {
+      for (RunConfigurationProducer producer : RunConfigurationProducer.getProducers(getProject())) {
         RunnerAndConfigurationSettings configuration = producer.findExistingConfiguration(this);
         if (configuration != null && configuration.getConfiguration() == myRuntimeConfiguration) {
           myExistingConfiguration.set(configuration);
@@ -196,7 +210,7 @@ public class ConfigurationContext {
         }
       }
     }
-    for (RunConfigurationProducer producer : Extensions.getExtensions(RunConfigurationProducer.EP_NAME)) {
+    for (RunConfigurationProducer producer : RunConfigurationProducer.getProducers(getProject())) {
       RunnerAndConfigurationSettings configuration = producer.findExistingConfiguration(this);
       if (configuration != null) {
         myExistingConfiguration.set(configuration);
@@ -277,6 +291,7 @@ public class ConfigurationContext {
     return myPreferredProducers;
   }
 
+  @Nullable
   public List<ConfigurationFromContext> getConfigurationsFromContext() {
     if (myConfigurationsFromContext == null) {
       myConfigurationsFromContext = PreferredProducerFind.getConfigurationsFromContext(myLocation, this, true);

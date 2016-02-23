@@ -21,6 +21,7 @@ import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.fileEditor.FileEditor;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.TextEditor;
+import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Ref;
@@ -33,15 +34,19 @@ import com.intellij.ui.EditorNotifications;
 import com.intellij.util.Processor;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
-import static com.intellij.psi.codeStyle.EditorNotificationInfo.*;
+import static com.intellij.psi.codeStyle.EditorNotificationInfo.ActionLabelData;
 
 /**
  * @author Rustam Vishnyakov
  */
-public class DetectedIndentOptionsNotificationProvider extends EditorNotifications.Provider<EditorNotificationPanel> {
+public class DetectedIndentOptionsNotificationProvider extends EditorNotifications.Provider<EditorNotificationPanel> implements DumbAware {
   private static final Key<EditorNotificationPanel> KEY = Key.create("indent.options.notification.provider");
   private static final Key<Boolean> NOTIFIED_FLAG = Key.create("indent.options.notification.provider.status");
+  protected static final Key<Boolean> DETECT_INDENT_NOTIFICATION_SHOWN_KEY = Key.create("indent.options.notification.provider.status.test.notification.shown");
+
+  private static boolean myShowNotificationInTest = false;
 
   @NotNull
   @Override
@@ -74,7 +79,7 @@ public class DetectedIndentOptionsNotificationProvider extends EditorNotificatio
               }
             });
           final FileIndentOptionsProvider provider = indentOptionsProviderRef.get();
-          EditorNotificationInfo info = provider != null && !provider.isAcceptedWithoutWarning(file) && !userOptions.equals(detectedOptions)
+          EditorNotificationInfo info = provider != null && !provider.isAcceptedWithoutWarning(project, file) && !userOptions.equals(detectedOptions)
                                         ? provider.getNotificationInfo(project, file, fileEditor, userOptions, detectedOptions)
                                         : null;
 
@@ -93,6 +98,9 @@ public class DetectedIndentOptionsNotificationProvider extends EditorNotificatio
               };
               panel.createActionLabel(actionLabelData.label, onClickAction);
             }
+            if (ApplicationManager.getApplication().isUnitTestMode()) {
+              file.putUserData(DETECT_INDENT_NOTIFICATION_SHOWN_KEY, Boolean.TRUE);
+            }
             return panel;
           }
         }
@@ -102,15 +110,28 @@ public class DetectedIndentOptionsNotificationProvider extends EditorNotificatio
   }
 
   public static void updateIndentNotification(@NotNull PsiFile file, boolean enforce) {
-    if (!(ApplicationManager.getApplication().isHeadlessEnvironment() || ApplicationManager.getApplication().isUnitTestMode())) {
-      FileEditor fileEditor = FileEditorManager.getInstance(file.getProject()).getSelectedEditor(file.getVirtualFile());
+    VirtualFile vFile = file.getVirtualFile();
+    if (vFile == null) return;
+
+    if (!ApplicationManager.getApplication().isHeadlessEnvironment()
+        || ApplicationManager.getApplication().isUnitTestMode() && myShowNotificationInTest)
+    {
+      Project project = file.getProject();
+      FileEditorManager fileEditorManager = FileEditorManager.getInstance(project);
+      if (fileEditorManager == null) return;
+      FileEditor fileEditor = fileEditorManager.getSelectedEditor(vFile);
       if (fileEditor != null) {
         Boolean notifiedFlag = fileEditor.getUserData(NOTIFIED_FLAG);
         if (notifiedFlag == null || enforce) {
           fileEditor.putUserData(NOTIFIED_FLAG, Boolean.TRUE);
-          EditorNotifications.getInstance(file.getProject()).updateNotifications(file.getVirtualFile());
+          EditorNotifications.getInstance(project).updateNotifications(vFile);
         }
       }
     }
+  }
+
+  @TestOnly
+  static void setShowNotificationInTest(boolean show) {
+    myShowNotificationInTest = show;
   }
 }

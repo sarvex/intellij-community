@@ -47,7 +47,7 @@ public class PySuperClassAttributesCompletionContributor extends CompletionContr
                  return;
                }
                for (PyTargetExpression expr : getSuperClassAttributes(containingClass)) {
-                 result.addElement(LookupElementBuilder.create(expr, expr.getName() + " = "));
+                 result.addElement(LookupElementBuilder.createWithSmartPointer(expr.getName() + " = ", expr));
                }
              }
            }
@@ -60,7 +60,7 @@ public class PySuperClassAttributesCompletionContributor extends CompletionContr
     for (PyTargetExpression expr : cls.getClassAttributes()) {
       seenNames.add(expr.getName());
     }
-    for (PyClass ancestor : cls.getAncestorClasses()) {
+    for (PyClass ancestor : cls.getAncestorClasses(null)) {
       for (PyTargetExpression expr : ancestor.getClassAttributes()) {
         if (!seenNames.contains(expr.getName())) {
           seenNames.add(expr.getName());

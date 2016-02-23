@@ -16,20 +16,24 @@
 package com.intellij.diff;
 
 import com.intellij.diff.contents.*;
+import com.intellij.ide.highlighter.ArchiveFileType;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.EditorFactory;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
+import com.intellij.openapi.fileTypes.BinaryFileTypeDecompilers;
 import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.openapi.vcs.FilePath;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.testFramework.BinaryLightVirtualFile;
+import com.intellij.util.LineSeparator;
 import com.intellij.util.PathUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -37,9 +41,15 @@ import org.jetbrains.annotations.Nullable;
 import java.awt.datatransfer.DataFlavor;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.Charset;
 
 public class DiffContentFactoryImpl extends DiffContentFactory {
-  public final Logger LOG = Logger.getInstance(DiffContentFactoryImpl.class);
+  public static final Logger LOG = Logger.getInstance(DiffContentFactoryImpl.class);
+
+  @NotNull
+  public static DiffContentFactoryImpl getInstanceImpl() {
+    return (DiffContentFactoryImpl)DiffContentFactory.getInstance();
+  }
 
   @Override
   @NotNull
@@ -50,21 +60,38 @@ public class DiffContentFactoryImpl extends DiffContentFactory {
   @Override
   @NotNull
   public DocumentContent create(@NotNull String text) {
-    return create(text, null);
+    return create(text, (FileType)null);
   }
 
   @Override
   @NotNull
   public DocumentContent create(@NotNull String text, @Nullable FileType type) {
-    Document document = EditorFactory.getInstance().createDocument(StringUtil.convertLineSeparators(text));
-    document.setReadOnly(true);
-    return new DocumentContentImpl(document, type, null, null, null);
+    return create(text, type, true);
+  }
+
+  @Override
+  @NotNull
+  public DocumentContent create(@NotNull String text, @Nullable FileType type, boolean respectLineSeparators) {
+    return createImpl(text, type, null, null, respectLineSeparators, true);
+  }
+
+  @Override
+  @NotNull
+  public DocumentContent create(@NotNull String text, @Nullable VirtualFile highlightFile) {
+    return createImpl(text, highlightFile != null ? highlightFile.getFileType() : null, highlightFile, null, true, true);
   }
 
   @Override
   @NotNull
   public DocumentContent create(@Nullable Project project, @NotNull Document document) {
+    return create(project, document, (FileType)null);
+  }
+
+  @Override
+  @NotNull
+  public DocumentContent create(@Nullable Project project, @NotNull Document document, @Nullable FileType fileType) {
     VirtualFile file = FileDocumentManager.getInstance().getFile(document);
+    if (file == null) return new DocumentContentImpl(document, fileType, null, null, null);
     return create(project, document, file);
   }
 
@@ -81,7 +108,7 @@ public class DiffContentFactoryImpl extends DiffContentFactory {
     if (file.isDirectory()) return new DirectoryContentImpl(project, file);
     DocumentContent content = createDocument(project, file);
     if (content != null) return content;
-    return new BinaryFileContentImpl(project, file);
+    return new FileContentImpl(project, file);
   }
 
   @Override
@@ -100,19 +127,65 @@ public class DiffContentFactoryImpl extends DiffContentFactory {
   }
 
   @Override
-  @NotNull
-  public DiffContent createClipboardContent() {
-    String text = CopyPasteManager.getInstance().getContents(DataFlavor.stringFlavor);
-    Document document = EditorFactory.getInstance().createDocument(StringUtil.convertLineSeparators(StringUtil.notNullize(text)));
-    return new DocumentContentImpl(document); // TODO: show difference in line separators ?
+  @Nullable
+  public FileContent createFile(@Nullable Project project, @NotNull VirtualFile file) {
+    if (file.isDirectory()) return null;
+    return (FileContent)create(project, file);
   }
 
   @Override
   @NotNull
-  public DocumentContent createClipboardContent(@NotNull DocumentContent mainContent) {
+  public DiffContent createClipboardContent() {
+    return createClipboardContent(null);
+  }
+
+  @Override
+  @NotNull
+  public DocumentContent createClipboardContent(@Nullable DocumentContent mainContent) {
     String text = CopyPasteManager.getInstance().getContents(DataFlavor.stringFlavor);
-    Document document = EditorFactory.getInstance().createDocument(StringUtil.convertLineSeparators(StringUtil.notNullize(text)));
-    return new DocumentContentWrapper(document, mainContent);
+
+    FileType type = mainContent != null ? mainContent.getContentType() : null;
+    VirtualFile highlightFile = mainContent != null ? mainContent.getHighlightFile() : null;
+
+    return createImpl(StringUtil.notNullize(text), type, highlightFile, null, true, false);
+  }
+
+  @NotNull
+  private static DocumentContent createImpl(@NotNull String text,
+                                            @Nullable FileType type,
+                                            @Nullable VirtualFile highlightFile,
+                                            @Nullable Charset charset,
+                                            boolean respectLineSeparators,
+                                            boolean readOnly) {
+    // TODO: detect invalid (different across the file) separators ?
+    LineSeparator separator = respectLineSeparators ? StringUtil.detectSeparators(text) : null;
+    Document document = EditorFactory.getInstance().createDocument(StringUtil.convertLineSeparators(text));
+    if (readOnly) document.setReadOnly(true);
+    return new DocumentContentImpl(document, type, highlightFile, separator, charset);
+  }
+
+  @NotNull
+  public DiffContent createFromBytes(@Nullable Project project,
+                                     @NotNull FilePath filePath,
+                                     @NotNull byte[] content) throws IOException {
+    if (filePath.getFileType().isBinary()) {
+      return DiffContentFactory.getInstance().createBinary(project, filePath.getName(), filePath.getFileType(), content);
+    }
+
+    return FileAwareDocumentContent.create(project, content, filePath);
+  }
+
+  @Override
+  @NotNull
+  public DiffContent createFromBytes(@Nullable Project project,
+                                     @NotNull VirtualFile highlightFile,
+                                     @NotNull byte[] content) throws IOException {
+    // TODO: check if FileType.UNKNOWN is actually a text ?
+    if (highlightFile.getFileType().isBinary()) {
+      return DiffContentFactory.getInstance().createBinary(project, highlightFile.getName(), highlightFile.getFileType(), content);
+    }
+
+    return FileAwareDocumentContent.create(project, content, highlightFile);
   }
 
   @Override
@@ -121,8 +194,8 @@ public class DiffContentFactoryImpl extends DiffContentFactory {
                                   @NotNull String name,
                                   @NotNull FileType type,
                                   @NotNull byte[] content) throws IOException {
-    boolean useTemporalFile = true; // TODO: workaround for Decompiler
-    //boolean useTemporalFile = type instanceof ArchiveFileType; // workaround - our JarFileSystem can't process non-local files
+    // workaround - our JarFileSystem and decompilers can't process non-local files
+    boolean useTemporalFile = type instanceof ArchiveFileType || BinaryFileTypeDecompilers.INSTANCE.forFileType(type) != null;
 
     VirtualFile file;
     if (useTemporalFile) {
@@ -135,6 +208,7 @@ public class DiffContentFactoryImpl extends DiffContentFactory {
     }
     else {
       file = new BinaryLightVirtualFile(name, type, content);
+      file.setWritable(false);
     }
 
     return create(project, file);
@@ -150,10 +224,13 @@ public class DiffContentFactoryImpl extends DiffContentFactory {
     if (content.length != 0) {
       FileUtil.writeToFile(tempFile, content);
     }
+    if (!tempFile.setWritable(false, false)) LOG.warn("Can't set writable attribute of temporal file");
+
     VirtualFile file = VfsUtil.findFileByIoFile(tempFile, true);
     if (file == null) {
       throw new IOException("Can't create temp file for revision content");
     }
+    VfsUtil.markDirtyAndRefresh(true, true, true, file);
     return file;
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.jetbrains.idea.maven;
 
 import com.intellij.compiler.server.BuildManager;
@@ -60,16 +59,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 public abstract class MavenImportingTestCase extends MavenTestCase {
   protected MavenProjectsTree myProjectsTree;
   protected MavenProjectsManager myProjectsManager;
-  private File myGlobalSettingsFile;
 
   @Override
   protected void setUp() throws Exception {
-    VfsRootAccess.allowRootAccess(PathManager.getOptionsPath());
+    VfsRootAccess.allowRootAccess(getTestRootDisposable(), PathManager.getConfigPath());
+
     super.setUp();
-    myGlobalSettingsFile =
-      MavenWorkspaceSettingsComponent.getInstance(myProject).getSettings().generalSettings.getEffectiveGlobalSettingsIoFile();
-    if (myGlobalSettingsFile != null) {
-      VfsRootAccess.allowRootAccess(myGlobalSettingsFile.getAbsolutePath());
+
+    File settingsFile = MavenWorkspaceSettingsComponent.getInstance(myProject).getSettings().generalSettings.getEffectiveGlobalSettingsIoFile();
+    if (settingsFile != null) {
+      VfsRootAccess.allowRootAccess(getTestRootDisposable(), settingsFile.getAbsolutePath());
     }
   }
 
@@ -83,12 +82,7 @@ public abstract class MavenImportingTestCase extends MavenTestCase {
   @Override
   protected void tearDown() throws Exception {
     try {
-      if (myGlobalSettingsFile != null) {
-        VfsRootAccess.disallowRootAccess(myGlobalSettingsFile.getAbsolutePath());
-      }
-      VfsRootAccess.disallowRootAccess(PathManager.getOptionsPath());
       Messages.setTestDialog(TestDialog.DEFAULT);
-      myProjectsManager.projectClosed();
       removeFromLocalRepository("test");
       FileUtil.delete(BuildManager.getInstance().getBuildSystemDirectory());
     }
@@ -372,7 +366,7 @@ public abstract class MavenImportingTestCase extends MavenTestCase {
     return getRootManager(moduleName).getContentEntries();
   }
 
-  private ModuleRootManager getRootManager(String module) {
+  public ModuleRootManager getRootManager(String module) {
     return ModuleRootManager.getInstance(getModule(module));
   }
 

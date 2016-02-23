@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,8 +32,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 
 public class PathUtil {
-  private PathUtil() {
-  }
+  private PathUtil() { }
 
   @Nullable
   public static String getLocalPath(@Nullable VirtualFile file) {
@@ -109,14 +108,17 @@ public class PathUtil {
   }
 
   public static boolean isValidFileName(@NotNull String fileName) {
-    return PathUtilRt.isValidFileName(fileName);
+    return PathUtilRt.isValidFileName(fileName, true);
+  }
+
+  public static boolean isValidFileName(@NotNull String fileName, boolean strict) {
+    return PathUtilRt.isValidFileName(fileName, strict);
   }
 
   @Contract("null -> null; !null -> !null")
   public static String toSystemIndependentName(@Nullable String path) {
     return path == null ? null : FileUtilRt.toSystemIndependentName(path);
   }
-
 
   @Contract("null -> null; !null -> !null")
   public static String toSystemDependentName(@Nullable String path) {
@@ -125,19 +127,17 @@ public class PathUtil {
 
   @NotNull
   public static String driveLetterToLowerCase(@NotNull String path) {
-    if (!SystemInfo.isWindows) {
-      return path;
-    }
-    File file = new File(path);
-    if (file.isAbsolute() && path.length() >= 2 &&
-        Character.isUpperCase(path.charAt(0)) && path.charAt(1) == ':') {
-      return Character.toLowerCase(path.charAt(0)) + path.substring(1);
+    if (SystemInfo.isWindows && path.length() >= 2 && Character.isUpperCase(path.charAt(0)) && path.charAt(1) == ':') {
+      File file = new File(path);
+      if (file.isAbsolute()) {
+        return Character.toLowerCase(path.charAt(0)) + path.substring(1);
+      }
     }
     return path;
   }
 
   @NotNull
   public static String makeFileName(@NotNull String name, @Nullable String extension) {
-    return name + (StringUtil.isEmpty(extension) ? "" : "." + extension);
+    return StringUtil.isEmpty(extension) ? name : name + '.' + extension;
   }
 }

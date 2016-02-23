@@ -20,3 +20,5 @@ IntelliLang-python
 rest
 python-rest
 ipnb
+editorconfig
+settings-repository

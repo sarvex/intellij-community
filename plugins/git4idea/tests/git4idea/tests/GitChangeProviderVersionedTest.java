@@ -17,11 +17,11 @@ package git4idea.tests;
 
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.util.io.FileUtil;
-import com.intellij.openapi.vcs.FilePathImpl;
 import com.intellij.openapi.vcs.FileStatus;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.GuiUtils;
+import com.intellij.vcsUtil.VcsUtil;
 import org.testng.annotations.Test;
 
 import static com.intellij.openapi.vcs.FileStatus.*;
@@ -52,7 +52,7 @@ public class GitChangeProviderVersionedTest extends GitChangeProviderTest {
 
   @Test
   public void testDeleteFile() throws Exception {
-    delete(atxt);
+    deleteFile(atxt);
     assertChanges(atxt, DELETED);
   }
 
@@ -65,7 +65,7 @@ public class GitChangeProviderVersionedTest extends GitChangeProviderTest {
           @Override
           public void run() {
             final VirtualFile dir = myProjectRoot.findChild("dir");
-            myDirtyScope.addDirtyDirRecursively(new FilePathImpl(dir));
+            myDirtyScope.addDirtyDirRecursively(VcsUtil.getFilePath(dir));
             FileUtil.delete(VfsUtilCore.virtualToIoFile(dir));
           }
         });
@@ -85,7 +85,7 @@ public class GitChangeProviderVersionedTest extends GitChangeProviderTest {
     // This is not consistent though.
     final VirtualFile dir= myProjectRoot.findChild("dir");
     final VirtualFile file = create(dir, "new.txt");
-    move(file, myRootDir);
+    moveFile(file, myRootDir);
     assertChanges(file, ADDED);
   }
 
@@ -93,7 +93,7 @@ public class GitChangeProviderVersionedTest extends GitChangeProviderTest {
   public void testSimultaneousOperationsOnMultipleFiles() throws Exception {
     edit(atxt, "new afile content");
     edit(dir_ctxt, "new cfile content");
-    delete(subdir_dtxt);
+    deleteFile(subdir_dtxt);
     VirtualFile newfile = create(myRootDir, "newfile.txt");
     add();
 

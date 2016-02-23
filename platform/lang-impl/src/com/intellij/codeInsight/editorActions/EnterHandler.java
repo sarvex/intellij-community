@@ -278,8 +278,8 @@ public class EnterHandler extends BaseEnterHandler {
    */
   private static boolean isInvalidPsi(@NotNull PsiElement base) {
     for (PsiElement current = base.getNextSibling(); current != null; current = current.getNextSibling()) {
-      if (current.getTextLength() != 0) {
-        return current instanceof PsiErrorElement;
+      if (current instanceof PsiErrorElement) {
+        return true;
       }
     }
     return false;
@@ -556,7 +556,11 @@ public class EnterHandler extends BaseEnterHandler {
       codeStyleSettings.ENABLE_JAVADOC_FORMATTING = false;
 
       try {
-        comment = (PsiComment)codeStyleManager.reformat(comment);
+        RangeMarker commentMarker = myDocument.createRangeMarker(comment.getTextRange().getStartOffset(),
+                                                                 comment.getTextRange().getEndOffset());
+        codeStyleManager.reformatNewlyAddedElement(comment.getNode().getTreeParent(), comment.getNode());
+        comment = PsiTreeUtil.getNonStrictParentOfType(myFile.findElementAt(commentMarker.getStartOffset()), PsiComment.class);
+        commentMarker.dispose();
       }
       finally {
         codeStyleSettings.ENABLE_JAVADOC_FORMATTING = old;

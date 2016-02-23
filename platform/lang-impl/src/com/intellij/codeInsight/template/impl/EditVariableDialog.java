@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,6 +40,9 @@ import javax.swing.table.TableModel;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 class EditVariableDialog extends DialogWrapper {
   private ArrayList<Variable> myVariables = new ArrayList<Variable>();
@@ -108,23 +111,13 @@ class EditVariableDialog extends DialogWrapper {
       myTable.getSelectionModel().setSelectionInterval(0, 0);
     }
 
+    Predicate<Macro> isAcceptableInContext = macro -> myContextTypes.stream().anyMatch(macro::isAcceptableInContext);
+    Stream<String> availableMacroNames = Arrays.stream(MacroFactory.getMacros()).filter(isAcceptableInContext).map(Macro::getPresentableName).sorted();
+    Set<String> uniqueNames = availableMacroNames.collect(Collectors.toCollection(LinkedHashSet::new));
+
     ComboBox comboField = new ComboBox();
-    Macro[] macros = MacroFactory.getMacros();
-    Arrays.sort(macros, new Comparator<Macro> () {
-      @Override
-      public int compare(@NotNull Macro m1, @NotNull Macro m2) {
-        return m1.getPresentableName().compareTo(m2.getPresentableName());
-      }
-    });
-    eachMacro:
-    for (Macro macro : macros) {
-      for (TemplateContextType contextType : myContextTypes) {
-        if (macro.isAcceptableInContext(contextType)) {
-          comboField.addItem(macro.getPresentableName());
-          continue eachMacro;
-        }
-      }
-    }
+    uniqueNames.forEach(comboField::addItem);
+
     comboField.setEditable(true);
     DefaultCellEditor cellEditor = new DefaultCellEditor(comboField);
     cellEditor.setClickCountToStart(1);
@@ -258,11 +251,13 @@ class EditVariableDialog extends DialogWrapper {
     public void setValueAt(Object aValue, int row, int col) {
       Variable variable = myVariables.get(row);
       if (col == 0) {
-         String varName = (String) aValue;
-        Variable newVar = new Variable (varName, variable.getExpressionString(), variable.getDefaultValueString(),
-                        variable.isAlwaysStopAt());
-        myVariables.set(row, newVar);
-        updateTemplateTextByVarNameChange(variable, newVar);
+        String varName = (String) aValue;
+        if (TemplateImplUtil.isValidVariableName(varName)) {
+          Variable newVar = new Variable(varName, variable.getExpressionString(), variable.getDefaultValueString(),
+                                         variable.isAlwaysStopAt());
+          myVariables.set(row, newVar);
+          updateTemplateTextByVarNameChange(variable, newVar);
+        }
       }
       else if (col == 1) {
         variable.setExpressionString((String)aValue);

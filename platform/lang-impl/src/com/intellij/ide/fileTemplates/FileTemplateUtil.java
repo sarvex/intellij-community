@@ -40,27 +40,20 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.containers.ContainerUtil;
-import org.apache.commons.collections.ExtendedProperties;
 import org.apache.velocity.VelocityContext;
-import org.apache.velocity.app.Velocity;
-import org.apache.velocity.exception.ResourceNotFoundException;
 import org.apache.velocity.exception.VelocityException;
-import org.apache.velocity.runtime.RuntimeConstants;
-import org.apache.velocity.runtime.RuntimeServices;
-import org.apache.velocity.runtime.RuntimeSingleton;
-import org.apache.velocity.runtime.log.LogSystem;
 import org.apache.velocity.runtime.parser.ParseException;
 import org.apache.velocity.runtime.parser.Token;
 import org.apache.velocity.runtime.parser.node.*;
-import org.apache.velocity.runtime.resource.Resource;
-import org.apache.velocity.runtime.resource.loader.ResourceLoader;
 import org.apache.velocity.util.StringUtils;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import java.io.*;
+import java.io.IOException;
+import java.io.StringReader;
+import java.io.StringWriter;
 import java.util.*;
 
 /**
@@ -69,67 +62,8 @@ import java.util.*;
 public class FileTemplateUtil{
   private static final Logger LOG = Logger.getInstance("#com.intellij.ide.fileTemplates.FileTemplateUtil");
   private static final CreateFromTemplateHandler ourDefaultCreateFromTemplateHandler = new DefaultCreateFromTemplateHandler();
-  private static final ThreadLocal<FileTemplateManager> ourTemplateManager = new ThreadLocal<FileTemplateManager>();
 
   @NonNls public static final String INTERNAL_PACKAGE_INFO_TEMPLATE_NAME = "package-info";
-
-  private FileTemplateUtil() {
-  }
-
-  static {
-    try{
-      LogSystem emptyLogSystem = new LogSystem() {
-        @Override
-        public void init(RuntimeServices runtimeServices) throws Exception {
-        }
-
-        @Override
-        public void logVelocityMessage(int i, String s) {
-          //todo[myakovlev] log somethere?
-        }
-      };
-      Velocity.setProperty(RuntimeConstants.RUNTIME_LOG_LOGSYSTEM, emptyLogSystem);
-      Velocity.setProperty(RuntimeConstants.INPUT_ENCODING, FileTemplate.ourEncoding);
-      Velocity.setProperty(RuntimeConstants.PARSER_POOL_SIZE, 3);
-      Velocity.setProperty(RuntimeConstants.RESOURCE_LOADER, "includes");
-      Velocity.setProperty("includes.resource.loader.instance", new ResourceLoader() {
-        @Override
-        public void init(ExtendedProperties configuration) {
-        }
-
-        @Override
-        public InputStream getResourceStream(String resourceName) throws ResourceNotFoundException {
-          FileTemplateManager templateManager = ourTemplateManager.get();
-          if (templateManager == null) templateManager = FileTemplateManager.getDefaultInstance();
-          final FileTemplate include = templateManager.getPattern(resourceName);
-          if (include == null) {
-            throw new ResourceNotFoundException("Template not found: " + resourceName);
-          }
-          final String text = include.getText();
-          try {
-            return new ByteArrayInputStream(text.getBytes(FileTemplate.ourEncoding));
-          }
-          catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-          }
-        }
-
-        @Override
-        public boolean isSourceModified(Resource resource) {
-          return true;
-        }
-
-        @Override
-        public long getLastModified(Resource resource) {
-          return 0L;
-        }
-      });
-      Velocity.init();
-    }
-    catch (Exception e){
-      LOG.error("Unable to init Velocity", e);
-    }
-  }
 
   public static String[] calculateAttributes(String templateContent, Properties properties, boolean includeDummies, Project project) throws ParseException {
     Set<String> propertiesNames = new HashSet<String>();
@@ -147,7 +81,7 @@ public class FileTemplateUtil{
     final Set<String> unsetAttributes = new LinkedHashSet<String>();
     final Set<String> definedAttributes = new HashSet<String>();
     //noinspection HardCodedStringLiteral
-    SimpleNode template = RuntimeSingleton.parse(new StringReader(templateContent), "MyTemplate");
+    SimpleNode template = VelocityWrapper.parse(new StringReader(templateContent), "MyTemplate");
     collectAttributes(unsetAttributes, definedAttributes, template, propertiesNames, includeDummies, new HashSet<String>(), project);
     for (String definedAttribute : definedAttributes) {
       unsetAttributes.remove(definedAttribute);
@@ -190,7 +124,7 @@ public class FileTemplateUtil{
             String s = StringUtil.unquoteString(firstToken.toString());
             final FileTemplate includedTemplate = FileTemplateManager.getInstance(project).getTemplate(s);
             if (includedTemplate != null && visitedIncludes.add(s)) {
-              SimpleNode template = RuntimeSingleton.parse(new StringReader(includedTemplate.getText()), "MyTemplate");
+              SimpleNode template = VelocityWrapper.parse(new StringReader(includedTemplate.getText()), "MyTemplate");
               collectAttributes(referenced, defined, template, propertiesNames, includeDummies, visitedIncludes, project);
             }
           }
@@ -291,13 +225,7 @@ public class FileTemplateUtil{
           }
         });
       }
-      try {
-        ourTemplateManager.set(project == null ? FileTemplateManager.getDefaultInstance() : FileTemplateManager.getInstance(project));
-        Velocity.evaluate(context, stringWriter, "", templateContent);
-      }
-      finally {
-        ourTemplateManager.set(null);
-      }
+      VelocityWrapper.evaluate(project, context, stringWriter, templateContent);
     }
     catch (final VelocityException e) {
       if (ApplicationManager.getApplication().isUnitTestMode()) {

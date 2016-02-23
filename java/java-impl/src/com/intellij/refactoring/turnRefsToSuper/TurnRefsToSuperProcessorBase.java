@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +46,7 @@ import com.intellij.util.containers.HashMap;
 import com.intellij.util.containers.HashSet;
 import com.intellij.util.containers.Queue;
 import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -70,7 +71,7 @@ public abstract class TurnRefsToSuperProcessorBase extends BaseRefactoringProces
   private final List<UsageInfo> myVariablesUsages = new ArrayList<UsageInfo>();
 
   @Override
-  protected boolean preprocessUsages(Ref<UsageInfo[]> refUsages) {
+  protected boolean preprocessUsages(@NotNull Ref<UsageInfo[]> refUsages) {
     UsageInfo[] usages = refUsages.get();
     List<UsageInfo> filtered = new ArrayList<UsageInfo>();
     for (UsageInfo usage : usages) {
@@ -79,44 +80,44 @@ public abstract class TurnRefsToSuperProcessorBase extends BaseRefactoringProces
       }
     }
 
-    myVariableRenamer = new AutomaticVariableRenamer(myClass, mySuperClassName, filtered);
-    if (!ApplicationManager.getApplication().isUnitTestMode() &&
-        myVariableRenamer.hasAnythingToRename()) {
-      final AutomaticRenamingDialog dialog = new AutomaticRenamingDialog(myProject, myVariableRenamer);
-      if (!dialog.showAndGet()) {
-        return false;
-      }
-
-      final List<PsiNamedElement> variables = myVariableRenamer.getElements();
-      for (final PsiNamedElement namedElement : variables) {
-        final PsiVariable variable = (PsiVariable)namedElement;
-        final SmartPsiElementPointer pointer = SmartPointerManager.getInstance(myProject).createSmartPsiElementPointer(variable);
-        myVariablesRenames.put(pointer, myVariableRenamer.getNewName(variable));
-      }
-
-      Runnable runnable = new Runnable() {
-        @Override
-        public void run() {
-          ApplicationManager.getApplication().runReadAction(new Runnable() {
-            @Override
-            public void run() {
-              myVariableRenamer.findUsages(myVariablesUsages, false, false);
-            }
-          });
+    if (myClass.getName() != null) {
+      final AutomaticVariableRenamer variableRenamer = new AutomaticVariableRenamer(myClass, mySuperClassName, filtered);
+      if (!ApplicationManager.getApplication().isUnitTestMode() &&
+          variableRenamer.hasAnythingToRename()) {
+        final AutomaticRenamingDialog dialog = new AutomaticRenamingDialog(myProject, variableRenamer);
+        if (!dialog.showAndGet()) {
+          return false;
         }
-      };
-
-      if (!ProgressManager.getInstance()
-        .runProcessWithProgressSynchronously(runnable, RefactoringBundle.message("searching.for.variables"), true, myProject)) {
-        return false;
+  
+        final List<PsiNamedElement> variables = variableRenamer.getElements();
+        for (final PsiNamedElement namedElement : variables) {
+          final PsiVariable variable = (PsiVariable)namedElement;
+          final SmartPsiElementPointer pointer = SmartPointerManager.getInstance(myProject).createSmartPsiElementPointer(variable);
+          myVariablesRenames.put(pointer, variableRenamer.getNewName(variable));
+        }
+  
+        Runnable runnable = new Runnable() {
+          @Override
+          public void run() {
+            ApplicationManager.getApplication().runReadAction(new Runnable() {
+              @Override
+              public void run() {
+                variableRenamer.findUsages(myVariablesUsages, false, false);
+              }
+            });
+          }
+        };
+  
+        if (!ProgressManager.getInstance()
+          .runProcessWithProgressSynchronously(runnable, RefactoringBundle.message("searching.for.variables"), true, myProject)) {
+          return false;
+        }
       }
     }
 
     prepareSuccessful();
     return true;
   }
-
-  private AutomaticVariableRenamer myVariableRenamer;
 
   protected void performVariablesRenaming() {
     try {
@@ -182,7 +183,14 @@ public abstract class TurnRefsToSuperProcessorBase extends BaseRefactoringProces
         if (element != null) {
           final PsiReference ref = element.getReference();
           assert ref != null;
+          final PsiElement typeParams = createReferenceTypeParameterList(aSuper, ref);
           PsiElement newElement = ref.bindToElement(aSuper);
+          if (typeParams != null && newElement instanceof PsiJavaCodeReferenceElement) {
+            final PsiReferenceParameterList parameterList = ((PsiJavaCodeReferenceElement)newElement).getParameterList();
+            if (parameterList != null) {
+              parameterList.replace(typeParams);
+            }
+          }
 
           if (newElement.getParent() instanceof PsiTypeElement) {
             if (newElement.getParent().getParent() instanceof PsiTypeCastExpression) {
@@ -192,6 +200,22 @@ public abstract class TurnRefsToSuperProcessorBase extends BaseRefactoringProces
         }
       }
     }
+  }
+
+  private static PsiElement createReferenceTypeParameterList(PsiClass aSuper, PsiReference ref) {
+    PsiElement typeParams = null;
+    if (ref instanceof PsiJavaCodeReferenceElement) {
+      final JavaResolveResult result = ((PsiJavaCodeReferenceElement)ref).advancedResolve(false);
+      final PsiElement aClass = result.getElement();
+      if (aClass instanceof PsiClass) {
+        final PsiSubstitutor substitutor =
+          TypeConversionUtil.getSuperClassSubstitutor(aSuper, (PsiClass)aClass, result.getSubstitutor());
+        final PsiElementFactory factory = JavaPsiFacade.getElementFactory(aClass.getProject());
+        final PsiClassType classType = factory.createType(aSuper, substitutor);
+        typeParams = factory.createReferenceFromText(classType.getCanonicalText(), aClass).getParameterList();
+      }
+    }
+    return typeParams;
   }
 
   private static void fixPossiblyRedundantCast(PsiTypeCastExpression cast) throws IncorrectOperationException {

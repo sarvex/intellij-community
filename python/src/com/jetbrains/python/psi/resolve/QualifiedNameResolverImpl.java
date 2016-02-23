@@ -37,6 +37,7 @@ import com.jetbrains.python.codeInsight.userSkeletons.PyUserSkeletonsUtil;
 import com.jetbrains.python.console.PydevConsoleRunner;
 import com.jetbrains.python.facet.PythonPathContributingFacet;
 import com.jetbrains.python.psi.PyFile;
+import com.jetbrains.python.psi.PyUtil;
 import com.jetbrains.python.psi.impl.PyBuiltinCache;
 import com.jetbrains.python.psi.impl.PyImportResolver;
 import com.jetbrains.python.sdk.PySdkUtil;
@@ -71,6 +72,9 @@ public class QualifiedNameResolverImpl implements RootVisitor, QualifiedNameReso
     myQualifiedName = QualifiedName.fromDottedString(qNameString);
   }
 
+  /**
+   * @param qName the empty name means that all found roots will be traversed.
+   */
   public QualifiedNameResolverImpl(@NotNull QualifiedName qName) {
     myQualifiedName = qName;
   }
@@ -84,7 +88,7 @@ public class QualifiedNameResolverImpl implements RootVisitor, QualifiedNameReso
   @Override
   public QualifiedNameResolver fromElement(@NotNull PsiElement foothold) {
     myContext.setFromElement(foothold);
-    if (PydevConsoleRunner.isInPydevConsole(foothold)) {
+    if (PydevConsoleRunner.isInPydevConsole(foothold) || PyUtil.isInScratchFile(foothold)) {
       withAllModules();
       Sdk sdk = PydevConsoleRunner.getConsoleSdk(foothold);
       if (sdk != null) {
@@ -252,18 +256,22 @@ public class QualifiedNameResolverImpl implements RootVisitor, QualifiedNameReso
       addRelativeImportResultsFromSkeletons(footholdFile);
     }
 
-    mySourceResults.addAll(myLibResults);
-    myLibResults.clear();
+    if (mySourceResults.isEmpty() || myQualifiedName.getComponentCount() == 0) {
+      mySourceResults.addAll(myLibResults);
+      myLibResults.clear();
+    }
 
     if (!myWithoutForeign) {
       for (PyImportResolver resolver : Extensions.getExtensions(PyImportResolver.EP_NAME)) {
-        PsiElement foreign = resolver.resolveImportReference(myQualifiedName, myContext);
+        PsiElement foreign = resolver.resolveImportReference(myQualifiedName, myContext, !myWithoutRoots);
         if (foreign != null) {
           myForeignResults.add(foreign);
         }
       }
-      mySourceResults.addAll(myForeignResults);
-      myForeignResults.clear();
+      if (mySourceResults.isEmpty() || myQualifiedName.getComponentCount() == 0) {
+        mySourceResults.addAll(myForeignResults);
+        myForeignResults.clear();
+      }
     }
 
     final ArrayList<PsiElement> results = Lists.newArrayList(mySourceResults);

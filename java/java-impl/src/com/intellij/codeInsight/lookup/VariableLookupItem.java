@@ -1,3 +1,18 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.codeInsight.lookup;
 
 import com.intellij.codeInsight.AutoPopupController;
@@ -5,6 +20,7 @@ import com.intellij.codeInsight.TailType;
 import com.intellij.codeInsight.completion.*;
 import com.intellij.codeInsight.daemon.impl.JavaColorProvider;
 import com.intellij.codeInsight.daemon.impl.analysis.HighlightControlFlowUtil;
+import com.intellij.codeInsight.lookup.impl.JavaElementLookupRenderer;
 import com.intellij.featureStatistics.FeatureUsageTracker;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.RangeMarker;
@@ -30,7 +46,8 @@ import java.util.Collection;
 */
 public class VariableLookupItem extends LookupItem<PsiVariable> implements TypedLookupItem, StaticallyImportable {
   @Nullable private final MemberLookupHelper myHelper;
-  private Color myColor;
+  private final Color myColor;
+  private PsiSubstitutor mySubstitutor = PsiSubstitutor.EMPTY;
 
   public VariableLookupItem(PsiVariable var) {
     super(var, var.getName());
@@ -42,7 +59,9 @@ public class VariableLookupItem extends LookupItem<PsiVariable> implements Typed
     super(field, field.getName());
     myHelper = new MemberLookupHelper(field, field.getContainingClass(), shouldImport, false);
     if (!shouldImport) {
-      forceQualify();
+      for (String s : JavaCompletionUtil.getAllLookupStrings(field)) {
+        setLookupString(s); //todo set the string that will be inserted
+      }
     }
     myColor = getInitializerColor(field);
   }
@@ -77,18 +96,19 @@ public class VariableLookupItem extends LookupItem<PsiVariable> implements Typed
   }
 
   @Override
+  @NotNull
   public PsiType getType() {
     return getSubstitutor().substitute(getObject().getType());
   }
 
   @NotNull
   public PsiSubstitutor getSubstitutor() {
-    final PsiSubstitutor substitutor = (PsiSubstitutor)getAttribute(LookupItem.SUBSTITUTOR);
-    return substitutor == null ? PsiSubstitutor.EMPTY : substitutor;
+    return mySubstitutor;
   }
 
-  public void setSubstitutor(@NotNull PsiSubstitutor substitutor) {
-    setAttribute(SUBSTITUTOR, substitutor);
+  public VariableLookupItem setSubstitutor(@NotNull PsiSubstitutor substitutor) {
+    mySubstitutor = substitutor;
+    return this;
   }
   
   @Override
@@ -109,24 +129,26 @@ public class VariableLookupItem extends LookupItem<PsiVariable> implements Typed
 
   @Override
   public void renderElement(LookupElementPresentation presentation) {
-    super.renderElement(presentation);
+    boolean qualify = myHelper != null && !myHelper.willBeImported();
+
+    PsiVariable variable = getObject();
+    String name = variable.getName();
+    if (qualify && variable instanceof PsiField && ((PsiField)variable).getContainingClass() != null) {
+      name = ((PsiField)variable).getContainingClass().getName() + "." + name;
+    }
+    presentation.setItemText(name);
+
+    presentation.setIcon(DefaultLookupItemRenderer.getRawIcon(this, presentation.isReal()));
+    presentation.setStrikeout(JavaElementLookupRenderer.isToStrikeout(this));
+
     if (myHelper != null) {
-      myHelper.renderElement(presentation, getAttribute(FORCE_QUALIFY) != null ? Boolean.TRUE : null, getSubstitutor());
+      myHelper.renderElement(presentation, qualify, true, getSubstitutor());
     }
     if (myColor != null) {
       presentation.setTypeText("", new ColorIcon(12, myColor));
+    } else {
+      presentation.setTypeText(getType().getPresentableText());
     }
-  }
-
-  @Override
-  public LookupItem<PsiVariable> forceQualify() {
-    PsiVariable var = getObject();
-    if (var instanceof PsiField) {
-      for (String s : JavaCompletionUtil.getAllLookupStrings((PsiField)var)) {
-        setLookupString(s); //todo set the string that will be inserted
-      }
-    }
-    return super.forceQualify();
   }
 
   @Override
@@ -144,6 +166,9 @@ public class VariableLookupItem extends LookupItem<PsiVariable> implements Typed
         final PsiReferenceExpression
           ref = PsiTreeUtil.findElementOfClassAtOffset(context.getFile(), context.getStartOffset(), PsiReferenceExpression.class, false);
         if (ref != null) {
+          if (ref.isQualified()) {
+            return; // shouldn't happen, but sometimes we see exceptions because of this
+          }
           ref.bindToElementViaStaticImport(((PsiField)variable).getContainingClass());
           PostprocessReformattingAspect.getInstance(ref.getProject()).doPostponedFormatting();
         }
@@ -209,10 +234,6 @@ public class VariableLookupItem extends LookupItem<PsiVariable> implements Typed
 
   private boolean shouldQualify(PsiField field, InsertionContext context) {
     if (myHelper != null && !myHelper.willBeImported()) {
-      return true;
-    }
-
-    if (getAttribute(FORCE_QUALIFY) != null) {
       return true;
     }
 

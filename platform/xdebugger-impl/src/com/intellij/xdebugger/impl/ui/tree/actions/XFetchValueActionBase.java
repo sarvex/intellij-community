@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,14 +48,7 @@ public abstract class XFetchValueActionBase extends AnAction {
     if (paths != null) {
       for (TreePath path : paths) {
         Object node = path.getLastPathComponent();
-        if (node instanceof XValueNodeImpl) {
-          if (((XValueNodeImpl)node).isComputed()) {
-            e.getPresentation().setEnabled(true);
-            return;
-          }
-        }
-        else if (node instanceof WatchMessageNode) {
-          e.getPresentation().setEnabled(true);
+        if (isEnabled(e, node)) {
           return;
         }
       }
@@ -63,8 +56,22 @@ public abstract class XFetchValueActionBase extends AnAction {
     e.getPresentation().setEnabled(false);
   }
 
+  protected boolean isEnabled(@NotNull AnActionEvent event, @NotNull Object node) {
+    if (node instanceof XValueNodeImpl) {
+      if (((XValueNodeImpl)node).isComputed()) {
+        event.getPresentation().setEnabled(true);
+        return true;
+      }
+    }
+    else if (node instanceof WatchMessageNode) {
+      event.getPresentation().setEnabled(true);
+      return true;
+    }
+    return false;
+  }
+
   @Override
-  public void actionPerformed(@NotNull final AnActionEvent e) {
+  public void actionPerformed(@NotNull AnActionEvent e) {
     TreePath[] paths = getSelectedNodes(e.getDataContext());
     if (paths == null) {
       return;
@@ -72,28 +79,31 @@ public abstract class XFetchValueActionBase extends AnAction {
 
     ValueCollector valueCollector = createCollector(e);
     for (TreePath path : paths) {
-      Object node = path.getLastPathComponent();
-      if (node instanceof XValueNodeImpl) {
-        XValueNodeImpl valueNode = (XValueNodeImpl)node;
-        XFullValueEvaluator fullValueEvaluator = valueNode.getFullValueEvaluator();
-        if (paths.length > 1) { // multiselection - copy the whole node text, see IDEA-136722
-          valueCollector.add(valueNode.getText().toString(), valueNode.getPath().getPathCount());
-        }
-        else {
-          if (fullValueEvaluator == null || !fullValueEvaluator.isShowValuePopup()) {
-            valueCollector.add(StringUtil.notNullize(DebuggerUIUtil.getNodeRawValue(valueNode)));
-          }
-          else {
-            new CopyValueEvaluationCallback(valueNode, valueCollector).startFetchingValue(fullValueEvaluator);
-          }
-        }
-      }
-      else if (node instanceof WatchMessageNode) {
-        valueCollector.add(((WatchMessageNode)node).getExpression().getExpression());
-      }
+      addToCollector(paths, path.getLastPathComponent(), valueCollector);
     }
     valueCollector.processed = true;
-    valueCollector.finish(e.getProject());
+    valueCollector.finish();
+  }
+
+  protected void addToCollector(@NotNull TreePath[] paths, @NotNull Object node, @NotNull ValueCollector valueCollector) {
+    if (node instanceof XValueNodeImpl) {
+      XValueNodeImpl valueNode = (XValueNodeImpl)node;
+      XFullValueEvaluator fullValueEvaluator = valueNode.getFullValueEvaluator();
+      if (paths.length > 1) { // multiselection - copy the whole node text, see IDEA-136722
+        valueCollector.add(valueNode.getText().toString(), valueNode.getPath().getPathCount());
+      }
+      else {
+        if (fullValueEvaluator == null || !fullValueEvaluator.isShowValuePopup()) {
+          valueCollector.add(StringUtil.notNullize(DebuggerUIUtil.getNodeRawValue(valueNode)));
+        }
+        else {
+          new CopyValueEvaluationCallback(valueNode, valueCollector).startFetchingValue(fullValueEvaluator);
+        }
+      }
+    }
+    else if (node instanceof WatchMessageNode) {
+      valueCollector.add(((WatchMessageNode)node).getExpression().getExpression());
+    }
   }
 
   @NotNull
@@ -101,7 +111,7 @@ public abstract class XFetchValueActionBase extends AnAction {
     return new ValueCollector(XDebuggerTree.getTree(e.getDataContext()));
   }
 
-  protected class ValueCollector {
+  public class ValueCollector {
     private final List<String> values = new SmartList<String>();
     private final IntIntHashMap indents = new IntIntHashMap();
     private final XDebuggerTree myTree;
@@ -120,7 +130,8 @@ public abstract class XFetchValueActionBase extends AnAction {
       indents.put(values.size() - 1, indent);
     }
 
-    public void finish(Project project) {
+    public void finish() {
+      Project project = myTree.getProject();
       if (processed && !values.contains(null) && !project.isDisposed()) {
         int minIndent = Integer.MAX_VALUE;
         for (int indent : indents.getValues()) {
@@ -151,13 +162,10 @@ public abstract class XFetchValueActionBase extends AnAction {
       return index;
     }
 
-    public void evaluationComplete(final int index, @NotNull final String value, final Project project) {
-      AppUIUtil.invokeOnEdt(new Runnable() {
-        @Override
-        public void run() {
-          values.set(index, value);
-          finish(project);
-        }
+    public void evaluationComplete(final int index, @NotNull final String value) {
+      AppUIUtil.invokeOnEdt(() -> {
+        values.set(index, value);
+        finish();
       });
     }
   }
@@ -177,7 +185,7 @@ public abstract class XFetchValueActionBase extends AnAction {
 
     @Override
     protected void evaluationComplete(@NotNull String value, @NotNull Project project) {
-      myValueCollector.evaluationComplete(myValueIndex, value, project);
+      myValueCollector.evaluationComplete(myValueIndex, value);
     }
   }
 }

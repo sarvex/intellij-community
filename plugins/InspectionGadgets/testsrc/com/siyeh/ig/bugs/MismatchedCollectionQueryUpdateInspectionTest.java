@@ -1,7 +1,9 @@
 package com.siyeh.ig.bugs;
 
 import com.intellij.codeInspection.InspectionProfileEntry;
+import com.intellij.testFramework.LightProjectDescriptor;
 import com.siyeh.ig.LightInspectionTestCase;
+import org.jetbrains.annotations.NotNull;
 
 public class MismatchedCollectionQueryUpdateInspectionTest extends LightInspectionTestCase {
 
@@ -25,8 +27,18 @@ public class MismatchedCollectionQueryUpdateInspectionTest extends LightInspecti
       "package java.util.concurrent;" +
       "public class LinkedBlockingDeque<E> implements BlockingDeque {}",
       "package java.lang;" +
-      "public class InterruptedException extends Exception {}"
+      "public class InterruptedException extends Exception {}",
+      "package java.util.concurrent;" +
+      "public interface BlockingQueue<E> {" +
+      "  int drainTo(java.util.Collection<? super E> c);" +
+      "}"
     };
+  }
+
+  @NotNull
+  @Override
+  protected LightProjectDescriptor getProjectDescriptor() {
+    return JAVA_8;
   }
 
   @Override

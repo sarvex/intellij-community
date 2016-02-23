@@ -39,6 +39,7 @@ public abstract class FileTemplateBase implements FileTemplate {
   @Nullable
   private String myText;
   private boolean myShouldReformatCode = DEFAULT_REFORMAT_CODE_VALUE;
+  private boolean myLiveTemplateEnabled;
 
   @Override
   public final boolean isReformatCode() {
@@ -113,4 +114,16 @@ public abstract class FileTemplateBase implements FileTemplate {
   public boolean isTemplateOfType(@NotNull final FileType fType) {
     return fType.equals(FileTypeManagerEx.getInstanceEx().getFileTypeByExtension(getExtension()));
   }
+
+  @Override
+  public boolean isLiveTemplateEnabled() {
+    return myLiveTemplateEnabled;
+  }
+
+  @Override
+  public void setLiveTemplateEnabled(boolean value) {
+    myLiveTemplateEnabled = value;
+  }
+
+  public boolean isLiveTemplateEnabledByDefault() { return false; }
 }

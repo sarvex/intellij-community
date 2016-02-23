@@ -15,10 +15,12 @@
  */
 package com.intellij.compiler.notNullVerification;
 
-import com.sun.istack.internal.NotNull;
-import com.sun.istack.internal.Nullable;
+import com.intellij.compiler.instrumentation.FailSafeClassReader;
+import com.intellij.compiler.instrumentation.FailSafeMethodVisitor;
 import org.jetbrains.org.objectweb.asm.*;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -54,7 +56,7 @@ public class NotNullVerifyingInstrumenter extends ClassVisitor implements Opcode
     myMethodParamNames = getAllParameterNames(reader);
   }
 
-  public static boolean processClassFile(final ClassReader reader, final ClassVisitor writer) {
+  public static boolean processClassFile(final FailSafeClassReader reader, final ClassVisitor writer) {
     final NotNullVerifyingInstrumenter instrumenter = new NotNullVerifyingInstrumenter(writer, reader);
     reader.accept(instrumenter, 0);
     return instrumenter.isModification();
@@ -112,8 +114,8 @@ public class NotNullVerifyingInstrumenter extends ClassVisitor implements Opcode
   }
 
   private static class NotNullState {
-    @Nullable String message;
-    @NotNull String exceptionType;
+    String message;
+    String exceptionType;
 
     NotNullState(String exceptionType) {
       this.exceptionType = exceptionType;
@@ -122,11 +124,15 @@ public class NotNullVerifyingInstrumenter extends ClassVisitor implements Opcode
 
   @Override
   public MethodVisitor visitMethod(final int access, final String name, String desc, String signature, String[] exceptions) {
+    if ((access & Opcodes.ACC_BRIDGE) != 0) {
+      return new FailSafeMethodVisitor(Opcodes.ASM5, super.visitMethod(access, name, desc, signature, exceptions));
+    }
+
     final Type[] args = Type.getArgumentTypes(desc);
     final Type returnType = Type.getReturnType(desc);
     final MethodVisitor v = cv.visitMethod(access, name, desc, signature, exceptions);
     final Map<Integer, String> paramNames = myMethodParamNames.get(myClassName + '.' + name + desc);
-    return new MethodVisitor(Opcodes.ASM5, v) {
+    return new FailSafeMethodVisitor(Opcodes.ASM5, v) {
       private final Map<Integer, NotNullState> myNotNullParams = new LinkedHashMap<Integer, NotNullState>();
       private int mySyntheticCount = 0;
       private NotNullState myMethodNotNull;
@@ -277,7 +283,19 @@ public class NotNullVerifyingInstrumenter extends ClassVisitor implements Opcode
       if (err == null) {
         err = e;
       }
-      myPostponedError = new RuntimeException("Operation '" + operationName + "' failed for " + myClassName + "." + methodName + "(): " + err.getMessage(), err);
+      final StringBuilder message = new StringBuilder();
+      message.append("Operation '").append(operationName).append("' failed for ").append(myClassName).append(".").append(methodName).append("(): ");
+      
+      final String errMessage = err.getMessage();
+      if (errMessage != null) {
+        message.append(errMessage);
+      }
+      
+      final ByteArrayOutputStream out = new ByteArrayOutputStream();
+      err.printStackTrace(new PrintStream(out));
+      message.append('\n').append(out.toString());
+      
+      myPostponedError = new RuntimeException(message.toString(), err);
     }
     if (myIsModification) {
       processPostponedErrors();

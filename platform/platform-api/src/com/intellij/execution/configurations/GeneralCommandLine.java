@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,11 +27,9 @@ import com.intellij.openapi.util.UserDataHolder;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.util.EnvironmentUtil;
-import com.intellij.util.PlatformUtils;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.text.CaseInsensitiveStringHashingStrategy;
 import gnu.trove.THashMap;
-import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -42,23 +40,64 @@ import java.util.*;
 
 /**
  * OS-independent way of executing external processes with complex parameters.
- * <p/>
+ * <p>
  * Main idea of the class is to accept parameters "as-is", just as they should look to an external process, and quote/escape them
- * as required by the underlying platform.
+ * as required by the underlying platform - so to run some program with a "parameter with space" all that's needed is
+ * {@code new GeneralCommandLine("some program", "parameter with space").createProcess()}.
+ * <p>
+ * Consider the following things when using this class.
  *
+ * <h3>Working directory</h3>
+ * By default, a current directory of the IDE process is used (usually a "bin/" directory of IDE installation).
+ * If a child process may create files in it, this choice is unwelcome. On the other hand, informational commands (e.g. "git --version")
+ * are safe. When unsure, set it to something neutral - like user's home or a temp directory.
+ *
+ * <h3>Parent Environment</h3>
+ * {@link ParentEnvironmentType Three options here}.
+ * For commands designed from the ground up for typing into a terminal, use {@link ParentEnvironmentType#CONSOLE CONSOLE}
+ * (typical cases: version controls, Node.js and all the stuff around it, Python and Ruby interpreters and utilities, etc).
+ * For GUI apps and CLI tools which aren't primarily intended to be launched by humans, use {@link ParentEnvironmentType#SYSTEM SYSTEM}
+ * (examples: UI builders, browsers, XCode components). For the empty environment, there is {@link ParentEnvironmentType#NONE NONE}.
+ * According to an extensive research conducted by British scientists (tm) on a diverse population of both wild and domesticated tools
+ * (no one was harmed), most of them are either insensitive to an environment or fall into the first category,
+ * thus backing up the choice of CONSOLE as the default value.
+ *
+ * <h3>Encoding/Charset</h3>
+ * The {@link #getCharset()} method is used by classes like {@link com.intellij.execution.process.OSProcessHandler OSProcessHandler}
+ * or {@link com.intellij.execution.util.ExecUtil ExecUtil} to decode bytes of a child's output stream. For proper conversion,
+ * the same value should be used on another side of the pipe. Chances are you don't have to mess with the setting -
+ * because a platform-dependent guessing behind {@link Charset#defaultCharset()} is used by default and a child process
+ * may happen to use a similar heuristic.
+ * If the above automagic fails or more control is needed, the charset may be set explicitly. Again, do not forget the other side -
+ * call {@code addParameter("-Dfile.encoding=...")} for Java-based tools, or use {@code withEnvironment("HGENCODING", "...")}
+ * for Mercurial, etc.
+ *
+ * @see com.intellij.execution.util.ExecUtil
  * @see com.intellij.execution.process.OSProcessHandler
  */
 public class GeneralCommandLine implements UserDataHolder {
   private static final Logger LOG = Logger.getInstance("#com.intellij.execution.configurations.GeneralCommandLine");
 
-  private String myExePath = null;
-  private File myWorkDirectory = null;
+  /**
+   * Determines the scope of a parent environment passed to a child process.
+   * <p>
+   * {@code NONE} means a child process will receive an empty environment. <br/>
+   * {@code SYSTEM} will provide it with the same environment as an IDE. <br/>
+   * {@code CONSOLE} provides the child with a similar environment as if it was launched from, well, a console.
+   * On OS X, a console environment is simulated (see {@link EnvironmentUtil#getEnvironmentMap()} for reasons it's needed
+   * and details on how it works). On Windows and Unix hosts, this option is no different from {@code SYSTEM}
+   * since there is no drastic distinction in environment between GUI and console apps.
+   */
+  public enum ParentEnvironmentType {NONE, SYSTEM, CONSOLE}
+
+  private String myExePath;
+  private File myWorkDirectory;
   private final Map<String, String> myEnvParams = new MyTHashMap();
-  private boolean myPassParentEnvironment = true;
+  private ParentEnvironmentType myParentEnvironmentType = ParentEnvironmentType.CONSOLE;
   private final ParametersList myProgramParams = new ParametersList();
   private Charset myCharset = CharsetToolkit.getDefaultSystemCharset();
-  private boolean myRedirectErrorStream = false;
-  private Map<Object, Object> myUserData = null;
+  private boolean myRedirectErrorStream;
+  private Map<Object, Object> myUserData;
 
   public GeneralCommandLine() { }
 
@@ -76,12 +115,19 @@ public class GeneralCommandLine implements UserDataHolder {
     }
   }
 
+  @NotNull
   public String getExePath() {
     return myExePath;
   }
 
-  public void setExePath(@NotNull @NonNls final String exePath) {
+  @NotNull
+  public GeneralCommandLine withExePath(@NotNull String exePath) {
     myExePath = exePath.trim();
+    return this;
+  }
+
+  public void setExePath(@NotNull String exePath) {
+    withExePath(exePath);
   }
 
   public File getWorkDirectory() {
@@ -89,28 +135,22 @@ public class GeneralCommandLine implements UserDataHolder {
   }
 
   @NotNull
-  public GeneralCommandLine withWorkDirectory(@Nullable final String path) {
+  public GeneralCommandLine withWorkDirectory(@Nullable String path) {
     return withWorkDirectory(path != null ? new File(path) : null);
   }
 
   @NotNull
-  public GeneralCommandLine withWorkDirectory(@Nullable final File workDirectory) {
+  public GeneralCommandLine withWorkDirectory(@Nullable File workDirectory) {
     myWorkDirectory = workDirectory;
     return this;
   }
 
-  /**
-   * @deprecated Use {@link #withWorkDirectory(String)} instead.
-   */
-  public void setWorkDirectory(@Nullable @NonNls final String path) {
+  public void setWorkDirectory(@Nullable String path) {
     withWorkDirectory(path);
   }
 
-  /**
-   * @deprecated Use {@link #withWorkDirectory(java.io.File)} instead.
-   */
-  public void setWorkDirectory(@Nullable final File workDirectory) {
-    myWorkDirectory = workDirectory;
+  public void setWorkDirectory(@Nullable File workDirectory) {
+    withWorkDirectory(workDirectory);
   }
 
   /**
@@ -129,66 +169,79 @@ public class GeneralCommandLine implements UserDataHolder {
     return this;
   }
 
-  /**
-   * @deprecated use {@link #getEnvironment()} (to remove in IDEA 14)
-   */
-  @SuppressWarnings("unused")
-  public Map<String, String> getEnvParams() {
-    return getEnvironment();
-  }
-
-  /**
-   * @deprecated use {@link #getEnvironment()} (to remove in IDEA 14)
-   */
-  @SuppressWarnings("unused")
-  public void setEnvParams(@Nullable Map<String, String> envParams) {
-    myEnvParams.clear();
-    if (envParams != null) {
-      myEnvParams.putAll(envParams);
-    }
-  }
-
-  public void setPassParentEnvironment(boolean passParentEnvironment) {
-    myPassParentEnvironment = passParentEnvironment;
-  }
-
-  /**
-   * @deprecated use {@link #setPassParentEnvironment(boolean)} (to remove in IDEA 14)
-   */
-  @SuppressWarnings({"unused", "SpellCheckingInspection"})
-  public void setPassParentEnvs(boolean passParentEnvironment) {
-    setPassParentEnvironment(passParentEnvironment);
+  @NotNull
+  public GeneralCommandLine withEnvironment(@NotNull String key, @NotNull String value) {
+    getEnvironment().put(key, value);
+    return this;
   }
 
   public boolean isPassParentEnvironment() {
-    return myPassParentEnvironment;
+    return myParentEnvironmentType != ParentEnvironmentType.NONE;
+  }
+
+  /** @deprecated use {@link #withParentEnvironmentType(ParentEnvironmentType)} (to be removed in IDEA 17) */
+  @SuppressWarnings("unused")
+  public GeneralCommandLine withPassParentEnvironment(boolean passParentEnvironment) {
+    return withParentEnvironmentType(passParentEnvironment ? ParentEnvironmentType.CONSOLE : ParentEnvironmentType.NONE);
+  }
+
+  /** @deprecated use {@link #withParentEnvironmentType(ParentEnvironmentType)} (to be removed in IDEA 17) */
+  @SuppressWarnings("unused")
+  public void setPassParentEnvironment(boolean passParentEnvironment) {
+    withParentEnvironmentType(passParentEnvironment ? ParentEnvironmentType.CONSOLE : ParentEnvironmentType.NONE);
+  }
+
+  @NotNull
+  public ParentEnvironmentType getParentEnvironmentType() {
+    return myParentEnvironmentType;
+  }
+
+  @NotNull
+  public GeneralCommandLine withParentEnvironmentType(@NotNull ParentEnvironmentType type) {
+    myParentEnvironmentType = type;
+    return this;
   }
 
   /**
-   * @return Environment, that will be passed to the process if isPassParentEnvironment() == true
+   * Returns an environment that will be passed to a child process.
    */
   @NotNull
   public Map<String, String> getParentEnvironment() {
-    return Collections.unmodifiableMap(PlatformUtils.isAppCode() ? System.getenv() // Temporarily fix for OC-8606
-                                                                 : EnvironmentUtil.getEnvironmentMap());
-  }
-
-  public void addParameters(final String... parameters) {
-    for (String parameter : parameters) {
-      addParameter(parameter);
+    switch (myParentEnvironmentType) {
+      case SYSTEM:
+        return System.getenv();
+      case CONSOLE:
+        return EnvironmentUtil.getEnvironmentMap();
+      default:
+        return Collections.emptyMap();
     }
   }
 
-  public void addParameters(@NotNull final List<String> parameters) {
-    for (final String parameter : parameters) {
-      addParameter(parameter);
-    }
+  public void addParameters(@NotNull String... parameters) {
+    withParameters(parameters);
   }
 
-  public void addParameter(@NotNull @NonNls final String parameter) {
+  public void addParameters(@NotNull List<String> parameters) {
+    withParameters(parameters);
+  }
+
+  @NotNull
+  public GeneralCommandLine withParameters(@NotNull String... parameters) {
+    for (String parameter : parameters) addParameter(parameter);
+    return this;
+  }
+
+  @NotNull
+  public GeneralCommandLine withParameters(@NotNull List<String> parameters) {
+    for (String parameter : parameters) addParameter(parameter);
+    return this;
+  }
+
+  public void addParameter(@NotNull String parameter) {
     myProgramParams.add(parameter);
   }
 
+  @NotNull
   public ParametersList getParametersList() {
     return myProgramParams;
   }
@@ -198,24 +251,28 @@ public class GeneralCommandLine implements UserDataHolder {
     return myCharset;
   }
 
-  public GeneralCommandLine withCharset(@NotNull final Charset charset) {
+  @NotNull
+  public GeneralCommandLine withCharset(@NotNull Charset charset) {
     myCharset = charset;
     return this;
   }
 
-  /**
-   * @deprecated Use {@link #withCharset} instead.
-   */
-  public void setCharset(@NotNull final Charset charset) {
-    myCharset = charset;
+  public void setCharset(@NotNull Charset charset) {
+    withCharset(charset);
   }
 
   public boolean isRedirectErrorStream() {
     return myRedirectErrorStream;
   }
 
-  public void setRedirectErrorStream(final boolean redirectErrorStream) {
+  @NotNull
+  public GeneralCommandLine withRedirectErrorStream(boolean redirectErrorStream) {
     myRedirectErrorStream = redirectErrorStream;
+    return this;
+  }
+
+  public void setRedirectErrorStream(boolean redirectErrorStream) {
+    withRedirectErrorStream(redirectErrorStream);
   }
 
   /**
@@ -224,6 +281,7 @@ public class GeneralCommandLine implements UserDataHolder {
    *
    * @return single-string representation of this command line.
    */
+  @NotNull
   public String getCommandLineString() {
     return getCommandLineString(null);
   }
@@ -235,12 +293,14 @@ public class GeneralCommandLine implements UserDataHolder {
    * @param exeName use this executable name instead of given by {@link #setExePath(String)}
    * @return single-string representation of this command line.
    */
-  public String getCommandLineString(@Nullable final String exeName) {
+  @NotNull
+  public String getCommandLineString(@Nullable String exeName) {
     return ParametersList.join(getCommandLineList(exeName));
   }
 
-  public List<String> getCommandLineList(@Nullable final String exeName) {
-    final List<String> commands = new ArrayList<String>();
+  @NotNull
+  public List<String> getCommandLineList(@Nullable String exeName) {
+    List<String> commands = new ArrayList<String>();
     if (exeName != null) {
       commands.add(exeName);
     }
@@ -271,6 +331,8 @@ public class GeneralCommandLine implements UserDataHolder {
   public Process createProcess() throws ExecutionException {
     if (LOG.isDebugEnabled()) {
       LOG.debug("Executing [" + getCommandLineString() + "]");
+      LOG.debug("  environment: " + myEnvParams + " (+" + myParentEnvironmentType + ")");
+      LOG.debug("  charset: " + myCharset);
     }
 
     List<String> commands;
@@ -311,21 +373,20 @@ public class GeneralCommandLine implements UserDataHolder {
       return;
     }
     if (!myWorkDirectory.exists()) {
-      throw new ExecutionException(
-        IdeBundle.message("run.configuration.error.working.directory.does.not.exist", myWorkDirectory.getAbsolutePath()));
+      throw new ExecutionException(IdeBundle.message("run.configuration.error.working.directory.does.not.exist", myWorkDirectory));
     }
     if (!myWorkDirectory.isDirectory()) {
-      throw new ExecutionException(IdeBundle.message("run.configuration.error.working.directory.not.directory"));
+      throw new ExecutionException(IdeBundle.message("run.configuration.error.working.directory.not.directory", myWorkDirectory));
     }
   }
 
   protected void setupEnvironment(@NotNull Map<String, String> environment) {
     environment.clear();
 
-    if (myPassParentEnvironment) {
+    if (myParentEnvironmentType != ParentEnvironmentType.NONE) {
       environment.putAll(getParentEnvironment());
     }
-    
+
     if (!myEnvParams.isEmpty()) {
       if (SystemInfo.isWindows) {
         THashMap<String, String> envVars = new THashMap<String, String>(CaseInsensitiveStringHashingStrategy.INSTANCE);
@@ -358,16 +419,16 @@ public class GeneralCommandLine implements UserDataHolder {
   }
 
   @Override
-  public <T> T getUserData(@NotNull final Key<T> key) {
+  public <T> T getUserData(@NotNull Key<T> key) {
     if (myUserData != null) {
-      @SuppressWarnings({"UnnecessaryLocalVariable", "unchecked"}) final T t = (T)myUserData.get(key);
+      @SuppressWarnings({"UnnecessaryLocalVariable", "unchecked"}) T t = (T)myUserData.get(key);
       return t;
     }
     return null;
   }
 
   @Override
-  public <T> void putUserData(@NotNull final Key<T> key, @Nullable final T value) {
+  public <T> void putUserData(@NotNull Key<T> key, @Nullable T value) {
     if (myUserData == null) {
       myUserData = ContainerUtil.newHashMap();
     }
@@ -375,6 +436,10 @@ public class GeneralCommandLine implements UserDataHolder {
   }
 
   private static class MyTHashMap extends THashMap<String, String> {
+    private MyTHashMap() {
+      super(SystemInfo.isWindows ? CaseInsensitiveStringHashingStrategy.INSTANCE : ContainerUtil.<String>canonicalStrategy());
+    }
+
     @Override
     public String put(String key, String value) {
       if (key == null || value == null) {

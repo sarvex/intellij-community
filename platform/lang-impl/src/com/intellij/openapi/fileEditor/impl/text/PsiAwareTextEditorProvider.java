@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,6 @@ package com.intellij.openapi.fileEditor.impl.text;
 import com.intellij.codeHighlighting.BackgroundEditorHighlighter;
 import com.intellij.codeInsight.daemon.impl.TextEditorBackgroundHighlighter;
 import com.intellij.codeInsight.folding.CodeFoldingManager;
-import com.intellij.openapi.application.Result;
-import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
@@ -31,6 +29,7 @@ import com.intellij.openapi.fileEditor.*;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.WriteExternalException;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.util.Producer;
@@ -56,17 +55,19 @@ public class PsiAwareTextEditorProvider extends TextEditorProvider implements As
       LOG.error("Cannot open text editor for " + file);
     }
     CodeFoldingState state = null;
-    try {
-      Document document = FileDocumentManager.getInstance().getDocument(file);
-      if (document != null) {
-        state = CodeFoldingManager.getInstance(project).buildInitialFoldings(document);
+    if (!project.isDefault()) { // There's no CodeFoldingManager for default project (which is used in diff command-line application)
+      try {
+        Document document = FileDocumentManager.getInstance().getDocument(file);
+        if (document != null) {
+          state = CodeFoldingManager.getInstance(project).buildInitialFoldings(document);
+        }
       }
-    }
-    catch (ProcessCanceledException e) {
-      throw e;
-    }
-    catch (Exception e) {
-      LOG.error("Error building initial foldings", e);
+      catch (ProcessCanceledException e) {
+        throw e;
+      }
+      catch (Exception e) {
+        LOG.error("Error building initial foldings", e);
+      }
     }
     final CodeFoldingState finalState = state;
     return new Builder() {
@@ -133,7 +134,7 @@ public class PsiAwareTextEditorProvider extends TextEditorProvider implements As
     final TextEditorState state = super.getStateImpl(project, editor, level);
     // Save folding only on FULL level. It's very expensive to commit document on every
     // type (caused by undo).
-    if(FileEditorStateLevel.FULL == level){
+    if (FileEditorStateLevel.FULL == level) {
       // Folding
       if (project != null && !project.isDisposed() && !editor.isDisposed() && project.isInitialized()) {
         PsiDocumentManager.getInstance(project).commitDocument(editor.getDocument());
@@ -153,20 +154,10 @@ public class PsiAwareTextEditorProvider extends TextEditorProvider implements As
     // Folding
     final CodeFoldingState foldState = state.getFoldingState();
     if (project != null && foldState != null) {
-      new WriteAction() {
-        @Override
-        protected void run(@NotNull Result result) throws Throwable {
-          PsiDocumentManager.getInstance(project).commitDocument(editor.getDocument());
-          editor.getFoldingModel().runBatchFoldingOperation(
-            new Runnable() {
-              @Override
-              public void run() {
-                CodeFoldingManager.getInstance(project).restoreFoldingState(editor, foldState);
-              }
-            }
-          );
-        }
-      }.execute();
+      PsiDocumentManager.getInstance(project).commitDocument(editor.getDocument());
+      editor.getFoldingModel().runBatchFoldingOperation(
+        () -> CodeFoldingManager.getInstance(project).restoreFoldingState(editor, foldState)
+      );
     }
   }
 
@@ -190,6 +181,11 @@ public class PsiAwareTextEditorProvider extends TextEditorProvider implements As
     @Override
     public BackgroundEditorHighlighter getBackgroundHighlighter() {
       return myBackgroundHighlighter;
+    }
+
+    @Override
+    public boolean isValid() {
+      return !Registry.is("editor.new.rendering") || !getEditor().isDisposed();
     }
   }
 }

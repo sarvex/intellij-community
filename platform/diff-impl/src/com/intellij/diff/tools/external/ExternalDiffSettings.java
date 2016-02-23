@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,15 +30,17 @@ import org.jetbrains.annotations.Nullable;
 
 @State(
   name = "ExternalDiffSettings",
-  storages = @Storage(file = DiffUtil.DIFF_CONFIG)
+  storages = @Storage(DiffUtil.DIFF_CONFIG)
 )
 public class ExternalDiffSettings implements PersistentStateComponent<ExternalDiffSettings.State> {
   private State myState = new State();
 
+  @Override
   public State getState() {
     return myState;
   }
 
+  @Override
   public void loadState(State state) {
     myState = state;
   }
@@ -91,6 +93,7 @@ public class ExternalDiffSettings implements PersistentStateComponent<ExternalDi
     @Nullable public Boolean MERGE_ENABLED = null;
     @Nullable public String MERGE_EXE_PATH = null;
     @Nullable public String MERGE_PARAMETERS = null;
+    public boolean MERGE_TRUST_EXIT_CODE = false;
   }
 
   public boolean isDiffEnabled() {
@@ -157,5 +160,13 @@ public class ExternalDiffSettings implements PersistentStateComponent<ExternalDi
   public void setMergeParameters(@NotNull String path) {
     myState.MERGE_PARAMETERS = path;
     setProperty(DiffManagerImpl.MERGE_TOOL_PARAMETERS, path);
+  }
+
+  public boolean isMergeTrustExitCode() {
+    return myState.MERGE_TRUST_EXIT_CODE;
+  }
+
+  public void setMergeTrustExitCode(boolean value) {
+    myState.MERGE_TRUST_EXIT_CODE = value;
   }
 }

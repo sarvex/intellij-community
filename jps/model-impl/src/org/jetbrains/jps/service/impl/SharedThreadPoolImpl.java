@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
  */
 package org.jetbrains.jps.service.impl;
 
+import com.intellij.util.ConcurrencyUtil;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.jps.service.SharedThreadPool;
 
 import java.util.concurrent.ExecutorService;
@@ -25,15 +27,16 @@ import java.util.concurrent.Future;
  * @author nik
  */
 public class SharedThreadPoolImpl extends SharedThreadPool {
-  private final ExecutorService myService = Executors.newCachedThreadPool();
+  private final ExecutorService myService = Executors.newCachedThreadPool(ConcurrencyUtil.newNamedThreadFactory("JPS thread pool"));
 
   @Override
-  public void execute(Runnable command) {
+  public void execute(@NotNull Runnable command) {
     executeOnPooledThread(command);
   }
 
+  @NotNull
   @Override
-  public Future<?> executeOnPooledThread(final Runnable action) {
+  public Future<?> executeOnPooledThread(@NotNull final Runnable action) {
     return myService.submit(new Runnable() {
       @Override
       public void run() {

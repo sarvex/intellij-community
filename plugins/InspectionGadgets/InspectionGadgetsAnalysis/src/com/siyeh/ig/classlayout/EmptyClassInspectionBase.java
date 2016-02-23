@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,25 +16,36 @@
 package com.siyeh.ig.classlayout;
 
 import com.intellij.codeInsight.AnnotationUtil;
+import com.intellij.openapi.util.WriteExternalException;
 import com.intellij.psi.*;
 import com.intellij.psi.util.FileTypeUtils;
 import com.intellij.psi.util.InheritanceUtil;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.siyeh.InspectionGadgetsBundle;
 import com.siyeh.ig.BaseInspection;
 import com.siyeh.ig.BaseInspectionVisitor;
 import com.siyeh.ig.InspectionGadgetsFix;
 import com.siyeh.ig.fixes.AddToIgnoreIfAnnotatedByListQuickFix;
 import com.siyeh.ig.ui.ExternalizableStringSet;
+import org.jdom.Element;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
 public class EmptyClassInspectionBase extends BaseInspection {
-  @SuppressWarnings({"PublicField"})
+  @SuppressWarnings("PublicField")
   public final ExternalizableStringSet ignorableAnnotations = new ExternalizableStringSet();
-  @SuppressWarnings({"PublicField"})
+  @SuppressWarnings("PublicField")
   public boolean ignoreClassWithParameterization = false;
-  @SuppressWarnings({"PublicField"})
+  @SuppressWarnings("PublicField")
   public boolean ignoreThrowables = true;
+  @SuppressWarnings("PublicField")
+  public boolean commentsAreContent = true;
+
+  @Override
+  public void writeSettings(@NotNull Element node) throws WriteExternalException {
+    defaultWriteSettings(node, "commentsAreContent");
+    writeBooleanOption(node, "commentsAreContent", false);
+  }
 
   @Override
   @NotNull
@@ -76,6 +87,7 @@ public class EmptyClassInspectionBase extends BaseInspection {
 
     @Override
     public void visitFile(PsiFile file) {
+      super.visitFile(file);
       if (!(file instanceof PsiJavaFile)) {
         return;
       }
@@ -92,12 +104,19 @@ public class EmptyClassInspectionBase extends BaseInspection {
 
     @Override
     public void visitClass(@NotNull PsiClass aClass) {
-      //don't call super, to prevent drilldown
+      super.visitClass(aClass);
       if (FileTypeUtils.isInServerPageFile(aClass.getContainingFile())) {
         return;
       }
       if (aClass.isInterface() || aClass.isEnum() || aClass.isAnnotationType()) {
         return;
+      }
+      if (!aClass.hasModifierProperty(PsiModifier.ABSTRACT)) {
+        for (PsiClass superClass : aClass.getSupers()) {
+          if (superClass.isInterface() || superClass.hasModifierProperty(PsiModifier.ABSTRACT)) {
+            return;
+          }
+        }
       }
       if (aClass instanceof PsiTypeParameter) {
         return;
@@ -116,6 +135,9 @@ public class EmptyClassInspectionBase extends BaseInspection {
       }
       final PsiClassInitializer[] initializers = aClass.getInitializers();
       if (initializers.length > 0) {
+        return;
+      }
+      if (commentsAreContent && PsiTreeUtil.getChildOfType(aClass, PsiComment.class) != null) {
         return;
       }
       if (ignoreClassWithParameterization && isSuperParametrization(aClass)) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,11 +25,16 @@ import com.intellij.openapi.externalSystem.settings.ExternalProjectSettings;
 import com.intellij.openapi.externalSystem.settings.ExternalSystemSettingsListenerAdapter;
 import com.intellij.openapi.externalSystem.test.ExternalSystemImportingTestCase;
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
+import com.intellij.openapi.projectRoots.JavaSdk;
+import com.intellij.openapi.projectRoots.ProjectJdkTable;
+import com.intellij.openapi.projectRoots.Sdk;
+import com.intellij.openapi.projectRoots.impl.SdkConfigurationUtil;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.ui.TestDialog;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.testFramework.IdeaTestUtil;
 import com.intellij.util.PathUtil;
 import com.intellij.util.containers.ContainerUtil;
 import org.gradle.util.GradleVersion;
@@ -37,10 +42,11 @@ import org.gradle.wrapper.GradleWrapperMain;
 import org.intellij.lang.annotations.Language;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.plugins.gradle.VersionMatcherRule;
+import org.jetbrains.plugins.gradle.tooling.VersionMatcherRule;
 import org.jetbrains.plugins.gradle.settings.DistributionType;
 import org.jetbrains.plugins.gradle.settings.GradleProjectSettings;
 import org.jetbrains.plugins.gradle.settings.GradleSettings;
+import org.jetbrains.plugins.gradle.tooling.builder.AbstractModelBuilderTest;
 import org.jetbrains.plugins.gradle.util.GradleConstants;
 import org.junit.Rule;
 import org.junit.rules.TestName;
@@ -67,21 +73,37 @@ import static org.junit.Assume.assumeThat;
  */
 @RunWith(value = Parameterized.class)
 public abstract class GradleImportingTestCase extends ExternalSystemImportingTestCase {
-
+  public static final String BASE_GRADLE_VERSION = AbstractModelBuilderTest.BASE_GRADLE_VERSION;
+  private static final String GRADLE_JDK_NAME = "Gradle JDK";
   private static final int GRADLE_DAEMON_TTL_MS = 10000;
 
   @Rule public TestName name = new TestName();
-  @Rule public VersionMatcherRule versionMatcherRule = new VersionMatcherRule();
 
+  @Rule public VersionMatcherRule versionMatcherRule = new VersionMatcherRule();
   @NotNull
   @org.junit.runners.Parameterized.Parameter(0)
   public String gradleVersion;
   private GradleProjectSettings myProjectSettings;
+  private String myJdkHome;
 
   @Override
   public void setUp() throws Exception {
+    myJdkHome = IdeaTestUtil.requireRealJdkHome();
     super.setUp();
     assumeThat(gradleVersion, versionMatcherRule.getMatcher());
+    new WriteAction() {
+      @Override
+      protected void run(@NotNull Result result) throws Throwable {
+        Sdk oldJdk = ProjectJdkTable.getInstance().findJdk(GRADLE_JDK_NAME);
+        if (oldJdk != null) {
+          ProjectJdkTable.getInstance().removeJdk(oldJdk);
+        }
+        VirtualFile jdkHomeDir = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(new File(myJdkHome));
+        Sdk jdk = SdkConfigurationUtil.setupSdk(new Sdk[0], jdkHomeDir, JavaSdk.getInstance(), true, null, GRADLE_JDK_NAME);
+        assertNotNull("Cannot create JDK for " + myJdkHome, jdk);
+        ProjectJdkTable.getInstance().addJdk(jdk);
+      }
+    }.execute();
     myProjectSettings = new GradleProjectSettings();
     GradleSettings.getInstance(myProject).setGradleVmOptions("-Xmx64m -XX:MaxPermSize=64m");
     System.setProperty(ExternalSystemExecutionSettings.REMOTE_PROCESS_IDLE_TTL_IN_MS_KEY, String.valueOf(GRADLE_DAEMON_TTL_MS));
@@ -90,7 +112,21 @@ public abstract class GradleImportingTestCase extends ExternalSystemImportingTes
 
   @Override
   public void tearDown() throws Exception {
+    if (myJdkHome == null) {
+      //super.setUp() wasn't called
+      return;
+    }
+
     try {
+      new WriteAction() {
+        @Override
+        protected void run(@NotNull Result result) throws Throwable {
+          Sdk old = ProjectJdkTable.getInstance().findJdk(GRADLE_JDK_NAME);
+          if (old != null) {
+            SdkConfigurationUtil.removeSdk(old);
+          }
+        }
+      }.execute();
       Messages.setTestDialog(TestDialog.DEFAULT);
       FileUtil.delete(BuildManager.getInstance().getBuildSystemDirectory());
     }
@@ -100,13 +136,10 @@ public abstract class GradleImportingTestCase extends ExternalSystemImportingTes
   }
 
   @Override
-  protected void collectAllowedRoots(List<String> roots) throws IOException {
-    final String javaHome = System.getenv("JAVA_HOME");
-    if (javaHome != null) {
-      roots.add(javaHome);
-    }
-
-    roots.add(PathManager.getOptionsPath());
+  protected void collectAllowedRoots(final List<String> roots) throws IOException {
+    roots.add(myJdkHome);
+    roots.addAll(collectRootsInside(myJdkHome));
+    roots.add(PathManager.getConfigPath());
   }
 
   @Override
@@ -130,16 +163,28 @@ public abstract class GradleImportingTestCase extends ExternalSystemImportingTes
   }
 
   @Override
-  protected void importProject(@NonNls @Language("Groovy") String config) throws IOException {
+  protected void importProject() {
     ExternalSystemApiUtil.subscribe(myProject, GradleConstants.SYSTEM_ID, new ExternalSystemSettingsListenerAdapter() {
       @Override
       public void onProjectsLinked(@NotNull Collection settings) {
         final Object item = ContainerUtil.getFirstItem(settings);
         if (item instanceof GradleProjectSettings) {
-          ((GradleProjectSettings)item).setGradleJvm(null);
+          ((GradleProjectSettings)item).setGradleJvm(GRADLE_JDK_NAME);
         }
       }
     });
+    super.importProject();
+  }
+
+  @Override
+  protected void importProject(@NonNls @Language("Groovy") String config) throws IOException {
+    config = "allprojects {\n" +
+              "  repositories {\n" +
+              "    maven {\n" +
+              "        url 'http://maven.labs.intellij.net/repo1'\n" +
+              "    }\n" +
+              "  }" +
+              "}\n" + config;
     super.importProject(config);
   }
 

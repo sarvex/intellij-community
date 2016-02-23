@@ -91,9 +91,13 @@ public class InstallPluginAction extends AnAction implements DumbAware {
   }
   
   public void install(@Nullable final Runnable onSuccess) {
+    install(onSuccess, null, false);
+  }
+
+  public void install(@Nullable final Runnable onSuccess, @Nullable final Runnable cleanup, boolean confirmed) {
     IdeaPluginDescriptor[] selection = getPluginTable().getSelectedObjects();
 
-    if (userConfirm(selection)) {
+    if (confirmed || userConfirm(selection)) {
       final List<PluginNode> list = new ArrayList<PluginNode>();
       for (IdeaPluginDescriptor descr : selection) {
         PluginNode pluginNode = null;
@@ -174,9 +178,13 @@ public class InstallPluginAction extends AnAction implements DumbAware {
           @Override
           public void run() {
             ourInstallingNodes.removeAll(list);
+            if (cleanup != null) {
+              cleanup.run();
+            }
           }
         };
-        PluginManagerMain.downloadPlugins(list, myHost.getPluginsModel().getAllPlugins(), onInstallRunnable, cleanupRunnable);
+        final List<IdeaPluginDescriptor> plugins = myHost.getPluginsModel().getAllPlugins();
+        PluginManagerMain.downloadPlugins(list, PluginManagerMain.mapToPluginIds(plugins), onInstallRunnable, cleanupRunnable);
       }
       catch (final IOException e1) {
         ourInstallingNodes.removeAll(list);

@@ -18,6 +18,8 @@ import java.util.Queue;
  * Date: 8/10/12
  */
 public class CucumberJvmSMFormatter implements Formatter, Reporter {
+  public static final String TEAMCITY_PREFIX = "#teamcity";
+  public static final int MILLION = 1000000;
   private int scenarioCount;
   private int passedScenarioCount;
   private boolean scenarioPassed = true;
@@ -28,31 +30,34 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
   private int pendingStepCount;
   private int failedStepCount;
   private int undefinedStepCount;
+  private boolean endedByNewLine = true;
 
   private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd'T'hh:mm:ss.SSSZ");
 
   private static final String TEMPLATE_TEST_STARTED =
-    "##teamcity[testStarted timestamp = '%s' locationHint = 'file:///%s' captureStandardOutput = 'true' name = '%s']";
+    TEAMCITY_PREFIX + "[testStarted timestamp = '%s' locationHint = 'file:///%s' captureStandardOutput = 'true' name = '%s']";
   private static final String TEMPLATE_TEST_FAILED =
-    "##teamcity[testFailed timestamp = '%s' details = '%s' message = '%s' name = '%s' %s]";
-  private static final String TEMPLATE_SCENARIO_FAILED = "##teamcity[customProgressStatus timestamp='%s' type='testFailed']";
+    TEAMCITY_PREFIX + "[testFailed timestamp = '%s' details = '%s' message = '%s' name = '%s' %s]";
+  private static final String TEMPLATE_SCENARIO_FAILED = TEAMCITY_PREFIX + "[customProgressStatus timestamp='%s' type='testFailed']";
   private static final String TEMPLATE_TEST_PENDING =
-    "##teamcity[testIgnored name = '%s' message = 'Skipped step' timestamp = '%s']";
+    TEAMCITY_PREFIX + "[testIgnored name = '%s' message = 'Skipped step' timestamp = '%s']";
 
   private static final String TEMPLATE_TEST_FINISHED =
-    "##teamcity[testFinished timestamp = '%s' diagnosticInfo = 'cucumber  f/s=(1344855950447, 1344855950447), duration=0, time.now=%s' duration = '0' name = '%s']";
+    TEAMCITY_PREFIX +
+    "[testFinished timestamp = '%s' duration = '%s' name = '%s']";
 
-  private static final String TEMPLATE_ENTER_THE_MATRIX = "##teamcity[enteredTheMatrix timestamp = '%s']";
+  private static final String TEMPLATE_ENTER_THE_MATRIX = TEAMCITY_PREFIX + "[enteredTheMatrix timestamp = '%s']";
 
   private static final String TEMPLATE_TEST_SUITE_STARTED =
-    "##teamcity[testSuiteStarted timestamp = '%s' locationHint = 'file://%s' name = '%s']";
-  private static final String TEMPLATE_TEST_SUITE_FINISHED = "##teamcity[testSuiteFinished timestamp = '%s' name = '%s']";
+    TEAMCITY_PREFIX + "[testSuiteStarted timestamp = '%s' locationHint = 'file://%s' name = '%s']";
+  private static final String TEMPLATE_TEST_SUITE_FINISHED = TEAMCITY_PREFIX + "[testSuiteFinished timestamp = '%s' name = '%s']";
 
   private static final String TEMPLATE_SCENARIO_COUNTING_STARTED =
-    "##teamcity[customProgressStatus testsCategory = 'Scenarios' count = '0' timestamp = '%s']";
+    TEAMCITY_PREFIX + "[customProgressStatus testsCategory = 'Scenarios' count = '%s' timestamp = '%s']";
   private static final String TEMPLATE_SCENARIO_COUNTING_FINISHED =
-    "##teamcity[customProgressStatus testsCategory = '' count = '0' timestamp = '%s']";
-  private static final String TEMPLATE_SCENARIO_STARTED = "##teamcity[customProgressStatus type = 'testStarted' timestamp = '%s']";
+    TEAMCITY_PREFIX + "[customProgressStatus testsCategory = '' count = '0' timestamp = '%s']";
+  private static final String TEMPLATE_SCENARIO_STARTED = TEAMCITY_PREFIX + "[customProgressStatus type = 'testStarted' timestamp = '%s']";
+  private static final String TEMPLATE_SCENARIO_FINISHED = TEAMCITY_PREFIX + "[customProgressStatus type = 'testFinished' timestamp = '%s']";
 
   public static final String RESULT_STATUS_PENDING = "pending";
 
@@ -77,7 +82,7 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
     queue = new ArrayDeque<String>();
     currentSteps = new ArrayDeque<Step>();
     outCommand(String.format(TEMPLATE_ENTER_THE_MATRIX, getCurrentTime()));
-    outCommand(String.format(TEMPLATE_SCENARIO_COUNTING_STARTED, getCurrentTime()));
+    outCommand(String.format(TEMPLATE_SCENARIO_COUNTING_STARTED, 0, getCurrentTime()));
   }
 
   @Override
@@ -89,16 +94,16 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
     outCommand(String.format(TEMPLATE_TEST_SUITE_STARTED, getCurrentTime(), uri + ":" + feature.getLine(), currentFeatureName));
   }
 
-  private boolean isRealScenario(final Scenario scenario) {
+  private static boolean isRealScenario(final Scenario scenario) {
     return scenario.getKeyword().equals("Scenario");
   }
 
   @Override
   public void scenario(Scenario scenario) {
     closeScenario();
+    outCommand(String.format(TEMPLATE_SCENARIO_STARTED, getCurrentTime()));
     if (isRealScenario(scenario)) {
       scenarioCount++;
-      outCommand(String.format(TEMPLATE_SCENARIO_STARTED, getCurrentTime()));
       closeScenarioOutline();
       currentSteps.clear();
     }
@@ -115,7 +120,6 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
   @Override
   public void scenarioOutline(ScenarioOutline outline) {
     scenarioCount++;
-    outCommand(String.format(TEMPLATE_SCENARIO_STARTED, getCurrentTime()));
     queue.clear();
     currentSteps.clear();
 
@@ -134,11 +138,20 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
   }
 
   @Override
+  public void startOfScenarioLifeCycle(Scenario scenario) {
+
+  }
+
+  @Override
   public void step(Step step) {
     if (beforeExampleSection) {
       return;
     }
     currentSteps.add(step);
+  }
+
+  @Override
+  public void endOfScenarioLifeCycle(Scenario scenario) {
   }
 
   @Override
@@ -164,7 +177,6 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
       }
 
       outCommand(String.format(TEMPLATE_TEST_FAILED, getCurrentTime(), escape(details), escape(message), stepFullName, ""), true);
-      outCommand(String.format(TEMPLATE_SCENARIO_FAILED, getCurrentTime()), true);
     }
     else if (result.getStatus().equals(RESULT_STATUS_PENDING)) {
       pendingStepCount++;
@@ -177,7 +189,6 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
       String message = "Undefined step: " + getName(currentStep);
       String details = "";
       outCommand(String.format(TEMPLATE_TEST_FAILED, getCurrentTime(), escape(details), escape(message), stepFullName, "error = 'true'"), true);
-      outCommand(String.format(TEMPLATE_SCENARIO_FAILED, getCurrentTime()), true);
     }
     else if (result.equals(Result.SKIPPED)) {
       skippedStepCount++;
@@ -188,8 +199,9 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
       passedStepCount++;
     }
 
-    String currentTime = getCurrentTime();
-    outCommand(String.format(TEMPLATE_TEST_FINISHED, currentTime, currentTime, stepFullName), true);
+    final String currentTime = getCurrentTime();
+    final Long duration = result.getDuration();
+    outCommand(String.format(TEMPLATE_TEST_FINISHED, currentTime, (duration == null ? 0 : duration.longValue()) / MILLION, stepFullName), true);
   }
 
   private void closeScenario() {
@@ -199,8 +211,14 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
           passedScenarioCount++;
         }
       }
+
+      if (!scenarioPassed) {
+        outCommand(String.format(TEMPLATE_SCENARIO_FAILED, getCurrentTime()), true);
+      }
+      outCommand(String.format(TEMPLATE_SCENARIO_FINISHED, getCurrentTime()), true);
       outCommand(String.format(TEMPLATE_TEST_SUITE_FINISHED, getCurrentTime(), getName(currentScenario)));
     }
+    scenarioPassed = true;
     currentScenario = null;
   }
 
@@ -236,7 +254,7 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
 
   @Override
   public void uri(String s) {
-    String currentDir = System.getenv().get("current_dir");
+    String currentDir = System.getProperty("org.jetbrains.run.directory");
     if (currentDir != null) {
       uri = currentDir + File.separator + s;
     }
@@ -256,7 +274,6 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
 
   @Override
   public void after(Match match, Result result) {
-    outCommand("after\n");
   }
 
   @Override
@@ -281,21 +298,17 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
   @Override
   public void close() {
     outCommand(String.format(TEMPLATE_SCENARIO_COUNTING_FINISHED, getCurrentTime()));
-
-    outCommand(scenarioCount + " scenario (" + passedScenarioCount + " passed)\n");
-    outCommand(stepCount + " steps (" + passedStepCount + " passed)\n");
   }
 
   @Override
   public void before(Match match, Result result) {
-    outCommand("before\n");
   }
 
-  private String getCurrentTime() {
+  private static String getCurrentTime() {
     return DATE_FORMAT.format(new Date());
   }
 
-  private String escape(String source) {
+  private static String escape(String source) {
     return source.replace("|", "||").replace("\n", "|n").replace("\r", "|r").replace("'", "|'").replace("[", "|[").replace("]", "|]");
   }
 
@@ -309,9 +322,12 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
     }
     else {
       try {
-        appendable.append("\n");
+        if (!endedByNewLine) {
+          appendable.append("\n");
+        }
         appendable.append(s);
         appendable.append("\n");
+        endedByNewLine = true;
       }
       catch (IOException ignored) {
       }
@@ -321,12 +337,13 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
   private void out(String s) {
     try {
       appendable.append(s);
+      endedByNewLine = s.endsWith("\n");
     }
     catch (IOException ignored) {
     }
   }
 
-  private String getName(Scenario scenario) {
+  private static String getName(Scenario scenario) {
     if (scenario.getKeyword().equals("Scenario Outline")) {
       return escape("Scenario: Line: " + scenario.getLine());
     }
@@ -335,15 +352,15 @@ public class CucumberJvmSMFormatter implements Formatter, Reporter {
     }
   }
 
-  private String getName(ScenarioOutline outline) {
+  private static String getName(ScenarioOutline outline) {
     return escape("Scenario Outline: " + outline.getName());
   }
 
-  private String getName(Step step) {
+  private static String getName(Step step) {
     return escape(step.getKeyword() + " " + step.getName());
   }
 
-  private String getName(Feature feature) {
+  private static String getName(Feature feature) {
     return escape(feature.getName());
   }
 }

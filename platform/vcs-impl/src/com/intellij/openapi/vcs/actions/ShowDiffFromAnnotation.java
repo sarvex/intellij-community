@@ -15,24 +15,22 @@
  */
 package com.intellij.openapi.vcs.actions;
 
+import com.intellij.diff.DiffDialogHints;
+import com.intellij.diff.util.DiffUserDataKeysEx;
 import com.intellij.icons.AllIcons;
 import com.intellij.idea.ActionsBundle;
-import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.diff.DiffNavigationContext;
-import com.intellij.openapi.localVcs.UpToDateLineNumberProvider;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
+import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.ui.MessageType;
 import com.intellij.openapi.util.Pair;
-import com.intellij.diff.DiffDialogHints;
-import com.intellij.diff.util.DiffUserDataKeysEx;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.*;
 import com.intellij.openapi.vcs.annotate.FileAnnotation;
-import com.intellij.openapi.vcs.annotate.LineNumberListener;
-import com.intellij.openapi.vcs.changes.BackgroundFromStartOption;
+import com.intellij.openapi.vcs.annotate.UpToDateLineNumberListener;
 import com.intellij.openapi.vcs.changes.Change;
 import com.intellij.openapi.vcs.changes.ChangeListManager;
 import com.intellij.openapi.vcs.changes.actions.diff.ShowDiffAction;
@@ -43,9 +41,9 @@ import com.intellij.openapi.vcs.ui.VcsBalloonProblemNotifier;
 import com.intellij.openapi.vcs.versionBrowser.CommittedChangeList;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.containers.CacheOneStepIterator;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.File;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -54,20 +52,17 @@ import java.util.List;
 /**
  * @author Konstantin Bulenkov
  */
-class ShowDiffFromAnnotation extends AnAction implements LineNumberListener {
-  private final UpToDateLineNumberProvider myLineNumberProvider;
+class ShowDiffFromAnnotation extends DumbAwareAction implements UpToDateLineNumberListener {
   private final FileAnnotation myFileAnnotation;
   private final AbstractVcs myVcs;
   private final VirtualFile myFile;
   private int currentLine;
   private boolean myEnabled;
 
-  ShowDiffFromAnnotation(final UpToDateLineNumberProvider lineNumberProvider,
-                         final FileAnnotation fileAnnotation, final AbstractVcs vcs, final VirtualFile file) {
+  ShowDiffFromAnnotation(final FileAnnotation fileAnnotation, final AbstractVcs vcs, final VirtualFile file) {
     super(ActionsBundle.message("action.Diff.UpdatedFiles.text"),
           ActionsBundle.message("action.Diff.UpdatedFiles.description"),
           AllIcons.Actions.Diff);
-    myLineNumberProvider = lineNumberProvider;
     myFileAnnotation = fileAnnotation;
     myVcs = vcs;
     myFile = file;
@@ -82,19 +77,14 @@ class ShowDiffFromAnnotation extends AnAction implements LineNumberListener {
 
   @Override
   public void update(AnActionEvent e) {
-    final int number = getActualLineNumber();
+    final int number = currentLine;
     e.getPresentation().setVisible(myEnabled);
     e.getPresentation().setEnabled(myEnabled && number >= 0 && number < myFileAnnotation.getLineCount());
   }
 
-  private int getActualLineNumber() {
-    if (currentLine < 0) return -1;
-    return myLineNumberProvider.getLineNumber(currentLine);
-  }
-
   @Override
   public void actionPerformed(AnActionEvent e) {
-    final int actualNumber = getActualLineNumber();
+    final int actualNumber = currentLine;
     if (actualNumber < 0) return;
 
     final VcsRevisionNumber revisionNumber = myFileAnnotation.getLineRevisionNumber(actualNumber);
@@ -103,8 +93,7 @@ class ShowDiffFromAnnotation extends AnAction implements LineNumberListener {
       final List<Change> changes = new LinkedList<Change>();
       final FilePath[] targetPath = new FilePath[1];
       ProgressManager.getInstance().run(new Task.Backgroundable(myVcs.getProject(),
-                                                                "Loading revision " + revisionNumber.asString() + " contents", true,
-                                                                BackgroundFromStartOption.getInstance()) {
+                                                                "Loading revision " + revisionNumber.asString() + " contents", true) {
         @Override
         public void run(@NotNull ProgressIndicator indicator) {
           final CommittedChangesProvider provider = myVcs.getCommittedChangesProvider();
@@ -114,7 +103,7 @@ class ShowDiffFromAnnotation extends AnAction implements LineNumberListener {
               VcsBalloonProblemNotifier.showOverChangesView(myVcs.getProject(), "Can not load data for show diff", MessageType.ERROR);
               return;
             }
-            targetPath[0] = pair.getSecond() == null ? new FilePathImpl(myFile) : pair.getSecond();
+            targetPath[0] = pair.getSecond() == null ? VcsUtil.getFilePath(myFile) : pair.getSecond();
             final CommittedChangeList cl = pair.getFirst();
             changes.addAll(cl.getChanges());
             Collections.sort(changes, ChangesComparator.getInstance(true));
@@ -146,10 +135,9 @@ class ShowDiffFromAnnotation extends AnAction implements LineNumberListener {
 
   private static int findSelfInList(List<Change> changes, final FilePath filePath) {
     int idx = -1;
-    final File ioFile = filePath.getIOFile();
     for (int i = 0; i < changes.size(); i++) {
       final Change change = changes.get(i);
-      if ((change.getAfterRevision() != null) && (change.getAfterRevision().getFile().getIOFile().equals(ioFile))) {
+      if ((change.getAfterRevision() != null) && (change.getAfterRevision().getFile().equals(filePath))) {
         idx = i;
         break;
       }
@@ -157,7 +145,7 @@ class ShowDiffFromAnnotation extends AnAction implements LineNumberListener {
     if (idx >= 0) return idx;
     idx = 0;
     // try to use name only
-    final String name = ioFile.getName();
+    final String name = filePath.getName();
     for (int i = 0; i < changes.size(); i++) {
       final Change change = changes.get(i);
       if ((change.getAfterRevision() != null) && (change.getAfterRevision().getFile().getName().equals(name))) {

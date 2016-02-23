@@ -40,14 +40,18 @@ import com.intellij.ui.tabs.impl.table.TableLayout;
 import com.intellij.ui.tabs.impl.table.TablePassInfo;
 import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
-import com.intellij.util.containers.FluentIterable;
-import com.intellij.util.ui.*;
+import com.intellij.util.containers.JBIterable;
+import com.intellij.util.ui.Animator;
+import com.intellij.util.ui.JBUI;
+import com.intellij.util.ui.TimedDeadzone;
+import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.update.ComparableObject;
 import com.intellij.util.ui.update.LazyUiDisposable;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.accessibility.*;
 import javax.swing.*;
 import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
@@ -63,9 +67,12 @@ import java.util.List;
 
 public class JBTabsImpl extends JComponent
   implements JBTabs, PropertyChangeListener, TimerListener, DataProvider, PopupMenuListener, Disposable, JBTabsPresentation, Queryable,
-             QuickActionProvider {
+             QuickActionProvider, Accessible {
 
   public static final DataKey<JBTabsImpl> NAVIGATION_ACTIONS_KEY = DataKey.create("JBTabs");
+  @NonNls public static final Key<Integer> SIDE_TABS_SIZE_LIMIT_KEY = Key.create("SIDE_TABS_SIZE_LIMIT_KEY");
+  static final int MIN_TAB_WIDTH = JBUI.scale(75);
+  public static final int DEFAULT_MAX_TAB_WIDTH = JBUI.scale(300);
 
   public static final Color MAC_AQUA_BG_COLOR = Gray._200;
   private static final Comparator<TabInfo> ABC_COMPARATOR = new Comparator<TabInfo>() {
@@ -77,6 +84,7 @@ public class JBTabsImpl extends JComponent
 
   @NotNull final ActionManager myActionManager;
   private final List<TabInfo> myVisibleInfos = new ArrayList<TabInfo>();
+  private final Map<TabInfo, AccessibleTabPage> myInfo2Page = new HashMap<TabInfo, AccessibleTabPage>();
   private final Map<TabInfo, Integer> myHiddenInfos = new HashMap<TabInfo, Integer>();
 
   private TabInfo mySelectedInfo;
@@ -113,6 +121,7 @@ public class JBTabsImpl extends JComponent
 
   private SingleRowLayout mySingleRowLayout;
   private final TableLayout myTableLayout = new TableLayout(this);
+  private final TabsSideSplitter mySplitter = new TabsSideSplitter(this);
 
 
   private TabLayout myLayout;
@@ -339,10 +348,10 @@ public class JBTabsImpl extends JComponent
       }
     };
     UIUtil.putClientProperty(
-      this, JBSwingUtilities.NOT_IN_HIERARCHY_COMPONENTS, new Iterable<JComponent>() {
+      this, UIUtil.NOT_IN_HIERARCHY_COMPONENTS, new Iterable<JComponent>() {
         @Override
         public Iterator<JComponent> iterator() {
-          return FluentIterable.from(getVisibleInfos()).filter(Conditions.not(Conditions.is(mySelectedInfo))).transform(
+          return JBIterable.from(getVisibleInfos()).filter(Conditions.not(Conditions.is(mySelectedInfo))).transform(
             new Function<TabInfo, JComponent>() {
               @Override
               public JComponent fun(TabInfo info) {
@@ -420,6 +429,7 @@ public class JBTabsImpl extends JComponent
   public void dispose() {
     myDisposed = true;
     mySelectedInfo = null;
+    myDeferredFocusRequest = null;
     resetTabsCache();
     myAttractions.clear();
     myVisibleInfos.clear();
@@ -427,6 +437,7 @@ public class JBTabsImpl extends JComponent
     myImage = null;
     myActivePopup = null;
     myInfo2Label.clear();
+    myInfo2Page.clear();
     myInfo2Toolbar.clear();
     myTabListeners.clear();
   }
@@ -744,6 +755,7 @@ public class JBTabsImpl extends JComponent
     info.getChangeSupport().addPropertyChangeListener(this);
     final TabLabel label = createTabLabel(info);
     myInfo2Label.put(info, label);
+    myInfo2Page.put(info, new AccessibleTabPage(info));
 
     if (!isDropTarget) {
       if (index < 0 || index > myVisibleInfos.size() - 1) {
@@ -880,14 +892,14 @@ public class JBTabsImpl extends JComponent
   private ActionCallback executeSelectionChange(TabInfo info, boolean requestFocus) {
     if (mySelectedInfo != null && mySelectedInfo.equals(info)) {
       if (!requestFocus) {
-        return new ActionCallback.Done();
+        return ActionCallback.DONE;
       }
       else {
         Component owner = myFocusManager.getFocusOwner();
         JComponent c = info.getComponent();
         if (c != null && owner != null) {
           if (c == owner || SwingUtilities.isDescendingFrom(owner, c)) {
-            return new ActionCallback.Done();
+            return ActionCallback.DONE;
           }
         }
         return requestFocus(getToFocus());
@@ -980,11 +992,11 @@ public class JBTabsImpl extends JComponent
 
   @NotNull
   private ActionCallback requestFocus(final JComponent toFocus) {
-    if (toFocus == null) return new ActionCallback.Done();
+    if (toFocus == null) return ActionCallback.DONE;
 
     if (myTestMode) {
       toFocus.requestFocus();
-      return new ActionCallback.Done();
+      return ActionCallback.DONE;
     }
 
 
@@ -1492,7 +1504,6 @@ public class JBTabsImpl extends JComponent
   public void doLayout() {
     try {
       myHeaderFitSize = computeHeaderFitSize();
-
       final Collection<TabLabel> labels = myInfo2Label.values();
       for (TabLabel each : labels) {
         each.setTabActionsAutoHide(myTabLabelActionsAutoHide);
@@ -1516,6 +1527,13 @@ public class JBTabsImpl extends JComponent
         mySingleRowLayout.scroll(0);
         myLastLayoutPass = mySingleRowLayout.layoutSingleRow(visible);
         myTableLayout.myLastTableLayout = null;
+        OnePixelDivider divider = mySplitter.getDivider();
+        if (divider.getParent() == this) {
+          int location = getTabsPosition() == JBTabsPosition.left
+                         ? mySingleRowLayout.myLastSingRowLayout.tabRectangle.width
+                         : getWidth() - mySingleRowLayout.myLastSingRowLayout.tabRectangle.width;
+          divider.setBounds(location, 0, 1, getHeight());
+        }
       }
       else {
         myLastLayoutPass = myTableLayout.layoutTable(visible);
@@ -2359,6 +2377,11 @@ public class JBTabsImpl extends JComponent
         max.myToolbar.width = Math.max(max.myToolbar.width, toolbar.getPreferredSize().width);
       }
     }
+    if (getTabsPosition() == JBTabsPosition.left || getTabsPosition() == JBTabsPosition.right) {
+      if (mySplitter.getSideTabsLimit() > 0) {
+        max.myLabel.width = Math.min(max.myLabel.width, mySplitter.getSideTabsLimit());
+      }
+    }
 
     max.myToolbar.height++;
 
@@ -2518,7 +2541,7 @@ public class JBTabsImpl extends JComponent
   @NotNull
   private ActionCallback removeTab(TabInfo info, @Nullable TabInfo forcedSelectionTransfer, boolean transferFocus, boolean isDropTarget) {
     if (!isDropTarget) {
-      if (info == null || !getTabs().contains(info)) return new ActionCallback.Done();
+      if (info == null || !getTabs().contains(info)) return ActionCallback.DONE;
     }
 
     if (isDropTarget && myLastLayoutPass != null) {
@@ -2582,6 +2605,7 @@ public class JBTabsImpl extends JComponent
     myVisibleInfos.remove(info);
     myHiddenInfos.remove(info);
     myInfo2Label.remove(info);
+    myInfo2Page.remove(info);
     myInfo2Toolbar.remove(info);
     resetTabsCache();
 
@@ -3270,6 +3294,12 @@ public class JBTabsImpl extends JComponent
   @NotNull
   public JBTabsPresentation setTabsPosition(final JBTabsPosition position) {
     myPosition = position;
+    OnePixelDivider divider = mySplitter.getDivider();
+    if ((position == JBTabsPosition.left || position == JBTabsPosition.right) && divider.getParent() == null) {
+      add(divider);
+    } else if (divider.getParent() == this){
+      remove(divider);
+    }
     relayout(true, false);
     return this;
   }
@@ -3290,7 +3320,7 @@ public class JBTabsImpl extends JComponent
   }
 
   public boolean isTabDraggingEnabled() {
-    return myTabDraggingEnabled;
+    return myTabDraggingEnabled && !mySplitter.isDragging();
   }
 
   @Override
@@ -3464,5 +3494,473 @@ public class JBTabsImpl extends JComponent
   @Override
   public String toString() {
     return "JBTabs visible=" + myVisibleInfos + " selected=" + mySelectedInfo;
+  }
+
+
+  @Override
+  public AccessibleContext getAccessibleContext() {
+    if (accessibleContext == null) {
+      accessibleContext = new AccessibleJBTabsImpl();
+    }
+    return accessibleContext;
+  }
+
+  /**
+   * Custom implementation of Accessible interface.  Given JBTabsImpl is similar
+   * to the built-it JTabbedPane, we expose similar behavior. The one tricky part
+   * is that JBTabsImpl can only expose the content of the selected tab, as the
+   * content of tabs is created/deleted on demand when a tab is selected.
+   */
+  protected class AccessibleJBTabsImpl extends AccessibleJComponent implements AccessibleSelection {
+
+    public AccessibleJBTabsImpl() {
+      super();
+      getAccessibleComponent();
+      JBTabsImpl.this.addListener(new TabsListener.Adapter() {
+        @Override
+        public void selectionChanged(TabInfo oldSelection, TabInfo newSelection) {
+          firePropertyChange(AccessibleContext.ACCESSIBLE_SELECTION_PROPERTY, null, null);
+        }
+      });
+    }
+
+    @Override
+    public String getAccessibleName() {
+      String name = accessibleName;
+      if (name == null) {
+        name = (String)getClientProperty(AccessibleContext.ACCESSIBLE_NAME_PROPERTY);
+      }
+
+      if (name == null) {
+        // Similar to JTabbedPane, we return the name of our selected tab
+        // as our own name.
+        TabLabel selectedLabel = getSelectedLabel();
+        if (selectedLabel != null) {
+          if (selectedLabel.getAccessibleContext() != null) {
+            name = selectedLabel.getAccessibleContext().getAccessibleName();
+          }
+        }
+      }
+
+      if (name == null) {
+        name = super.getAccessibleName();
+      }
+      return name;
+    }
+
+    @Override
+    public AccessibleRole getAccessibleRole() {
+      return AccessibleRole.PAGE_TAB_LIST;
+    }
+
+    @Override
+    public int getAccessibleChildrenCount() {
+      return getTabCount();
+    }
+
+    @Override
+    public Accessible getAccessibleChild(int i) {
+      if (i < 0 || i >= getTabCount()) {
+        return null;
+      }
+      return JBTabsImpl.this.myInfo2Page.get(JBTabsImpl.this.getTabAt(i));
+    }
+
+    @Override
+    public AccessibleSelection getAccessibleSelection() {
+      return this;
+    }
+
+    @Override
+    public int getAccessibleSelectionCount() {
+      return (getSelectedInfo() == null ? 0 : 1);
+    }
+
+    @Override
+    public Accessible getAccessibleSelection(int i) {
+      if (getSelectedInfo() == null)
+        return null;
+      return myInfo2Page.get(getSelectedInfo());
+    }
+
+    @Override
+    public boolean isAccessibleChildSelected(int i) {
+      return (i == getIndexOf(getSelectedInfo()));
+    }
+
+    @Override
+    public void addAccessibleSelection(int i) {
+      TabInfo info = getTabAt(i);
+      if (info != null) {
+        select(info, false);
+      }
+    }
+
+    @Override
+    public void removeAccessibleSelection(int i) {
+      // can't do
+    }
+
+    @Override
+    public void clearAccessibleSelection() {
+      // can't do
+    }
+
+    @Override
+    public void selectAllAccessibleSelection() {
+      // can't do
+    }
+  }
+
+  /**
+   * AccessibleContext implementation for a single tab page.
+   *
+   * A tab page has a label as the display zone, name, description, etc.
+   * A tab page exposes a child component only if it corresponds to the
+   * selected tab in the tab pane. Inactive tabs don't have a child
+   * component to expose, as components are created/deleted on demand.
+   * A tab page exposes one action: select and activate the panel.
+   */
+  private class AccessibleTabPage extends AccessibleContext
+    implements Accessible, AccessibleComponent, AccessibleAction {
+
+    private final @NotNull JBTabsImpl myParent;
+    private final @NotNull TabInfo myTabInfo;
+    private final Component myComponent;
+
+    AccessibleTabPage(@NotNull TabInfo tabInfo) {
+      myParent = JBTabsImpl.this;
+      myTabInfo = tabInfo;
+      myComponent = tabInfo.getComponent();
+      initAccessibleContext();
+    }
+
+    private @NotNull TabInfo getTabInfo() {
+      return myTabInfo;
+    }
+
+    private int getTabIndex() {
+      return JBTabsImpl.this.getIndexOf(myTabInfo);
+    }
+
+    private TabLabel getTabLabel() {
+      return JBTabsImpl.this.myInfo2Label.get(getTabInfo());
+    }
+
+    /*
+     * initializes the AccessibleContext for the page
+     */
+    void initAccessibleContext() {
+      // Note: null checks because we do not want to load Accessibility classes unnecessarily.
+      if (JBTabsImpl.this.accessibleContext != null && myComponent instanceof Accessible) {
+        AccessibleContext ac;
+        ac = myComponent.getAccessibleContext();
+        if (ac != null) {
+          ac.setAccessibleParent(this);
+        }
+      }
+    }
+
+    /////////////////
+    // Accessibility support
+    ////////////////
+
+    @Override
+    public AccessibleContext getAccessibleContext() {
+      return this;
+    }
+
+    // AccessibleContext methods
+
+    @Override
+    public String getAccessibleName() {
+      String name = accessibleName;
+      if (name == null) {
+        name = (String)getClientProperty(AccessibleContext.ACCESSIBLE_NAME_PROPERTY);
+      }
+
+      if (name == null) {
+        TabLabel label = getTabLabel();
+        if (label != null && label.getAccessibleContext() != null) {
+          name = label.getAccessibleContext().getAccessibleName();
+        }
+      }
+
+      if (name == null) {
+        name = super.getAccessibleName();
+      }
+      return name;
+    }
+
+    @Override
+    public String getAccessibleDescription() {
+      String description = accessibleDescription;
+      if (description == null) {
+        description = (String)getClientProperty(AccessibleContext.ACCESSIBLE_DESCRIPTION_PROPERTY);
+      }
+
+      if (description == null) {
+        TabLabel label = getTabLabel();
+        if (label != null && label.getAccessibleContext() != null) {
+          description = label.getAccessibleContext().getAccessibleDescription();
+        }
+      }
+
+      if (description == null) {
+        description = super.getAccessibleDescription();
+      }
+      return description;
+    }
+
+    @Override
+    public AccessibleRole getAccessibleRole() {
+      return AccessibleRole.PAGE_TAB;
+    }
+
+    @Override
+    public AccessibleStateSet getAccessibleStateSet() {
+      AccessibleStateSet states;
+      states = myParent.getAccessibleContext().getAccessibleStateSet();
+      states.add(AccessibleState.SELECTABLE);
+      TabInfo info = myParent.getSelectedInfo();
+      if (info == getTabInfo()) {
+        states.add(AccessibleState.SELECTED);
+      }
+      return states;
+    }
+
+    @Override
+    public int getAccessibleIndexInParent() {
+      return getTabIndex();
+    }
+
+    @Override
+    public int getAccessibleChildrenCount() {
+      // Expose the tab content only if it is active, as the content for
+      // inactive tab does is usually not ready (i.e. may never have been
+      // activated).
+      if (JBTabsImpl.this.getSelectedInfo() == getTabInfo() && myComponent instanceof Accessible) {
+        return 1;
+      } else {
+        return 0;
+      }
+    }
+
+    @Override
+    public Accessible getAccessibleChild(int i) {
+      if (JBTabsImpl.this.getSelectedInfo() == getTabInfo() && myComponent instanceof Accessible) {
+        return (Accessible) myComponent;
+      } else {
+        return null;
+      }
+    }
+
+    @Override
+    public Locale getLocale() {
+      return JBTabsImpl.this.getLocale();
+    }
+
+    @Override
+    public AccessibleComponent getAccessibleComponent() {
+      return this;
+    }
+
+    @Override
+    public AccessibleAction getAccessibleAction() {
+      return this;
+    }
+
+    // AccessibleComponent methods
+
+    @Override
+    public Color getBackground() {
+      return JBTabsImpl.this.getBackground();
+    }
+
+    @Override
+    public void setBackground(Color c) {
+      JBTabsImpl.this.setBackground(c);
+    }
+
+    @Override
+    public Color getForeground() {
+      return JBTabsImpl.this.getForeground();
+    }
+
+    @Override
+    public void setForeground(Color c) {
+      JBTabsImpl.this.setForeground(c);
+    }
+
+    @Override
+    public Cursor getCursor() {
+      return JBTabsImpl.this.getCursor();
+    }
+
+    @Override
+    public void setCursor(Cursor c) {
+      JBTabsImpl.this.setCursor(c);
+    }
+
+    @Override
+    public Font getFont() {
+      return JBTabsImpl.this.getFont();
+    }
+
+    @Override
+    public void setFont(Font f) {
+      JBTabsImpl.this.setFont(f);
+    }
+
+    @Override
+    public FontMetrics getFontMetrics(Font f) {
+      return JBTabsImpl.this.getFontMetrics(f);
+    }
+
+    @Override
+    public boolean isEnabled() {
+      return getTabInfo().isEnabled();
+    }
+
+    @Override
+    public void setEnabled(boolean b) {
+      getTabInfo().setEnabled(b);
+    }
+
+    @Override
+    public boolean isVisible() {
+      return !getTabInfo().isHidden();
+    }
+
+    @Override
+    public void setVisible(boolean b) {
+      getTabInfo().setHidden(!b);
+    }
+
+    @Override
+    public boolean isShowing() {
+      return JBTabsImpl.this.isShowing();
+    }
+
+    @Override
+    public boolean contains(Point p) {
+      Rectangle r = getBounds();
+      return r.contains(p);
+    }
+
+    @Override
+    public Point getLocationOnScreen() {
+      Point parentLocation = JBTabsImpl.this.getLocationOnScreen();
+      Point componentLocation = getLocation();
+      componentLocation.translate(parentLocation.x, parentLocation.y);
+      return componentLocation;
+    }
+
+    @Override
+    public Point getLocation() {
+      Rectangle r = getBounds();
+      return new Point(r.x, r.y);
+    }
+
+    @Override
+    public void setLocation(Point p) {
+      // do nothing
+    }
+
+    /**
+     * Returns the bounds of tab.  The bounds are with respect to the JBTabsImpl coordinate space.
+     */
+    @Override
+    public Rectangle getBounds() {
+      return getTabLabel().getBounds();
+    }
+
+    @Override
+    public void setBounds(Rectangle r) {
+      // do nothing
+    }
+
+    @Override
+    public Dimension getSize() {
+      Rectangle r = getBounds();
+      return new Dimension(r.width, r.height);
+    }
+
+    @Override
+    public void setSize(Dimension d) {
+      // do nothing
+    }
+
+    @Override
+    public Accessible getAccessibleAt(Point p) {
+      if (myComponent instanceof Accessible) {
+        return (Accessible) myComponent;
+      } else {
+        return null;
+      }
+    }
+
+    @Override
+    public boolean isFocusTraversable() {
+      return false;
+    }
+
+    @Override
+    public void requestFocus() {
+      // do nothing
+    }
+
+    @Override
+    public void addFocusListener(FocusListener l) {
+      // do nothing
+    }
+
+    @Override
+    public void removeFocusListener(FocusListener l) {
+      // do nothing
+    }
+
+    @Override
+    public AccessibleIcon [] getAccessibleIcon() {
+      AccessibleIcon accessibleIcon = null;
+
+      if (getTabInfo().getIcon() instanceof ImageIcon) {
+        AccessibleContext ac =
+          ((ImageIcon)getTabInfo().getIcon()).getAccessibleContext();
+        accessibleIcon = (AccessibleIcon)ac;
+      }
+
+      if (accessibleIcon != null) {
+        AccessibleIcon [] returnIcons = new AccessibleIcon[1];
+        returnIcons[0] = accessibleIcon;
+        return returnIcons;
+      } else {
+        return null;
+      }
+    }
+
+    // AccessibleAction methods
+
+    @Override
+    public int getAccessibleActionCount() {
+      return 1;
+    }
+
+    @Override
+    public String getAccessibleActionDescription(int i) {
+      if (i != 0)
+        return null;
+
+      return "Activate";
+    }
+
+    @Override
+    public boolean doAccessibleAction(int i) {
+      if (i != 0)
+        return false;
+
+      JBTabsImpl.this.select(getTabInfo(), true);
+      return true;
+    }
   }
 }

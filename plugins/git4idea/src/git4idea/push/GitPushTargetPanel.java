@@ -17,6 +17,7 @@ package git4idea.push;
 
 import com.intellij.dvcs.push.PushTargetPanel;
 import com.intellij.dvcs.push.ui.*;
+import com.intellij.openapi.command.undo.UndoConstants;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.event.DocumentAdapter;
@@ -30,8 +31,6 @@ import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.ui.popup.ListPopup;
 import com.intellij.openapi.ui.popup.PopupStep;
 import com.intellij.openapi.ui.popup.util.BaseListPopupStep;
-import com.intellij.openapi.util.Ref;
-import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.wm.IdeFocusManager;
 import com.intellij.ui.ColoredTreeCellRenderer;
 import com.intellij.ui.SimpleTextAttributes;
@@ -46,17 +45,13 @@ import git4idea.commands.Git;
 import git4idea.commands.GitCommandResult;
 import git4idea.repo.GitRemote;
 import git4idea.repo.GitRepository;
-import git4idea.validators.GitRefNameValidator;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
 import java.awt.*;
-import java.awt.event.FocusAdapter;
-import java.awt.event.FocusEvent;
-import java.awt.event.InputEvent;
-import java.awt.event.MouseEvent;
+import java.awt.event.*;
 import java.text.ParseException;
 import java.util.Comparator;
 import java.util.List;
@@ -130,6 +125,8 @@ public class GitPushTargetPanel extends PushTargetPanel<GitPushTarget> {
         }
       }
     });
+    //record undo only in active edit mode and set to ignore by default
+    myTargetEditor.getDocument().putUserData(UndoConstants.DONT_RECORD_UNDO, Boolean.TRUE);
   }
 
   private void updateComponents(@Nullable GitPushTarget target) {
@@ -162,46 +159,14 @@ public class GitPushTargetPanel extends PushTargetPanel<GitPushTarget> {
   }
 
   private void showDefineRemoteDialog() {
-    GitDefineRemoteDialog dialog = new GitDefineRemoteDialog(myRepository.getProject());
+    GitDefineRemoteDialog dialog = new GitDefineRemoteDialog(myRepository, myGit);
     if (dialog.showAndGet()) {
-      String name = dialog.getRemoteName();
-      String url = dialog.getRemoteUrl();
-      String error = validateRemoteUnderModal(name, url);
-      if (error != null) {
-        LOG.warn(String.format("Invalid remote. Name: [%s], URL: [%s], error: %s", name, url, error));
-        Messages.showErrorDialog(myRepository.getProject(), error, "Invalid Remote URL");
-      }
-      else {
-        addRemoteUnderModal(name, url);
-      }
+      addRemoteUnderModal(dialog.getRemoteName(), dialog.getRemoteUrl());
     }
-  }
-
-  @Nullable
-  private String validateRemoteUnderModal(final String name, final String url) {
-    if (url.isEmpty()) {
-      return "URL can't be empty";
-    }
-    if (!GitRefNameValidator.getInstance().checkInput(name)) {
-      return "Remote name is invalid";
-    }
-
-    final Ref<String> error = Ref.create();
-    ProgressManager.getInstance().run(new Task.Modal(myRepository.getProject(), "Checking URL...", false) {
-      @Override
-      public void run(@NotNull ProgressIndicator indicator) {
-        indicator.setIndeterminate(true);
-        final GitCommandResult result = myGit.lsRemote(myRepository.getProject(), VfsUtilCore.virtualToIoFile(myRepository.getRoot()), url);
-        if (!result.success()) {
-          error.set("Remote URL is invalid: " + result.getErrorOutputAsHtmlString());
-        }
-      }
-    });
-    return error.get();
   }
 
   private void addRemoteUnderModal(@NotNull final String remoteName, @NotNull final String remoteUrl) {
-    ProgressManager.getInstance().run(new Task.Modal(myRepository.getProject(), "Adding remote...", false) {
+    ProgressManager.getInstance().run(new Task.Modal(myRepository.getProject(), "Adding remote...", true) {
       private GitCommandResult myResult;
 
       @Override
@@ -288,8 +253,7 @@ public class GitPushTargetPanel extends PushTargetPanel<GitPushTarget> {
       if (!remotes.isEmpty()) {
         renderer.append(SEPARATOR, targetTextAttributes);
         if (forceRenderedText != null) {
-          //if sync typing available we need to emulate editor changes
-          myTargetEditor.setText(forceRenderedText);
+          // update only appearance; do not update model in rendering!!!!
           renderer.append(forceRenderedText);
           return;
         }
@@ -391,10 +355,38 @@ public class GitPushTargetPanel extends PushTargetPanel<GitPushTarget> {
     myTargetEditor.addDocumentListener(new DocumentAdapter() {
       @Override
       public void documentChanged(DocumentEvent e) {
-        super.documentChanged(e);
-        listener.onTargetInEditModeChanged(myTargetEditor.getText());
+        processActiveUserChanges(listener);
       }
     });
+    myTargetEditor.addFocusListener(new FocusAdapter() {
+      @Override
+      public void focusGained(FocusEvent e) {
+        processActiveUserChanges(listener);
+      }
+    });
+    myTargetEditor.addHierarchyListener(new HierarchyListener() {
+      @Override
+      public void hierarchyChanged(HierarchyEvent e) {
+        if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0) {
+          myTargetEditor.getDocument().putUserData(UndoConstants.DONT_RECORD_UNDO, !myTargetEditor.isShowing());
+        }
+      }
+    });
+  }
+
+  private void processActiveUserChanges(@NotNull PushTargetEditorListener listener) {
+    //fire only about user's changes
+    if (myTargetEditor.isShowing()) {
+      listener.onTargetInEditModeChanged(myTargetEditor.getText());
+    }
+  }
+
+  @Override
+  public void forceUpdateEditableUiModel(@NotNull String forcedText) {
+    //if targetEditor is now editing by user, it shouldn't be force updated
+    if (!myTargetEditor.isShowing()) {
+      myTargetEditor.setText(forcedText);
+    }
   }
 
   private class MyGitTargetFocusTraversalPolicy extends ComponentsListFocusTraversalPolicy {

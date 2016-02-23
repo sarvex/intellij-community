@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,27 +17,29 @@ package com.intellij.debugger.ui.impl.watch;
 
 import com.intellij.debugger.DebuggerBundle;
 import com.intellij.debugger.DebuggerContext;
+import com.intellij.debugger.DebuggerManagerEx;
 import com.intellij.debugger.engine.DebuggerManagerThreadImpl;
 import com.intellij.debugger.engine.DebuggerUtils;
+import com.intellij.debugger.engine.JavaValue;
+import com.intellij.debugger.engine.JavaValueModifier;
 import com.intellij.debugger.engine.evaluation.EvaluateException;
 import com.intellij.debugger.engine.evaluation.EvaluateExceptionUtil;
 import com.intellij.debugger.engine.evaluation.EvaluationContextImpl;
+import com.intellij.debugger.impl.DebuggerContextImpl;
 import com.intellij.debugger.impl.PositionUtil;
 import com.intellij.debugger.settings.NodeRendererSettings;
 import com.intellij.debugger.ui.tree.FieldDescriptor;
 import com.intellij.debugger.ui.tree.NodeDescriptor;
-import com.intellij.debugger.ui.tree.render.ClassRenderer;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.JavaPsiFacade;
 import com.intellij.psi.PsiElementFactory;
 import com.intellij.psi.PsiExpression;
 import com.intellij.util.IncorrectOperationException;
-import com.sun.jdi.Field;
-import com.sun.jdi.ObjectCollectedException;
-import com.sun.jdi.ObjectReference;
-import com.sun.jdi.Value;
+import com.intellij.xdebugger.frame.XValueModifier;
+import com.sun.jdi.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class FieldDescriptorImpl extends ValueDescriptorImpl implements FieldDescriptor{
   public static final String OUTER_LOCAL_VAR_FIELD_PREFIX = "val$";
@@ -83,7 +85,7 @@ public class FieldDescriptorImpl extends ValueDescriptorImpl implements FieldDes
         myIsPrimitive = super.isPrimitive();
       }
       else {
-        myIsPrimitive = DebuggerUtils.isPrimitiveType(myField.typeName()) ? Boolean.TRUE : Boolean.FALSE;
+        myIsPrimitive = DebuggerUtils.isPrimitiveType(myField.typeName());
       }
     }
     return myIsPrimitive.booleanValue();
@@ -106,11 +108,16 @@ public class FieldDescriptorImpl extends ValueDescriptorImpl implements FieldDes
 
   @Override
   public String getName() {
-    final String fieldName = myField.name();
-    if (isOuterLocalVariableValue() && NodeRendererSettings.getInstance().getClassRenderer().SHOW_VAL_FIELDS_AS_LOCAL_VARIABLES) {
-      return StringUtil.trimStart(fieldName, OUTER_LOCAL_VAR_FIELD_PREFIX);
+    return myField.name();
+  }
+
+  @Override
+  public String calcValueName() {
+    String res = super.calcValueName();
+    if (Boolean.TRUE.equals(getUserData(SHOW_DECLARING_TYPE))) {
+      return NodeRendererSettings.getInstance().getClassRenderer().renderTypeName(myField.declaringType().name()) + "." + res;
     }
-    return fieldName;
+    return res;
   }
 
   public boolean isOuterLocalVariableValue() {
@@ -122,12 +129,10 @@ public class FieldDescriptorImpl extends ValueDescriptorImpl implements FieldDes
     }
   }
 
+  @Nullable
   @Override
-  public String calcValueName() {
-    if (NodeRendererSettings.getInstance().getClassRenderer().SHOW_DECLARED_TYPE) {
-      return addDeclaredType(myField.typeName());
-    }
-    return super.calcValueName();
+  public String getDeclaredType() {
+    return myField.typeName();
   }
 
   @Override
@@ -149,5 +154,62 @@ public class FieldDescriptorImpl extends ValueDescriptorImpl implements FieldDes
     catch (IncorrectOperationException e) {
       throw new EvaluateException(DebuggerBundle.message("error.invalid.field.name", getName()), e);
     }
+  }
+
+  @Override
+  public XValueModifier getModifier(JavaValue value) {
+    return new JavaValueModifier(value) {
+      @Override
+      protected void setValueImpl(@NotNull String expression, @NotNull XModificationCallback callback) {
+        final DebuggerContextImpl debuggerContext = DebuggerManagerEx.getInstanceEx(getProject()).getContext();
+        FieldDescriptorImpl fieldDescriptor = FieldDescriptorImpl.this;
+        final Field field = fieldDescriptor.getField();
+        if (!field.isStatic()) {
+          final ObjectReference object = fieldDescriptor.getObject();
+          if (object != null) {
+            set(expression, callback, debuggerContext, new SetValueRunnable() {
+              public void setValue(EvaluationContextImpl evaluationContext, Value newValue)
+                throws ClassNotLoadedException, InvalidTypeException, EvaluateException {
+                object.setValue(field, preprocessValue(evaluationContext, newValue, field.type()));
+                update(debuggerContext);
+              }
+
+              public ReferenceType loadClass(EvaluationContextImpl evaluationContext, String className) throws
+                                                                                                        InvocationException,
+                                                                                                        ClassNotLoadedException,
+                                                                                                        IncompatibleThreadStateException,
+                                                                                                        InvalidTypeException,
+                                                                                                        EvaluateException {
+                return evaluationContext.getDebugProcess().loadClass(evaluationContext, className, field.declaringType().classLoader());
+              }
+            });
+          }
+        }
+        else {
+          // field is static
+          ReferenceType refType = field.declaringType();
+          if (refType instanceof ClassType) {
+            final ClassType classType = (ClassType)refType;
+            set(expression, callback, debuggerContext, new SetValueRunnable() {
+              public void setValue(EvaluationContextImpl evaluationContext, Value newValue)
+                throws ClassNotLoadedException, InvalidTypeException, EvaluateException {
+                classType.setValue(field, preprocessValue(evaluationContext, newValue, field.type()));
+                update(debuggerContext);
+              }
+
+              public ReferenceType loadClass(EvaluationContextImpl evaluationContext, String className) throws
+                                                                                                        InvocationException,
+                                                                                                        ClassNotLoadedException,
+                                                                                                        IncompatibleThreadStateException,
+                                                                                                        InvalidTypeException,
+                                                                                                        EvaluateException {
+                return evaluationContext.getDebugProcess().loadClass(evaluationContext, className,
+                                                                     field.declaringType().classLoader());
+              }
+            });
+          }
+        }
+      }
+    };
   }
 }

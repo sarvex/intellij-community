@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx;
 import com.intellij.openapi.fileEditor.ex.IdeDocumentHistory;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.*;
 import com.intellij.openapi.wm.ToolWindowManager;
 import gnu.trove.THashSet;
@@ -43,13 +44,13 @@ import java.util.*;
 
 @State(
     name = "IdeDocumentHistory",
-    storages = {@Storage(file = StoragePathMacros.WORKSPACE_FILE)}
+    storages = {@Storage(StoragePathMacros.WORKSPACE_FILE)}
 )
 public class IdeDocumentHistoryImpl extends IdeDocumentHistory implements ProjectComponent, PersistentStateComponent<IdeDocumentHistoryImpl.RecentlyChangedFilesState> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.fileEditor.impl.IdeDocumentHistoryImpl");
 
-  private static final int BACK_QUEUE_LIMIT = 25;
-  private static final int CHANGE_QUEUE_LIMIT = 25;
+  private static final int BACK_QUEUE_LIMIT = Registry.intValue("editor.navigation.history.stack.size");
+  private static final int CHANGE_QUEUE_LIMIT = Registry.intValue("editor.navigation.history.stack.size");
 
   private final Project myProject;
 
@@ -144,8 +145,9 @@ public class IdeDocumentHistoryImpl extends IdeDocumentHistory implements Projec
     myCmdProcessor.addCommandListener(myCommandListener,myProject);
   }
 
-  static class RecentlyChangedFilesState {
-    private List<String> CHANGED_PATHS = new ArrayList<String>();
+  public static class RecentlyChangedFilesState {
+    // don't make it private, see: IDEA-130363 Recently Edited Files list should survive restart
+    public List<String> CHANGED_PATHS = new ArrayList<String>();
 
     public void register(VirtualFile file) {
       final String path = file.getPath();
@@ -332,15 +334,17 @@ public class IdeDocumentHistoryImpl extends IdeDocumentHistory implements Projec
     putLastOrMerge(myForwardPlaces, info, Integer.MAX_VALUE);
 
     myBackInProgress = true;
-
-    executeCommand(new Runnable() {
-      @Override
-      public void run() {
-        gotoPlaceInfo(info);
-      }
-    }, "", null);
-
-    myBackInProgress = false;
+    try {
+      executeCommand(new Runnable() {
+        @Override
+        public void run() {
+          gotoPlaceInfo(info);
+        }
+      }, "", null);
+    }
+    finally {
+      myBackInProgress = false;
+    }
   }
 
   @Override
@@ -351,13 +355,16 @@ public class IdeDocumentHistoryImpl extends IdeDocumentHistory implements Projec
     if (target == null) return;
 
     myForwardInProgress = true;
-    executeCommand(new Runnable() {
-      @Override
-      public void run() {
-        gotoPlaceInfo(target);
-      }
-    }, "", null);
-    myForwardInProgress = false;
+    try {
+      executeCommand(new Runnable() {
+        @Override
+        public void run() {
+          gotoPlaceInfo(target);
+        }
+      }, "", null);
+    } finally {
+      myForwardInProgress = false;
+    }
   }
 
   private PlaceInfo getTargetForwardInfo() {
@@ -367,9 +374,10 @@ public class IdeDocumentHistoryImpl extends IdeDocumentHistory implements Projec
     PlaceInfo current = getCurrentPlaceInfo();
 
     while (!myForwardPlaces.isEmpty()) {
-      if (isSame(current, target)) {
+      if (current != null && isSame(current, target)) {
         target = myForwardPlaces.removeLast();
-      } else {
+      }
+      else {
         break;
       }
     }

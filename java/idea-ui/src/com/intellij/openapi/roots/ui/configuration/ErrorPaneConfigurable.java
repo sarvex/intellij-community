@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,18 @@ import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ui.configuration.projectRoot.StructureConfigurableContext;
+import com.intellij.openapi.roots.ui.configuration.projectRoot.daemon.ProjectConfigurationProblem;
+import com.intellij.openapi.roots.ui.configuration.projectRoot.daemon.ProjectStructureElement;
+import com.intellij.openapi.roots.ui.configuration.projectRoot.daemon.ProjectStructureProblemDescription;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.*;
 import com.intellij.ui.awt.RelativePoint;
 import com.intellij.util.Alarm;
 import com.intellij.util.ui.UIUtil;
+import com.intellij.util.ui.update.MergingUpdateQueue;
+import com.intellij.util.ui.update.Update;
+import com.intellij.xml.util.XmlStringUtil;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -37,13 +43,18 @@ import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * @author Konstantin Bulenkov
  */
 public class ErrorPaneConfigurable extends JPanel implements Configurable, Disposable, ConfigurationErrors {
   private final Alarm myAlarm;
-  private final ArrayList<ConfigurationError> myErrors = new ArrayList<ConfigurationError>();
+  private final List<ConfigurationError> myErrors = new ArrayList<ConfigurationError>();
+  private int myComputedErrorsStamp;
+  private int myShownErrorsStamp;
+  private final Object myLock = new Object();
+  private final MergingUpdateQueue myContentUpdateQueue;
   private final JTextPane myContent = new JTextPane();
   private Runnable myOnErrorsChanged;
 
@@ -56,7 +67,8 @@ public class ErrorPaneConfigurable extends JPanel implements Configurable, Dispo
     final JScrollPane pane = ScrollPaneFactory.createScrollPane(myContent, true);
     pane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
     add(pane);
-    myAlarm = new Alarm(this);
+    myContentUpdateQueue = new MergingUpdateQueue("ErrorPaneConfigurable Content Updates", 300, false, pane, this, pane);
+    myAlarm = new Alarm(Alarm.ThreadToUse.POOLED_THREAD, this);
     project.getMessageBus().connect(this).subscribe(ConfigurationErrors.TOPIC, this);
     myContent.addHyperlinkListener(new HyperlinkAdapter() {
       @Override
@@ -76,7 +88,7 @@ public class ErrorPaneConfigurable extends JPanel implements Configurable, Dispo
               final Element ol = element.getParentElement();
               for (int i = 0; i < ol.getElementCount(); i++) {
                 if (ol.getElement(i) == element) {
-                  error = myErrors.get(i);
+                  error = getError(i, myShownErrorsStamp);
                 }
               }
               break;
@@ -105,51 +117,77 @@ public class ErrorPaneConfigurable extends JPanel implements Configurable, Dispo
     refresh();
   }
 
+  private ConfigurationError getError(int i, int expectedStamp) {
+    synchronized (myLock) {
+      return expectedStamp == myComputedErrorsStamp ? myErrors.get(i) : null;
+    }
+  }
+
   public void refresh() {
     myAlarm.cancelAllRequests();
     myAlarm.addRequest(new Runnable() {
       @Override
       public void run() {
-        String html = "<html>" +
-                      "<header><style type='text/css'>" +
-                      "body {" +
-                      "  color: #" + ColorUtil.toHex(new JBColor(Gray.x33, UIUtil.getLabelForeground())) + ";" +
-                      "  font-family: '" + UIUtil.getLabelFont().getName() + ",serif';" +
-                      "  font-size: " + UIUtil.getLabelFont().getSize() + ";" +
-                      "}" +
-                      "li {" +
-                      "  margin-bottom: 5;" +
-                      "}" +
-                      "ol {" +
-                      "}" +
-                      "a {" +
-                      " text-decoration: none;" +
-                      "}" +
-                      "</style>" +
-                      "</header>" +
-                      "<body>";
+        final String header = "<html>" +
+                            "<header><style type='text/css'>" +
+                            "body {" +
+                            "  color: #" + ColorUtil.toHex(new JBColor(Gray.x33, UIUtil.getLabelForeground())) + ";" +
+                            "  font-family: '" + UIUtil.getLabelFont().getName() + ",serif';" +
+                            "  font-size: " + UIUtil.getLabelFont().getSize() + ";" +
+                            "}" +
+                            "li {" +
+                            "  margin-bottom: 5;" +
+                            "}" +
+                            "ol {" +
+                            "}" +
+                            "a {" +
+                            " text-decoration: none;" +
+                            "}" +
+                            "</style>" +
+                            "</header>" +
+                            "<body>";
+        final StringBuilder html = new StringBuilder(header);
         int i = 0;
-        html += "<ol>";
-        for (ConfigurationError error : myErrors) {
+        html.append("<ol>");
+        ConfigurationError[] errors;
+        int currentStamp;
+        synchronized (myLock) {
+          errors = myErrors.toArray(new ConfigurationError[0]);
+          currentStamp = myComputedErrorsStamp;
+        }
+
+        for (ConfigurationError error : errors) {
           i++;
-          String description = error.getDescription();
-          if (description.startsWith("<html>") && description.endsWith("</html>")) {
-            description = description.substring(6, description.length() - 7);
+          if (i > 100) break;
+          html.append("<li>");
+          String description;
+          if (error instanceof ProjectConfigurationProblem) {
+            //todo[nik] pass ProjectStructureProblemDescription directly and get rid of ConfigurationError at all
+            ProjectStructureProblemDescription problemDescription = ((ProjectConfigurationProblem)error).getProblemDescription();
+            description = problemDescription.getDescription();
+            if (description == null) {
+              ProjectStructureElement place = problemDescription.getPlace().getContainingElement();
+              description = XmlStringUtil.convertToHtmlContent(problemDescription.getMessage(false));
+              if (problemDescription.canShowPlace()) {
+                description = place.getTypeName() + " <a href='http://navigate/" + i + "'>"
+                              + XmlStringUtil.convertToHtmlContent(place.getPresentableName()) + "</a>: "
+                              + StringUtil.decapitalize(description);
+              }
+            }
+            else {
+              description = XmlStringUtil.convertToHtmlContent(description);
+            }
           }
-          if (description.startsWith("Module '")) {
-            final int start = 8;
-            final int end = description.indexOf("'", 9);
-            final String moduleName = description.substring(start, end);
-            description = "Module <a href='http://module/" + StringUtil.escapeXml(moduleName) + "'>" + StringUtil.escapeXml(moduleName) + "</a> " + description.substring(
-              end + 1);
+          else {
+            description = XmlStringUtil.convertToHtmlContent(error.getDescription());
           }
           if (error.canBeFixed()) {
             description += " <a href='http://fix/" + i + "'>[Fix]</a>";
           }
-          html+= "<li>" + description + "</li>";
+          html.append(description).append("</li>");
         }
-        html += "</ol></body></html>";
-        myContent.setText(html);
+        html.append("</ol></body></html>");
+        myContentUpdateQueue.queue(new ShowErrorsUpdate(currentStamp, html.toString()));
         if (myOnErrorsChanged != null) {
           myOnErrorsChanged.run();
         }
@@ -201,17 +239,49 @@ public class ErrorPaneConfigurable extends JPanel implements Configurable, Dispo
 
   @Override
   public void addError(@NotNull ConfigurationError error) {
-    myErrors.add(error);
+    synchronized (myLock) {
+      myErrors.add(error);
+      myComputedErrorsStamp++;
+    }
     refresh();
   }
 
   @Override
   public void removeError(@NotNull ConfigurationError error) {
-    myErrors.remove(error);
+    synchronized (myLock) {
+      myErrors.remove(error);
+      myComputedErrorsStamp++;
+    }
     refresh();
   }
 
   public int getErrorsCount() {
-    return myErrors.size();
+    synchronized (myLock) {
+      return myErrors.size();
+    }
+  }
+
+  private class ShowErrorsUpdate extends Update {
+    private final int myCurrentStamp;
+    private final String myText;
+
+    public ShowErrorsUpdate(int currentStamp, String text) {
+      super(currentStamp);
+      myCurrentStamp = currentStamp;
+      myText = text;
+    }
+
+    @Override
+    public void run() {
+      if (!Disposer.isDisposed(ErrorPaneConfigurable.this)) {
+        myContent.setText(myText);
+        myShownErrorsStamp = myCurrentStamp;
+      }
+    }
+
+    @Override
+    public boolean canEat(Update update) {
+      return update instanceof ShowErrorsUpdate && myCurrentStamp > ((ShowErrorsUpdate)update).myCurrentStamp;
+    }
   }
 }

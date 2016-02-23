@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,22 +18,21 @@ package com.intellij.openapi.project;
 import com.intellij.openapi.components.ComponentManager;
 import com.intellij.openapi.extensions.AreaInstance;
 import com.intellij.openapi.vfs.VirtualFile;
-import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * An object representing IntelliJ project.<br/>
+ * An object representing an IntelliJ project.
  *
- * <li/>To get all its modules, use {@link com.intellij.openapi.module.ModuleManager#getModules()}<br/>
+ * <p>To get all of its modules, use {@code ModuleManager.getInstance(project).getModules()}.
  *
- * <li/>To iterate over all project source files and directories, use {@code com.intellij.openapi.roots.ProjectFileIndex.SERVICE.getInstance(project).iterateContent(iterator)}<br/>
+ * <p>To iterate over all project source files and directories,
+ * use {@code ProjectFileIndex.SERVICE.getInstance(project).iterateContent(iterator)}.
  *
- * <li/>To get the list of all open projects, use {@link com.intellij.openapi.project.ProjectManager#getOpenProjects()}
- *
+ * <p>To get the list of all open projects, use {@code ProjectManager.getInstance().getOpenProjects()}.
  */
 public interface Project extends ComponentManager, AreaInstance {
-  @NonNls String DIRECTORY_STORE_FOLDER = ProjectCoreUtil.DIRECTORY_BASED_PROJECT_DIR;
+  String DIRECTORY_STORE_FOLDER = ".idea";
 
   /**
    * Returns a name ot the project. For a directory-based project it's an arbitrary string specified by user at project creation
@@ -42,7 +41,6 @@ public interface Project extends ComponentManager, AreaInstance {
    * @return project name
    */
   @NotNull
-  @NonNls
   String getName();
 
   /**
@@ -54,13 +52,12 @@ public interface Project extends ComponentManager, AreaInstance {
   VirtualFile getBaseDir();
 
   /**
-   * Returns a system-dependent path to a project base directory (see {@linkplain #getBaseDir()}).<br/>
+   * Returns a system-independent path to a project base directory (see {@linkplain #getBaseDir()}).<br/>
    * Returns <code>null</code> for default project.
    *
    * @return a path to a project base directory, or <code>null</code> for default project
    */
   @Nullable
-  @NonNls
   String getBasePath();
 
   /**
@@ -77,13 +74,9 @@ public interface Project extends ComponentManager, AreaInstance {
   VirtualFile getProjectFile();
 
   /**
-   * Returns a system-dependent path to project descriptor file (see {@linkplain #getProjectFile()}).<br/>
-   * Returns empty string (<code>""</code>) for default project.
-   *
-   * @return project descriptor file, or empty string for default project
+   * @return a system-independent path to project file (see {@linkplain #getProjectFile()}) or <code>null</code> for default project.
    */
-  @NotNull
-  @NonNls
+  @Nullable
   String getProjectFilePath();
 
   /**
@@ -95,7 +88,6 @@ public interface Project extends ComponentManager, AreaInstance {
    * @return presentable project path
    */
   @Nullable
-  @NonNls
   String getPresentableUrl();
 
   /**
@@ -112,12 +104,8 @@ public interface Project extends ComponentManager, AreaInstance {
   VirtualFile getWorkspaceFile();
 
   @NotNull
-  @NonNls
   String getLocationHash();
 
-  /**
-   * Should be invoked under WriteAction.
-   */
   void save();
 
   boolean isOpen();

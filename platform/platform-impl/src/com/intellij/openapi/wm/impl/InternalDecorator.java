@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,6 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.border.Border;
-import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.*;
 import java.util.Map;
@@ -65,8 +64,10 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
   private final TogglePinnedModeAction myToggleAutoHideModeAction;
   private final ToggleDockModeAction myToggleDockModeAction;
   private final ToggleFloatingModeAction myToggleFloatingModeAction;
+  private final ToggleWindowedModeAction myToggleWindowedModeAction;
   private final ToggleSideModeAction myToggleSideModeAction;
   private final ToggleContentUiTypeAction myToggleContentUiTypeAction;
+  private final RemoveStripeButtonAction myHideStripeButtonAction;
 
   private ActionGroup myAdditionalGearActions;
   /**
@@ -76,6 +77,7 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
   @NonNls public static final String TOGGLE_PINNED_MODE_ACTION_ID = "TogglePinnedMode";
   @NonNls public static final String TOGGLE_DOCK_MODE_ACTION_ID = "ToggleDockMode";
   @NonNls public static final String TOGGLE_FLOATING_MODE_ACTION_ID = "ToggleFloatingMode";
+  @NonNls public static final String TOGGLE_WINDOWED_MODE_ACTION_ID = "ToggleWindowedMode";
   @NonNls public static final String TOGGLE_SIDE_MODE_ACTION_ID = "ToggleSideMode";
   @NonNls private static final String TOGGLE_CONTENT_UI_TYPE_ACTION_ID = "ToggleContentUiTypeMode";
 
@@ -90,10 +92,12 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
     myDivider = new MyDivider();
 
     myToggleFloatingModeAction = new ToggleFloatingModeAction();
+    myToggleWindowedModeAction = new ToggleWindowedModeAction();
     myToggleSideModeAction = new ToggleSideModeAction();
     myToggleDockModeAction = new ToggleDockModeAction();
     myToggleAutoHideModeAction = new TogglePinnedModeAction();
     myToggleContentUiTypeAction = new ToggleContentUiTypeAction();
+    myHideStripeButtonAction = new RemoveStripeButtonAction();
     myToggleToolbarGroup = ToggleToolbarAction.createToggleToolbarGroup(myProject, myToolWindow);
 
     myHeader = new ToolWindowHeader(toolWindow, info, new Producer<ActionGroup>() {
@@ -256,6 +260,10 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
     myDispatcher.getMulticaster().contentUiTypeChanges(this, type);
   }
 
+  private void fireVisibleOnPanelChanged(final boolean visibleOnPanel) {
+    myDispatcher.getMulticaster().visibleStripeButtonChanged(this, visibleOnPanel);
+  }
+
   private void init() {
     enableEvents(AWTEvent.COMPONENT_EVENT_MASK);
 
@@ -267,7 +275,6 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
     innerPanel.add(toolWindowComponent, BorderLayout.CENTER);
 
     final NonOpaquePanel inner = new NonOpaquePanel(innerPanel);
-    inner.setBorder(new EmptyBorder(0, 0, 0, 0));
 
     contentPane.add(inner, BorderLayout.CENTER);
     add(contentPane, BorderLayout.CENTER);
@@ -303,9 +310,7 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
         doPaintBorder(c, g, x, y, width, height);
       }
       else {
-        g.setColor(UIUtil.getPanelBackground());
-        doPaintBorder(c, g, x, y, width, height);
-        g.setColor(Gray._155);
+        g.setColor(SystemInfo.isMac && UIUtil.isUnderIntelliJLaF() ? Gray.xC9 : Gray._155);
         doPaintBorder(c, g, x, y, width, height);
       }
     }
@@ -428,19 +433,27 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
       group.add(myToggleAutoHideModeAction);
       group.add(myToggleDockModeAction);
       group.add(myToggleFloatingModeAction);
+      group.add(myToggleWindowedModeAction);
       group.add(myToggleSideModeAction);
     }
     else if (myInfo.isFloating()) {
       group.add(myToggleAutoHideModeAction);
       group.add(myToggleFloatingModeAction);
+      group.add(myToggleWindowedModeAction);
+    }
+    else if (myInfo.isWindowed()) {
+      group.add(myToggleFloatingModeAction);
+      group.add(myToggleWindowedModeAction);
     }
     else if (myInfo.isSliding()) {
       if (!ToolWindowId.PREVIEW.equals(myInfo.getId())) {
         group.add(myToggleDockModeAction);
       }
       group.add(myToggleFloatingModeAction);
+      group.add(myToggleWindowedModeAction);
       group.add(myToggleSideModeAction);
     }
+    group.add(myHideStripeButtonAction);
     return group;
   }
 
@@ -523,6 +536,12 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
     public final void setSelected(final AnActionEvent event, final boolean flag) {
       fireAutoHideChanged(!myInfo.isAutoHide());
     }
+
+    @Override
+    public void update(@NotNull AnActionEvent e) {
+      super.update(e);
+      e.getPresentation().setVisible(myInfo.getType() != ToolWindowType.FLOATING && myInfo.getType() != ToolWindowType.WINDOWED);
+    }
   }
 
   private final class ToggleDockModeAction extends ToggleAction implements DumbAware {
@@ -567,6 +586,35 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
     }
   }
 
+  private final class ToggleWindowedModeAction extends ToggleAction implements DumbAware {
+    public ToggleWindowedModeAction() {
+      copyFrom(ActionManager.getInstance().getAction(TOGGLE_WINDOWED_MODE_ACTION_ID));
+    }
+
+    @Override
+    public final boolean isSelected(final AnActionEvent event) {
+      return myInfo.isWindowed();
+    }
+
+    @Override
+    public final void setSelected(final AnActionEvent event, final boolean flag) {
+      if (myInfo.isWindowed()) {
+        fireTypeChanged(myInfo.getInternalType());
+      }
+      else {
+        fireTypeChanged(ToolWindowType.WINDOWED);
+      }
+    }
+
+    @Override
+    public void update(@NotNull AnActionEvent e) {
+      super.update(e);
+      if (SystemInfo.isMac) {
+        e.getPresentation().setEnabledAndVisible(false);
+      }
+    }
+  }
+
   private final class ToggleSideModeAction extends ToggleAction implements DumbAware {
     public ToggleSideModeAction() {
       copyFrom(ActionManager.getInstance().getAction(TOGGLE_SIDE_MODE_ACTION_ID));
@@ -585,6 +633,27 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
     @Override
     public void update(@NotNull final AnActionEvent e) {
       super.update(e);
+    }
+  }
+
+  private final class RemoveStripeButtonAction extends AnAction implements DumbAware {
+    public RemoveStripeButtonAction() {
+      Presentation presentation = getTemplatePresentation();
+      presentation.setText(ActionsBundle.message("action.RemoveStripeButton.text"));
+      presentation.setDescription(ActionsBundle.message("action.RemoveStripeButton.description"));
+    }
+
+    @Override
+    public void update(@NotNull AnActionEvent e) {
+      e.getPresentation().setEnabledAndVisible(myInfo.isShowStripeButton());
+    }
+
+    @Override
+    public void actionPerformed(AnActionEvent e) {
+      fireVisibleOnPanelChanged(false);
+      if (getToolWindow().isActive()) {
+        fireHidden();
+      }
     }
   }
 
@@ -610,18 +679,27 @@ public final class InternalDecorator extends JPanel implements Queryable, DataPr
 
 
   private final class ToggleContentUiTypeAction extends ToggleAction implements DumbAware {
+    private boolean myHadSeveralContents;
+
     private ToggleContentUiTypeAction() {
       copyFrom(ActionManager.getInstance().getAction(TOGGLE_CONTENT_UI_TYPE_ACTION_ID));
     }
 
     @Override
+    public void update(@NotNull AnActionEvent e) {
+      myHadSeveralContents = myHadSeveralContents || myToolWindow.getContentManager().getContentCount() > 1;
+      super.update(e);
+      e.getPresentation().setVisible(myHadSeveralContents);
+    }
+
+    @Override
     public boolean isSelected(AnActionEvent e) {
-      return myInfo.getContentUiType() == ToolWindowContentUiType.TABBED;
+      return myInfo.getContentUiType() == ToolWindowContentUiType.COMBO;
     }
 
     @Override
     public void setSelected(AnActionEvent e, boolean state) {
-      fireContentUiTypeChanges(state ? ToolWindowContentUiType.TABBED : ToolWindowContentUiType.COMBO);
+      fireContentUiTypeChanges(state ? ToolWindowContentUiType.COMBO : ToolWindowContentUiType.TABBED);
     }
   }
 

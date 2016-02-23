@@ -26,7 +26,6 @@ import com.intellij.openapi.vcs.VcsException;
 import com.intellij.openapi.vcs.VcsNotifier;
 import com.intellij.openapi.vcs.merge.MergeDialogCustomizer;
 import com.intellij.openapi.vcs.merge.MergeProvider;
-import com.intellij.openapi.vcs.update.RefreshVFsSynchronously;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
@@ -39,11 +38,15 @@ import git4idea.commands.GitCommandResult;
 import git4idea.repo.GitRepository;
 import git4idea.repo.GitRepositoryManager;
 import git4idea.util.StringScanner;
+import org.jetbrains.annotations.CalledInBackground;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.event.HyperlinkEvent;
 import java.io.File;
 import java.util.*;
+
+import static com.intellij.dvcs.DvcsUtil.findVirtualFilesWithRefresh;
+import static com.intellij.dvcs.DvcsUtil.sortVirtualFilesByPresentation;
 
 /**
  *
@@ -72,7 +75,7 @@ public class GitConflictResolver {
     private String myErrorNotificationAdditionalDescription = "";
     private String myMergeDescription = "";
     private MergeDialogCustomizer myMergeDialogCustomizer = new MergeDialogCustomizer() {
-      @Override public String getMultipleFileMergeDescription(Collection<VirtualFile> files) {
+      @Override public String getMultipleFileMergeDescription(@NotNull Collection<VirtualFile> files) {
         return myMergeDescription;
       }
     };
@@ -104,7 +107,7 @@ public class GitConflictResolver {
       myMergeDialogCustomizer = mergeDialogCustomizer;
       return this;
     }
-    
+
   }
 
   public GitConflictResolver(@NotNull Project project, @NotNull Git git, @NotNull GitPlatformFacade platformFacade,
@@ -153,6 +156,7 @@ public class GitConflictResolver {
    * In the basic implementation no action is performed, {@code true} is returned.
    * @return Return value is returned from {@link #merge()}
    */
+  @CalledInBackground
   protected boolean proceedAfterAllMerged() throws VcsException {
     return true;
   }
@@ -320,7 +324,7 @@ public class GitConflictResolver {
           return new File(root.getPath(), path);
         }
       });
-      return ContainerUtil.sorted(RefreshVFsSynchronously.refreshFiles(files), GitUtil.VIRTUAL_FILE_COMPARATOR);
+      return sortVirtualFilesByPresentation(findVirtualFilesWithRefresh(files));
     }
   }
 

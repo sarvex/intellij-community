@@ -29,7 +29,6 @@ import com.intellij.openapi.util.ActionCallback;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.Conditions;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.*;
 import com.intellij.ui.navigation.History;
@@ -48,7 +47,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import javax.swing.tree.*;
 import java.awt.*;
 import java.util.*;
@@ -112,7 +110,7 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
   protected MyNode myRoot = new MyRootNode();
   protected Tree myTree = new Tree();
 
-  private final DetailsComponent myDetails = new DetailsComponent(!Registry.is("ide.new.project.settings"), !Registry.is("ide.new.project.settings"));
+  private final DetailsComponent myDetails = new DetailsComponent(false, false);
   protected JPanel myWholePanel;
   public JPanel myNorthPanel = new JPanel(new BorderLayout());
 
@@ -132,26 +130,12 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
   protected MasterDetailsComponent(MasterDetailsState state) {
     myState = state;
 
-    mySplitter = isNewProjectSettings() ? new OnePixelSplitter(false, .2f) : new JBSplitter(false, .2f);
+    mySplitter = new OnePixelSplitter(false, .2f);
     mySplitter.setSplitterProportionKey("ProjectStructure.SecondLevelElements");
     mySplitter.setHonorComponentsMinimumSize(true);
 
     installAutoScroll();
     reInitWholePanelIfNeeded();
-  }
-
-  private boolean isNewProjectSettings() {
-    if (!Registry.is("ide.new.project.settings")) {
-      return false;
-    }
-    try {
-      // assume that only project structure dialog uses the following base class for details:
-      String name = "com.intellij.openapi.roots.ui.configuration.projectRoot.BaseStructureConfigurable";
-      return Class.forName(name).isAssignableFrom(getClass());
-    }
-    catch (ClassNotFoundException ignored) {
-      return false;
-    }
   }
 
   protected void reInitWholePanelIfNeeded() {
@@ -185,27 +169,19 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
       }
     };
 
-    if (isNewProjectSettings()) {
-      ToolbarDecorator decorator = ToolbarDecorator.createDecorator(myTree);
-      DefaultActionGroup group = createToolbarActionGroup();
-      if (group != null) {
-        decorator.setActionGroup(group);
-      }
-      //left.add(myNorthPanel, BorderLayout.NORTH);
-      myMaster = decorator.setAsUsualTopToolbar().setPanelBorder(new EmptyBorder(0, 0, 0, 0)).createPanel();
-      myNorthPanel.setVisible(false);
-    } else {
-      left.add(myNorthPanel, BorderLayout.NORTH);
-      myMaster = ScrollPaneFactory.createScrollPane(myTree);
+    ToolbarDecorator decorator = ToolbarDecorator.createDecorator(myTree);
+    DefaultActionGroup group = createToolbarActionGroup();
+    if (group != null) {
+      decorator.setActionGroup(group);
     }
+    //left.add(myNorthPanel, BorderLayout.NORTH);
+    myMaster = decorator.setAsUsualTopToolbar().setPanelBorder(JBUI.Borders.empty()).createPanel();
+    myNorthPanel.setVisible(false);
     left.add(myMaster, BorderLayout.CENTER);
     mySplitter.setFirstComponent(left);
 
     final JPanel right = new JPanel(new BorderLayout());
     right.add(myDetails.getComponent(), BorderLayout.CENTER);
-    if (!isNewProjectSettings()) {
-      myWholePanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-    }
 
     mySplitter.setSecondComponent(right);
 
@@ -296,15 +272,6 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
       return group;
     }
     return null;
-  }
-
-  private void initToolbar() {
-    if (isNewProjectSettings()) return;
-    DefaultActionGroup group = createToolbarActionGroup();
-    if (group != null) {
-      final JComponent component = ActionManager.getInstance().createActionToolbar(ActionPlaces.UNKNOWN, group, true).getComponent();
-      myNorthPanel.add(component, BorderLayout.NORTH);
-    }
   }
 
   public void addItemsChangeListener(ItemsChangeListener l) {
@@ -522,7 +489,6 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
         }
       }
     });
-    initToolbar();
     ArrayList<AnAction> actions = createActions(true);
     if (actions != null) {
       final DefaultActionGroup group = new DefaultActionGroup();
@@ -580,9 +546,14 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
   }
 
   protected void addNode(MyNode nodeToAdd, MyNode parent) {
-    parent.add(nodeToAdd);
-    TreeUtil.sort(parent, getNodeComparator());
-    ((DefaultTreeModel)myTree.getModel()).reload(parent);
+    int i = TreeUtil.indexedBinarySearch(parent, nodeToAdd, getNodeComparator());
+    int insertionPoint = i >= 0 ? i : -i - 1;
+    ((DefaultTreeModel)myTree.getModel()).insertNodeInto(nodeToAdd, parent, insertionPoint);
+  }
+
+  protected void sortDescendants(MyNode root) {
+    TreeUtil.sort(root, getNodeComparator());
+    ((DefaultTreeModel)myTree.getModel()).reload(root);
   }
 
   protected Comparator<MyNode> getNodeComparator() {
@@ -734,12 +705,31 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
     myInitializedConfigurables.add(configurable);
   }
 
+  /**
+   * @deprecated use {@link #checkForEmptyAndDuplicatedNames(String, String, Class} instead
+   */
   protected void checkApply(Set<MyNode> rootNodes, String prefix, String title) throws ConfigurationException {
     for (MyNode rootNode : rootNodes) {
-      final Set<String> names = new HashSet<String>();
-      for (int i = 0; i < rootNode.getChildCount(); i++) {
-        final MyNode node = (MyNode)rootNode.getChildAt(i);
-        final NamedConfigurable scopeConfigurable = node.getConfigurable();
+      checkForEmptyAndDuplicatedNames(rootNode, prefix, title, NamedConfigurable.class, false);
+    }
+  }
+
+  protected final void checkForEmptyAndDuplicatedNames(String prefix, String title,
+                                                       Class<? extends NamedConfigurable> configurableClass) throws ConfigurationException {
+    checkForEmptyAndDuplicatedNames(myRoot, prefix, title, configurableClass, true);
+  }
+
+  private void checkForEmptyAndDuplicatedNames(MyNode rootNode,
+                                               String prefix,
+                                               String title,
+                                               Class<? extends NamedConfigurable> configurableClass,
+                                               boolean recursively) throws ConfigurationException {
+    final Set<String> names = new HashSet<String>();
+    for (int i = 0; i < rootNode.getChildCount(); i++) {
+      final MyNode node = (MyNode)rootNode.getChildAt(i);
+      final NamedConfigurable scopeConfigurable = node.getConfigurable();
+
+      if (configurableClass.isInstance(scopeConfigurable)) {
         final String name = scopeConfigurable.getDisplayName();
         if (name.trim().length() == 0) {
           selectNodeInTree(node);
@@ -754,6 +744,10 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
         }
         names.add(name);
       }
+
+      if (recursively) {
+        checkForEmptyAndDuplicatedNames(node, prefix, title, configurableClass, true);
+      }
     }
   }
 
@@ -762,10 +756,17 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
   }
 
   protected void removePaths(final TreePath... paths) {
+    List<MyNode> nodes = new ArrayList<MyNode>();
+    for (TreePath path : paths) {
+      nodes.add((MyNode)path.getLastPathComponent());
+    }
+    removeNodes(nodes);
+  }
+
+  protected void removeNodes(final List<MyNode> nodes) {
     MyNode parentNode = null;
     int idx = -1;
-    for (TreePath path : paths) {
-      final MyNode node = (MyNode)path.getLastPathComponent();
+    for (MyNode node : nodes) {
       final NamedConfigurable namedConfigurable = node.getConfigurable();
       final Object editableObject = namedConfigurable.getEditableObject();
       parentNode = (MyNode)node.getParent();
@@ -777,7 +778,7 @@ public abstract class MasterDetailsComponent implements Configurable, DetailsCom
       namedConfigurable.disposeUIResources();
     }
 
-    if (paths.length > 0) {
+    if (!nodes.isEmpty()) {
       if (parentNode != null && idx != -1) {
         DefaultMutableTreeNode toSelect = null;
         if (idx < parentNode.getChildCount()) {

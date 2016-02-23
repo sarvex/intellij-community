@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,15 +37,20 @@ public class ConcurrentPackedBitsArray {
     chunksPerWord = 64 / bitsPerChunk;
   }
 
-  // returns chunk bits
+  /**
+   *  returns {@link #bitsPerChunk} bits stored at the offset "id"
+   *  The returned bits are LSB, other (64-bitsPerChunk) higher bits are undefined
+   */
   public long get(int id) {
+    assert id >= 0 : id;
     int bitIndex = id/chunksPerWord * 64 + (id%chunksPerWord)*bitsPerChunk;
     long word = bits.getWord(bitIndex) >> bitIndex;
-    return word & mask;
+    return word;
   }
 
   // stores chunk atomically, returns previous chunk
   public long set(int id, final long flags) {
+    assert id >= 0 : id;
     if ((flags & ~mask) != 0) {
       throw new IllegalArgumentException("Flags must be between 0 and "+ mask +" but got:"+flags);
     }
@@ -58,7 +63,7 @@ public class ConcurrentPackedBitsArray {
       }
     }) >> bitIndex;
 
-    return prevChunk & mask;
+    return prevChunk;
   }
 
   public void clear() {

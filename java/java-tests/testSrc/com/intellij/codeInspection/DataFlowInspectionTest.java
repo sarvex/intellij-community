@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,14 +19,12 @@ import com.intellij.JavaTestUtil;
 import com.intellij.codeInspection.dataFlow.DataFlowInspection;
 import com.intellij.testFramework.LightProjectDescriptor;
 import com.intellij.testFramework.fixtures.JavaCodeInsightTestFixture;
-import com.intellij.testFramework.fixtures.LightCodeInsightFixtureTestCase;
 import org.jetbrains.annotations.NotNull;
 
 /**
  * @author peter
  */
-public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
-
+public class DataFlowInspectionTest extends DataFlowInspectionTestCase {
   @NotNull
   @Override
   protected LightProjectDescriptor getProjectDescriptor() {
@@ -36,14 +34,6 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
   @Override
   protected String getTestDataPath() {
     return JavaTestUtil.getJavaTestDataPath() + "/inspection/dataFlow/fixture/";
-  }
-
-  private void doTest() {
-    final DataFlowInspection inspection = new DataFlowInspection();
-    inspection.SUGGEST_NULLABLE_ANNOTATIONS = true;
-    inspection.REPORT_CONSTANT_REFERENCE_VALUES = false;
-    myFixture.enableInspections(inspection);
-    myFixture.testHighlighting(true, false, true, getTestName(false) + ".java");
   }
 
   public void testTryInAnonymous() throws Throwable { doTest(); }
@@ -94,11 +84,14 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
   public void testEqualsEnumConstant() throws Throwable { doTest(); }
   public void testSwitchEnumConstant() { doTest(); }
   public void testEnumConstantNotNull() throws Throwable { doTest(); }
+  public void testCompareToEnumConstant() throws Throwable { doTest(); }
   public void testEqualsConstant() throws Throwable { doTest(); }
   public void testDontSaveTypeValue() { doTest(); }
   public void testFinalLoopVariableInstanceof() throws Throwable { doTest(); }
   public void testGreaterIsNotEquals() throws Throwable { doTest(); }
   public void testNotGreaterIsNotEquals() throws Throwable { doTest(); }
+
+  public void testAnnotationMethodNotNull() { doTest(); }
 
   public void testChainedFinalFieldsDfa() throws Throwable { doTest(); }
   public void testFinalFieldsDifferentInstances() throws Throwable { doTest(); }
@@ -189,11 +182,23 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
   public void testLastConstantConditionInAnd() { doTest(); }
   
   public void testCompileTimeConstant() { doTest(); }
+  public void testNoParenthesesWarnings() { doTest(); }
 
   public void testTransientFinalField() { doTest(); }
   public void testRememberLocalTransientFieldState() { doTest(); }
   public void testFinalFieldDuringInitialization() { doTest(); }
   public void testFinalFieldDuringSuperInitialization() { doTest(); }
+  public void testFinalFieldInConstructorAnonymous() { doTest(); }
+
+  public void testFinalFieldNotDuringInitialization() {
+    final DataFlowInspection inspection = new DataFlowInspection();
+    inspection.TREAT_UNKNOWN_MEMBERS_AS_NULLABLE = true;
+    inspection.REPORT_CONSTANT_REFERENCE_VALUES = false;
+    myFixture.enableInspections(inspection);
+    myFixture.testHighlighting(true, false, true, getTestName(false) + ".java");
+  }
+
+
   public void _testSymmetricUncheckedCast() { doTest(); } // https://youtrack.jetbrains.com/issue/IDEABKL-6871
   public void testNullCheckDoesntAffectUncheckedCast() { doTest(); }
   public void testThrowNull() { doTest(); }
@@ -229,8 +234,11 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
   public void testBoxingImpliesNotNull() { doTest(); }
   public void testLargeIntegersAreNotEqualWhenBoxed() { doTest(); }
   public void testNoGenericCCE() { doTest(); }
+  public void testDoubleCCEWarning() { doTest(); }
   public void testLongCircuitOperations() { doTest(); }
   public void testUnconditionalForLoop() { doTest(); }
+  public void testIncrementParenthesized() { doTest(); }
+  public void testDecrementAnotherObjectField() { doTest(); }
   public void testAnonymousMethodIndependence() { doTest(); }
   public void testAnonymousFieldIndependence() { doTest(); }
   public void testNoConfusionWithAnonymousConstantInitializer() { doTest(); }
@@ -248,6 +256,7 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
   public void testLongDisjunctionsNotComplex() { doTest(); }
   public void testWhileNotComplex() { doTest(); }
   public void testAssertTrueNotComplex() { doTest(); }
+  public void testAssertThrowsAssertionError() { doTest(); }
   public void testManyDisjunctiveFieldAssignmentsInLoopNotComplex() { doTest(); }
   public void testManyContinuesNotComplex() { doTest(); }
   public void testFinallyNotComplex() { doTest(); }
@@ -266,10 +275,12 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
   
   public void testNotEqualsTypo() { doTest(); }
   public void testAndEquals() { doTest(); }
+  public void testXor() { doTest(); }
 
   public void testUnusedCallDoesNotMakeUnknown() { doTest(); }
   public void testEmptyCallDoesNotMakeNullable() { doTest(); }
   public void testGettersAndPureNoFlushing() { doTest(); }
+  public void testFalseGetters() { doTest(); }
   
   public void testNotNullAfterDereference() { doTest(); }
 
@@ -278,6 +289,8 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
   public void testSameComparisonTwice() { doTest(); }
   public void testRootThrowableCause() { doTest(); }
 
+  public void testNotNullOverridesNullable() { doTest(); }
+
   public void testOverridingInferredNotNullMethod() { doTest(); }
   public void testUseInferredContracts() { doTest(); }
   public void testContractWithNoArgs() { doTest(); }
@@ -285,10 +298,13 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
 
   public void testNumberComparisonsWhenValueIsKnown() { doTest(); }
   public void testFloatComparisons() { doTest(); }
+  public void testComparingIntToDouble() { doTest(); }
 
   public void testNullableArray() { doTest(); }
 
   public void testAccessingSameArrayElements() { doTest(); }
+
+  public void testMethodParametersCanChangeNullability() { doTest(); }
 
   public void testParametersAreNonnullByDefault() {
     addJavaxNullabilityAnnotations(myFixture);
@@ -331,10 +347,37 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
     myFixture.testHighlighting(true, false, true, getTestName(false) + ".java");
   }
 
+  public void testCustomDefaultInEnums() {
+    DataFlowInspectionTest.addJavaxNullabilityAnnotations(myFixture);
+    myFixture.addClass("package foo;" +
+                       "import static java.lang.annotation.ElementType.*;" +
+                       "@javax.annotation.meta.TypeQualifierDefault({PARAMETER, FIELD, METHOD, LOCAL_VARIABLE}) " +
+                       "@javax.annotation.Nonnull " +
+                       "public @interface NonnullByDefault {}");
+
+    myFixture.addFileToProject("foo/package-info.java", "@NonnullByDefault package foo;");
+
+    myFixture.configureFromExistingVirtualFile(myFixture.copyFileToProject(getTestName(false) + ".java", "foo/Classes.java"));
+    myFixture.enableInspections(new DataFlowInspection());
+    myFixture.checkHighlighting(true, false, true);
+  }
+
   public void testTrueOrEqualsSomething() {
     doTest();
     myFixture.launchAction(myFixture.findSingleIntention("Remove redundant assignment"));
     myFixture.checkResultByFile(getTestName(false) + "_after.java");
+  }
+
+  public void testDontSimplifyAssignment() {
+    doTest();
+    assertEmpty(myFixture.filterAvailableIntentions("Simplify"));
+  }
+
+  public void testVolatileFieldNPEFixes() {
+    doTest();
+    assertEmpty(myFixture.filterAvailableIntentions("Surround"));
+    assertEmpty(myFixture.filterAvailableIntentions("Assert"));
+    assertNotEmpty(myFixture.filterAvailableIntentions("Introduce variable"));
   }
 
   public void testAssertThat() {
@@ -347,6 +390,33 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
     myFixture.addClass("package org.junit; public class Assert { " +
                        "public static <T> void assertThat(T actual, org.hamcrest.Matcher<? super T> matcher) {}\n" +
                        "public static <T> void assertThat(String msg, T actual, org.hamcrest.Matcher<? super T> matcher) {}\n" +
+                       "}");
+
+    myFixture.addClass("package org.assertj.core.api; public class Assertions { " +
+                       "public static <T> AbstractObjectAssert<?, T> assertThat(Object actual) {}\n" +
+                       "}");
+    myFixture.addClass("package org.assertj.core.api; public class AbstractObjectAssert<S extends AbstractObjectAssert<S, A>, A> {" +
+                       "public S isNotNull() {}" +
+                       "}");
+
+    myFixture.enableInspections(new DataFlowInspection());
+    myFixture.testHighlighting(true, false, true, getTestName(false) + ".java");
+  }
+
+  public void testGoogleTruth() {
+    myFixture.addClass("package com.google.common.truth; public class Truth { " +
+                       "public static Subject assertThat(Object o) {}\n" +
+                       "}");
+    myFixture.addClass("package com.google.common.truth; public class Subject { public void isNotNull() {} }");
+    myFixture.enableInspections(new DataFlowInspection());
+    myFixture.testHighlighting(true, false, true, getTestName(false) + ".java");
+  }
+
+  public void testBooleanPreconditions() {
+    myFixture.addClass("package com.google.common.base; public class Preconditions { " +
+                       "public static <T> T checkArgument(boolean b) {}\n" +
+                       "public static <T> T checkArgument(boolean b, String msg) {}\n" +
+                       "public static <T> T checkState(boolean b, String msg) {}\n" +
                        "}");
     myFixture.enableInspections(new DataFlowInspection());
     myFixture.testHighlighting(true, false, true, getTestName(false) + ".java");
@@ -361,4 +431,14 @@ public class DataFlowInspectionTest extends LightCodeInsightFixtureTestCase {
   }
 
   public void _testNullCheckBeforeInstanceof() { doTest(); } // https://youtrack.jetbrains.com/issue/IDEA-113220
+
+  public void testConstantConditionsWithAssignmentsInside() { doTest(); }
+  public void testIfConditionsWithAssignmentInside() { doTest(); }
+  public void testBitwiseNegatedBoxed() { doTest(); }
+  public void testDontShadowFinalReassignment() { doTest(); }
+
+  public void testLiteralIfCondition() {
+    doTest();
+    myFixture.findSingleIntention("Remove 'if' statement");
+  }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,9 @@ import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.ide.CopyPasteManager;
+import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.DumbService;
+import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Disposer;
@@ -71,10 +73,11 @@ public abstract class FinderRecursivePanel<T> extends JBSplitter implements Data
   @Nullable
   private JComponent myChild = null;
 
-  private JBList myList;
-  private final CollectionListModel<T> myListModel = new CollectionListModel<T>();
+  protected JBList myList;
+  protected final CollectionListModel<T> myListModel = new CollectionListModel<T>();
 
   private final MergingUpdateQueue myMergingUpdateQueue = new MergingUpdateQueue("FinderRecursivePanel", 100, true, this, this);
+  private volatile boolean isMergeListItemsRunning;
 
   private final AtomicBoolean myUpdateSelectedPathModeActive = new AtomicBoolean();
 
@@ -210,11 +213,12 @@ public abstract class FinderRecursivePanel<T> extends JBSplitter implements Data
       @Override
       public void valueChanged(ListSelectionEvent event) {
         if (event.getValueIsAdjusting()) return;
+        if (isMergeListItemsRunning()) return;
         if (myUpdateSelectedPathModeActive.get()) return;
         updateRightComponent(true);
       }
     });
-    ListScrollingUtil.installActions(list);
+    ScrollingUtil.installActions(list);
 
     //    installSpeedSearch(list); // TODO
 
@@ -350,10 +354,20 @@ public abstract class FinderRecursivePanel<T> extends JBSplitter implements Data
 
         //noinspection unchecked
         final T t = (T)value;
-        setIcon(getItemIcon(t));
-        append(getItemText(t));
+        try {
+          setIcon(getItemIcon(t));
+          append(getItemText(t));
+        }
+        catch (IndexNotReadyException e) {
+          append("loading...");
+        }
 
-        doCustomizeCellRenderer(this, list, t, index, isSelected, cellHasFocus);
+        try {
+          doCustomizeCellRenderer(this, list, t, index, isSelected, cellHasFocus);
+        }
+        catch (IndexNotReadyException ignored) {
+          // ignore
+        }
 
         Color bg = isSelected ? UIUtil.getTreeSelectionBackground(cellHasFocus) : UIUtil.getTreeTextBackground();
         if (!isSelected && myFileColorManager.isEnabled()) {
@@ -401,6 +415,10 @@ public abstract class FinderRecursivePanel<T> extends JBSplitter implements Data
     if (CommonDataKeys.NAVIGATABLE.is(dataId) && selectedValue instanceof Navigatable) {
       return selectedValue;
     }
+    if (LangDataKeys.MODULE.is(dataId) && selectedValue instanceof Module) {
+      return selectedValue;
+    }
+
     if (selectedValue instanceof DataProvider) {
       return ((DataProvider)selectedValue).getData(dataId);
     }
@@ -435,8 +453,9 @@ public abstract class FinderRecursivePanel<T> extends JBSplitter implements Data
       Object selectedValue = pathToSelect[i];
       panel.setSelectedValue(selectedValue);
       if (i < pathToSelect.length - 1) {
-        panel = (FinderRecursivePanel)panel.getSecondComponent();
-        assert panel != null : Arrays.toString(pathToSelect);
+        final JComponent component = panel.getSecondComponent();
+        assert component instanceof FinderRecursivePanel : Arrays.toString(pathToSelect);
+        panel = (FinderRecursivePanel)component;
       }
     }
 
@@ -459,7 +478,7 @@ public abstract class FinderRecursivePanel<T> extends JBSplitter implements Data
           return getListItems();
         }
       });
-      mergeListItems(myListModel, listItems);
+      mergeListItems(myListModel, myList, listItems);
     }
     finally {
       myList.setPaintBusy(false);
@@ -510,14 +529,17 @@ public abstract class FinderRecursivePanel<T> extends JBSplitter implements Data
                   SwingUtilities.invokeLater(new Runnable() {
                     @Override
                     public void run() {
-                      mergeListItems(myListModel, listItems);
+                      mergeListItems(myListModel, myList, listItems);
 
-                      if (myList.getSelectedIndex() < 0) {
+                      if (myList.isEmpty()) {
+                        createRightComponent(true);
+                      }
+                      else if (myList.getSelectedIndex() < 0) {
                         myList.setSelectedIndex(myListModel.getSize() > oldIndex ? oldIndex : 0);
                       }
                       else {
                         Object newValue = myList.getSelectedValue();
-                        updateRightComponent(oldValue == null || oldValue != newValue);
+                        updateRightComponent(oldValue == null || !oldValue.equals(newValue) || myList.isEmpty());
                       }
                     }
                   });
@@ -533,25 +555,43 @@ public abstract class FinderRecursivePanel<T> extends JBSplitter implements Data
     });
   }
 
-  public static <T> void mergeListItems(@NotNull CollectionListModel<T> listModel, @NotNull List<T> newItems) {
-    // remove items
-    for (int i = listModel.getSize() - 1; i >= 0; i--) {
-      if (!newItems.contains(listModel.getElementAt(i))) {
-        listModel.remove(i);
+  protected void mergeListItems(@NotNull CollectionListModel<T> listModel, @NotNull JList list, @NotNull List<T> newItems) {
+    setMergeListItemsRunning(true);
+
+    try {
+      if (listModel.getSize() == 0) {
+        listModel.add(newItems);
       }
-    }
-    // add items
-    for (int i = 0; i < newItems.size(); i++) {
-      T newItem = newItems.get(i);
-      if (i < listModel.getSize()) {
-        if (!listModel.getElementAt(i).equals(newItem)) {
-          listModel.add(i, newItem);
-        }
+      else if (newItems.size() == 0) {
+        listModel.removeAll();
       }
       else {
-        listModel.add(newItem);
+
+        int newSelectedIndex = -1;
+
+        T selection = (T)list.getSelectedValue();
+        if (selection != null) {
+          newSelectedIndex = newItems.indexOf(selection);
+        }
+
+
+        listModel.removeAll();
+        listModel.add(newItems);
+
+        list.setSelectedIndex(newSelectedIndex);
       }
     }
+    finally {
+      setMergeListItemsRunning(false);
+    }
+  }
+
+  public boolean isMergeListItemsRunning() {
+    return isMergeListItemsRunning;
+  }
+
+  protected void setMergeListItemsRunning(boolean isListMergeRunning) {
+    this.isMergeListItemsRunning = isListMergeRunning;
   }
 
   public void updateRightComponent(boolean force) {
@@ -564,23 +604,26 @@ public abstract class FinderRecursivePanel<T> extends JBSplitter implements Data
   }
 
   private void createRightComponent(boolean withUpdatePanel) {
+    if (myChild instanceof Disposable) {
+      Disposer.dispose((Disposable)myChild);
+    }
     T value = getSelectedValue();
     if (value != null) {
-      if (myChild instanceof Disposable) {
-        Disposer.dispose((Disposable)myChild);
-      }
       myChild = createRightComponent(value);
       if (myChild instanceof FinderRecursivePanel) {
         final FinderRecursivePanel childPanel = (FinderRecursivePanel)myChild;
         if (withUpdatePanel) {
           childPanel.init();
-        } else {
+        }
+        else {
           childPanel.initWithoutUpdatePanel();
         }
       }
-
-      setSecondComponent(myChild);
     }
+    else {
+      myChild = createDefaultRightComponent();
+    }
+    setSecondComponent(myChild);
   }
 
   private int getIndex() {

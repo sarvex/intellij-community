@@ -1,5 +1,6 @@
 package org.jetbrains.plugins.ipnb.protocol;
 
+import com.google.common.collect.Lists;
 import com.google.gson.*;
 import com.intellij.openapi.util.text.StringUtil;
 import org.java_websocket.client.WebSocketClient;
@@ -17,35 +18,46 @@ import java.net.*;
 import java.util.*;
 
 /**
-* @author vlan
+ * @author vlan
+ *
+ * To be removed
 */
 public class IpnbConnection {
-  private static final String API_URL = "/api";
-  private static final String KERNELS_URL = API_URL + "/kernels";
-  private static final String HTTP_POST = "POST";
+  protected static final String API_URL = "/api";
+  protected static final String KERNELS_URL = API_URL + "/kernels";
+  protected static final String HTTP_POST = "POST";
   // TODO: Serialize cookies for the authentication message
-  private static final String authMessage = "{\"header\":{\"msg_id\":\"\", \"msg_type\":\"connect_request\"}, \"parent_header\":\"\", \"metadata\":{}}";
+  protected static final String authMessage = "{\"header\":{\"msg_id\":\"\", \"msg_type\":\"connect_request\"}, \"parent_header\":\"\", \"metadata\":{}," +
+                                              "\"channel\":\"shell\" }";
   public static final String HTTP_DELETE = "DELETE";
 
-  @NotNull private final URI myURI;
-  @NotNull private final String myKernelId;
-  @NotNull private final String mySessionId;
-  @NotNull private final IpnbConnectionListener myListener;
-  @NotNull private final WebSocketClient myShellClient;
-  @NotNull private final WebSocketClient myIOPubClient;
-  @NotNull private final Thread myShellThread;
-  @NotNull private final Thread myIOPubThread;
+  @NotNull protected final URI myURI;
+  @NotNull protected final String myKernelId;
+  @NotNull protected final String mySessionId;
+  @NotNull protected final IpnbConnectionListener myListener;
+  private WebSocketClient myShellClient;
+  private WebSocketClient myIOPubClient;
+  private Thread myShellThread;
+  private Thread myIOPubThread;
 
   private volatile boolean myIsShellOpen = false;
   private volatile boolean myIsIOPubOpen = false;
-  private volatile boolean myIsOpened = false;
+  protected volatile boolean myIsOpened = false;
 
-  public IpnbConnection(@NotNull URI uri, @NotNull IpnbConnectionListener listener) throws IOException, URISyntaxException {
-    myURI = uri;
+  private ArrayList<IpnbOutputCell> myOutput = new ArrayList<IpnbOutputCell>();
+  private int myExecCount;
+
+
+  public IpnbConnection(@NotNull String uri, @NotNull IpnbConnectionListener listener) throws IOException, URISyntaxException {
+    myURI = new URI(uri);
     myListener = listener;
     mySessionId = UUID.randomUUID().toString();
     myKernelId = startKernel();
 
+    initializeClients();
+  }
+
+  protected void initializeClients() throws URISyntaxException {
     final Draft draft = new Draft17WithOrigin();
 
     myShellClient = new WebSocketClient(getShellURI(), draft) {
@@ -68,73 +80,23 @@ public class IpnbConnection {
       public void onError(@NotNull Exception e) {
       }
     };
-    myShellThread = new Thread(myShellClient);
+    myShellThread = new Thread(myShellClient, "IPNB shell client");
     myShellThread.start();
 
-    myIOPubClient = new WebSocketClient(getIOPubURI(), draft) {
-      private ArrayList<IpnbOutputCell> myOutput = new ArrayList<IpnbOutputCell>();
-      private Integer myExecCount = null;
-      @Override
-      public void onOpen(ServerHandshake handshakeData) {
-        send(authMessage);
-        myIsIOPubOpen = true;
-        notifyOpen();
-      }
-
-      @Override
-      public void onMessage(String message) {
-        final Gson gson = new Gson();
-        final Message msg = gson.fromJson(message, Message.class);
-        final Header header = msg.getHeader();
-        final Header parentHeader = gson.fromJson(msg.getParentHeader(), Header.class);
-        final String messageType = header.getMessageType();
-        if ("pyout".equals(messageType) || "display_data".equals(messageType)) {
-          final PyOutContent content = gson.fromJson(msg.getContent(), PyOutContent.class);
-          addCellOutput(content, myOutput);
-        }
-        else if ("pyerr".equals(messageType) || "error".equals(messageType)) {
-          final PyErrContent content = gson.fromJson(msg.getContent(), PyErrContent.class);
-          addCellOutput(content, myOutput);
-        }
-        else if ("stream".equals(messageType)) {
-          final PyStreamContent content = gson.fromJson(msg.getContent(), PyStreamContent.class);
-          addCellOutput(content, myOutput);
-        }
-        else if ("pyin".equals(messageType) || "execute_input".equals(messageType)) {
-          final JsonElement executionCount = msg.getContent().get("execution_count");
-          if (executionCount != null) {
-            myExecCount = executionCount.getAsInt();
-          }
-        }
-        else if ("status".equals(messageType)) {
-          final PyStatusContent content = gson.fromJson(msg.getContent(), PyStatusContent.class);
-          if (content.getExecutionState().equals("idle")) {
-            //noinspection unchecked
-            myListener.onOutput(IpnbConnection.this, parentHeader.getMessageId(), (List<IpnbOutputCell>)myOutput.clone(), myExecCount);
-            myOutput.clear();
-          }
-        }
-      }
-
-      @Override
-      public void onClose(int code, String reason, boolean remote) {
-
-      }
-
-      @Override
-      public void onError(Exception ex) {
-
-      }
-    };
-    myIOPubThread = new Thread(myIOPubClient);
+    myIOPubClient = new IpnbWebSocketClient(getIOPubURI(), draft);
+    myIOPubThread = new Thread(myIOPubClient, "IPNB pub client");
     myIOPubThread.start();
   }
 
-  private void notifyOpen() {
+  protected void notifyOpen() {
     if (!myIsOpened && myIsShellOpen && myIsIOPubOpen) {
       myIsOpened = true;
       myListener.onOpen(this);
     }
+  }
+
+  public boolean isAlive() {
+    return myShellClient.isOpen() && myIOPubClient.isOpen() ;
   }
 
   @NotNull
@@ -168,8 +130,16 @@ public class IpnbConnection {
     return kernel.getId();
   }
 
-  private void shutdownKernel() throws IOException {
+  protected void shutdownKernel() throws IOException {
     httpRequest(myURI + KERNELS_URL + "/" + myKernelId, HTTP_DELETE);
+  }
+
+  public void interrupt() throws IOException {
+    httpRequest(myURI + KERNELS_URL + "/" + myKernelId + "/interrupt", HTTP_POST);
+  }
+
+  public void reload() throws IOException {
+    httpRequest(myURI + KERNELS_URL + "/" + myKernelId + "/restart", HTTP_POST);
   }
 
   @NotNull
@@ -183,7 +153,7 @@ public class IpnbConnection {
   }
 
   @NotNull
-  private String getWebSocketURIBase() {
+  protected String getWebSocketURIBase() {
     return "ws://" + myURI.getAuthority() + KERNELS_URL + "/" + myKernelId;
   }
 
@@ -245,7 +215,7 @@ public class IpnbConnection {
   }
 
   @SuppressWarnings("UnusedDeclaration")
-  private static class Header {
+  protected static class Header {
     private String msg_id;
     private String username;
     private String session;
@@ -279,11 +249,12 @@ public class IpnbConnection {
   }
 
   @SuppressWarnings("UnusedDeclaration")
-  private static class Message {
+  protected static class Message {
     private Header header;
     private JsonObject parent_header;
     private JsonObject metadata;
     private JsonObject content;
+    private JsonPrimitive channel;
 
     public static Message create(Header header, JsonObject parentHeader, JsonObject metadata, JsonObject content) {
       final Message message = new Message();
@@ -291,6 +262,7 @@ public class IpnbConnection {
       message.parent_header = parentHeader;
       message.metadata = metadata;
       message.content = content;
+      message.channel = new JsonPrimitive("shell");
       return message;
     }
 
@@ -311,45 +283,43 @@ public class IpnbConnection {
     }
   }
 
-  private static void addCellOutput(@NotNull final PyContent content, ArrayList<IpnbOutputCell> output) {
+  protected static void addCellOutput(@NotNull final PyContent content, ArrayList<IpnbOutputCell> output) {
     if (content instanceof PyErrContent) {
       output.add(new IpnbErrorOutputCell(((PyErrContent)content).getEvalue(),
                                  ((PyErrContent)content).getEname(), ((PyErrContent)content).getTraceback(), null));
     }
     else if (content instanceof PyStreamContent) {
       final String data = ((PyStreamContent)content).getData();
-      output.add(new IpnbStreamOutputCell(((PyStreamContent)content).getName(), new String[]{data}, null));
+      output.add(new IpnbStreamOutputCell(((PyStreamContent)content).getName(), Lists.newArrayList(data), null));
     }
     else if (content instanceof PyOutContent) {
-      final Map<String, String> data = ((PyOutContent)content).getData();
+      final Map<String, Object> data = ((PyOutContent)content).getData();
+      final String plainText = (String)data.get("text/plain");
       if (data.containsKey("text/latex")) {
-        final String text = data.get("text/latex");
-        final String plainText = data.get("text/plain");
-        output.add(new IpnbLatexOutputCell(new String[]{text}, null, new String[]{plainText}));
+        final String text = (String)data.get("text/latex");
+        output.add(new IpnbLatexOutputCell(Lists.newArrayList(text), null, Lists.newArrayList(plainText)));
       }
       else if (data.containsKey("text/html")) {
-        final String html = data.get("text/html");
-        output.add(new IpnbHtmlOutputCell(StringUtil.splitByLinesKeepSeparators(html), StringUtil.splitByLinesKeepSeparators(html), null));
+        final String html = (String)data.get("text/html");
+        output.add(new IpnbHtmlOutputCell(Lists.newArrayList(StringUtil.splitByLinesKeepSeparators(html)),
+                                          Lists.newArrayList(StringUtil.splitByLinesKeepSeparators(html)),
+                                          ((PyOutContent)content).getExecutionCount()));
       }
       else if (data.containsKey("image/png")) {
-        final String png = data.get("image/png");
-        final String plainText = data.get("text/plain");
-        output.add(new IpnbPngOutputCell(png, StringUtil.splitByLinesKeepSeparators(plainText), null));
+        final String png = (String)data.get("image/png");
+        output.add(new IpnbPngOutputCell(png, Lists.newArrayList(StringUtil.splitByLinesKeepSeparators(plainText)), null));
       }
       else if (data.containsKey("image/jpeg")) {
-        final String jpeg = data.get("image/jpeg");
-        final String plainText = data.get("text/plain");
-        output.add(new IpnbJpegOutputCell(jpeg, StringUtil.splitByLinesKeepSeparators(plainText), null));
+        final String jpeg = (String)data.get("image/jpeg");
+        output.add(new IpnbJpegOutputCell(jpeg, Lists.newArrayList(StringUtil.splitByLinesKeepSeparators(plainText)), null));
       }
       else if (data.containsKey("image/svg")) {
-        final String svg = data.get("image/svg");
-        final String plainText = data.get("text/plain");
-        output.add(new IpnbSvgOutputCell(StringUtil.splitByLinesKeepSeparators(svg), StringUtil.splitByLinesKeepSeparators(plainText), null));
+        final String svg = (String)data.get("image/svg");
+        output.add(new IpnbSvgOutputCell(Lists.newArrayList(StringUtil.splitByLinesKeepSeparators(svg)),
+                                         Lists.newArrayList(StringUtil.splitByLinesKeepSeparators(plainText)), null));
       }
-      else {
-        for (Map.Entry<String, String> entry : data.entrySet()) {
-          output.add(new IpnbOutOutputCell(new String[]{entry.getValue()}, null));
-        }
+      else if (plainText != null){
+        output.add(new IpnbOutOutputCell(Lists.newArrayList(plainText), ((PyOutContent)content).getExecutionCount()));
       }
     }
   }
@@ -357,16 +327,43 @@ public class IpnbConnection {
   private interface PyContent {}
 
   @SuppressWarnings("UnusedDeclaration")
-  private static class PyOutContent implements PyContent {
+  protected static class Payload {
+    String text;
+    boolean replace;
+    String source;
+  }
+
+  @SuppressWarnings("UnusedDeclaration")
+  protected static class PyExecuteReplyContent implements PyContent {
     private int execution_count;
-    private HashMap<String, String> data;
+    private JsonObject metadata;
+    private String status;
+    private List<Payload> payload;
+
+    public int getExecutionCount() {
+      return execution_count;
+    }
+
+    public JsonObject getMetadata() {
+      return metadata;
+    }
+
+    public List<Payload> getPayload() {
+      return payload;
+    }
+  }
+
+  @SuppressWarnings("UnusedDeclaration")
+  protected static class PyOutContent implements PyContent {
+    private int execution_count;
+    private HashMap<String, Object> data;
     private JsonObject metadata;
 
     public int getExecutionCount() {
       return execution_count;
     }
 
-    public Map<String, String> getData() {
+    public Map<String, Object> getData() {
       return data;
     }
 
@@ -376,10 +373,10 @@ public class IpnbConnection {
   }
 
   @SuppressWarnings("UnusedDeclaration")
-  private static class PyErrContent implements PyContent {
+  protected static class PyErrContent implements PyContent {
     private String ename;
     private String evalue;
-    private String[] traceback;
+    private List<String> traceback;
 
     public String getEname() {
       return ename;
@@ -389,13 +386,13 @@ public class IpnbConnection {
       return evalue;
     }
 
-    public String[] getTraceback() {
+    public List<String> getTraceback() {
       return traceback;
     }
   }
 
   @SuppressWarnings("UnusedDeclaration")
-  private static class PyStreamContent implements PyContent {
+  protected static class PyStreamContent implements PyContent {
     private String text;
     private String data;
     private String name;
@@ -410,7 +407,7 @@ public class IpnbConnection {
   }
 
   @SuppressWarnings("UnusedDeclaration")
-  private static class PyStatusContent {
+  protected static class PyStatusContent {
     private String execution_state;
 
     public String getExecutionState() {
@@ -418,7 +415,7 @@ public class IpnbConnection {
     }
   }
 
-  private class Draft17WithOrigin extends Draft_17 {
+  protected class Draft17WithOrigin extends Draft_17 {
     @Override
     public Draft copyInstance() {
       return new Draft17WithOrigin();
@@ -432,4 +429,84 @@ public class IpnbConnection {
       return request;
     }
   }
+
+  protected class IpnbWebSocketClient extends WebSocketClient {
+    protected IpnbWebSocketClient(@NotNull final URI serverUri, @NotNull final Draft draft) {
+      super(serverUri, draft);
+    }
+
+    @Override
+    public void onOpen(ServerHandshake handshakeData) {
+      send(authMessage);
+      myIsIOPubOpen = true;
+      notifyOpen();
+    }
+
+    @Override
+    public void onMessage(String message) {
+      final Gson gson = new Gson();
+      final Message msg = gson.fromJson(message, Message.class);
+      final Header header = msg.getHeader();
+      final Header parentHeader = gson.fromJson(msg.getParentHeader(), Header.class);
+      final String messageType = header.getMessageType();
+      if ("pyout".equals(messageType) || "display_data".equals(messageType) || "execute_result".equals(messageType)) {
+        final PyOutContent content = gson.fromJson(msg.getContent(), PyOutContent.class);
+        addCellOutput(content, myOutput);
+      }
+      if ("execute_reply".equals(messageType)) {
+        final PyExecuteReplyContent content = gson.fromJson(msg.getContent(), PyExecuteReplyContent.class);
+        final List<Payload> payloads = content.payload;
+        if (payloads != null && !payloads.isEmpty()) {
+          final Payload payload = payloads.get(0);
+          if (payload.replace) {
+            myListener.onPayload(payload.text, parentHeader.getMessageId());
+          }
+        }
+        else {
+          myListener.onPayload(null, parentHeader.getMessageId());
+        }
+      }
+      else if ("pyerr".equals(messageType) || "error".equals(messageType)) {
+        final PyErrContent content = gson.fromJson(msg.getContent(), PyErrContent.class);
+        addCellOutput(content, myOutput);
+      }
+      else if ("stream".equals(messageType)) {
+        final PyStreamContent content = gson.fromJson(msg.getContent(), PyStreamContent.class);
+        addCellOutput(content, myOutput);
+      }
+      else if ("pyin".equals(messageType) || "execute_input".equals(messageType)) {
+        final JsonElement executionCount = msg.getContent().get("execution_count");
+        if (executionCount != null) {
+          myExecCount = executionCount.getAsInt();
+        }
+      }
+      else if ("status".equals(messageType)) {
+        final PyStatusContent content = gson.fromJson(msg.getContent(), PyStatusContent.class);
+        final String executionState = content.getExecutionState();
+        if ("idle".equals(executionState)) {
+          myListener.onOutput(IpnbConnection.this, parentHeader.getMessageId());
+          myOutput.clear();
+        }
+      }
+    }
+
+    @Override
+    public void onClose(int code, String reason, boolean remote) {
+
+    }
+
+    @Override
+    public void onError(Exception ex) {
+
+    }
+  }
+
+  public ArrayList<IpnbOutputCell> getOutput() {
+    return myOutput;
+  }
+
+  public int getExecCount() {
+    return myExecCount;
+  }
+
 }

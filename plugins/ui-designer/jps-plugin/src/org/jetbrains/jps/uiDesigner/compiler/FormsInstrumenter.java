@@ -15,6 +15,7 @@
  */
 package org.jetbrains.jps.uiDesigner.compiler;
 
+import com.intellij.compiler.instrumentation.FailSafeClassReader;
 import com.intellij.compiler.instrumentation.InstrumentationClassFinder;
 import com.intellij.compiler.instrumentation.InstrumenterClassWriter;
 import com.intellij.openapi.application.PathManager;
@@ -200,10 +201,10 @@ public class FormsInstrumenter extends FormsBuilder {
 
         final BinaryContent originalContent = compiled.getContent();
         final ClassReader classReader =
-          new ClassReader(originalContent.getBuffer(), originalContent.getOffset(), originalContent.getLength());
+          new FailSafeClassReader(originalContent.getBuffer(), originalContent.getOffset(), originalContent.getLength());
 
         final int version = ClassProcessingBuilder.getClassFileVersion(classReader);
-        final InstrumenterClassWriter classWriter = new InstrumenterClassWriter(ClassProcessingBuilder.getAsmClassWriterFlags(version), finder);
+        final InstrumenterClassWriter classWriter = new InstrumenterClassWriter(classReader, ClassProcessingBuilder.getAsmClassWriterFlags(version), finder);
         final AsmCodeGenerator codeGenerator = new AsmCodeGenerator(rootContainer, finder, nestedFormsLoader, false, classWriter);
         final byte[] patchedBytes = codeGenerator.patchClass(classReader);
         if (patchedBytes != null) {

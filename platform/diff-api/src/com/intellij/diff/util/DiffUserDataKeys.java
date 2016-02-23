@@ -15,14 +15,22 @@
  */
 package com.intellij.diff.util;
 
+import com.intellij.lang.Language;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.DataProvider;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Pair;
 
+import javax.swing.*;
 import java.util.List;
 
 public interface DiffUserDataKeys {
+  //
+  // DiffContent
+  //
+
+  Key<Language> LANGUAGE = Key.create("Diff.Language");
+
   //
   // DiffRequest
   //
@@ -37,12 +45,11 @@ public interface DiffUserDataKeys {
   // DiffContext
   //
 
-  Key<Side> MASTER_SIDE = Key.create("Diff.MasterSide");
-  Key<Side> PREFERRED_FOCUS_SIDE = Key.create("Diff.PreferredFocusSide");
-  Key<ThreeSide> PREFERRED_FOCUS_THREESIDE = Key.create("Diff.PreferredFocusThreeSide");
-
   Key<Boolean> DO_NOT_IGNORE_WHITESPACES = Key.create("Diff.DoNotIgnoreWhitespaces");
   Key<String> DIALOG_GROUP_KEY = Key.create("Diff.DialogGroupKey");
+  Key<String> PLACE = Key.create("Diff.Place");
+
+  Key<Boolean> DO_NOT_CHANGE_WINDOW_TITLE = Key.create("Diff.DoNotChangeWindowTitle");
 
   //
   // DiffContext / DiffRequest
@@ -50,6 +57,11 @@ public interface DiffUserDataKeys {
   // Both data from DiffContext / DiffRequest will be used. Data from DiffRequest will be used first.
   //
 
+  Key<Side> MASTER_SIDE = Key.create("Diff.MasterSide");
+  Key<Side> PREFERRED_FOCUS_SIDE = Key.create("Diff.PreferredFocusSide");
+  Key<ThreeSide> PREFERRED_FOCUS_THREESIDE = Key.create("Diff.PreferredFocusThreeSide");
+
+  Key<List<JComponent>> NOTIFICATIONS = Key.create("Diff.Notifications");
   Key<List<AnAction>> CONTEXT_ACTIONS = Key.create("Diff.ContextActions");
   Key<DataProvider> DATA_PROVIDER = Key.create("Diff.DataProvider");
   Key<Boolean> GO_TO_SOURCE_DISABLE = Key.create("Diff.GoToSourceDisable");

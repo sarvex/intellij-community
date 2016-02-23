@@ -1,14 +1,16 @@
 package com.intellij.tasks.redmine;
 
 import com.google.gson.Gson;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.tasks.Task;
 import com.intellij.tasks.impl.RequestFailedException;
-import com.intellij.tasks.impl.gson.GsonUtil;
+import com.intellij.tasks.impl.gson.TaskGsonUtil;
 import com.intellij.tasks.impl.httpclient.NewBaseRepositoryImpl;
 import com.intellij.tasks.redmine.model.RedmineIssue;
 import com.intellij.tasks.redmine.model.RedmineProject;
+import com.intellij.util.ArrayUtil;
 import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.xmlb.annotations.Tag;
@@ -30,7 +32,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.regex.Pattern;
 
-import static com.intellij.tasks.impl.httpclient.ResponseUtil.GsonSingleObjectDeserializer;
+import static com.intellij.tasks.impl.httpclient.TaskResponseUtil.GsonSingleObjectDeserializer;
 import static com.intellij.tasks.redmine.model.RedmineResponseWrapper.*;
 
 /**
@@ -39,10 +41,10 @@ import static com.intellij.tasks.redmine.model.RedmineResponseWrapper.*;
  */
 @Tag("Redmine")
 public class RedmineRepository extends NewBaseRepositoryImpl {
-  private static final Gson GSON = GsonUtil.createDefaultBuilder().create();
-
+  private static final Gson GSON = TaskGsonUtil.createDefaultBuilder().create();
   private static final Pattern ID_PATTERN = Pattern.compile("\\d+");
-
+  private static final Logger LOG = Logger.getInstance(RedmineRepository.class);
+  
   public static final RedmineProject UNSPECIFIED_PROJECT = new RedmineProject() {
     @NotNull
     @Override
@@ -123,18 +125,20 @@ public class RedmineRepository extends NewBaseRepositoryImpl {
         // /users/current.json. Unfortunately this endpoint may be unavailable on some old servers (see IDEA-122845)
         // and in this case we have to come back to requesting issues in this case to test anything at all.
 
-        URIBuilder uriBuilder = new URIBuilder(getRestApiUrl("users", "current.json"));
-        if (isUseApiKeyAuthentication()) {
-          uriBuilder.addParameter("key", getAPIKey());
-        }
+        URIBuilder uriBuilder = createUriBuilderWithApiKey("users", "current.json");
         myCurrentRequest.setURI(uriBuilder.build());
         HttpClient client = getHttpClient();
 
         HttpResponse httpResponse = client.execute(myCurrentRequest);
         StatusLine statusLine = httpResponse.getStatusLine();
         if (statusLine != null && statusLine.getStatusCode() == HttpStatus.SC_NOT_FOUND) {
-          myCurrentRequest = new HttpGet(getIssuesUrl(0, 1, true));
+          // Check that projects can be downloaded via given URL and the latter is not project-specific
+          myCurrentRequest = new HttpGet(getProjectsUrl(0, 1));
           statusLine = client.execute(myCurrentRequest).getStatusLine();
+          if (statusLine != null && statusLine.getStatusCode() == HttpStatus.SC_OK) {
+            myCurrentRequest = new HttpGet(getIssuesUrl(0, 1, true));
+            statusLine = client.execute(myCurrentRequest).getStatusLine();
+          }
         }
         if (statusLine != null && statusLine.getStatusCode() != HttpStatus.SC_OK) {
           throw RequestFailedException.forStatusCode(statusLine.getStatusCode(), statusLine.getReasonPhrase());
@@ -146,12 +150,20 @@ public class RedmineRepository extends NewBaseRepositoryImpl {
   @Override
   public Task[] getIssues(@Nullable String query, int offset, int limit, boolean withClosed) throws Exception {
     List<RedmineIssue> issues = fetchIssues(query, offset, limit, withClosed);
-    return ContainerUtil.map2Array(issues, RedmineTask.class, new Function<RedmineIssue, RedmineTask>() {
+    List<Task> result = ContainerUtil.map(issues, new Function<RedmineIssue, Task>() {
       @Override
       public RedmineTask fun(RedmineIssue issue) {
         return new RedmineTask(RedmineRepository.this, issue);
       }
     });
+    if (query != null && ID_PATTERN.matcher(query).matches()) {
+      LOG.debug("Query '" + query + "' looks like an issue ID. Requesting it explicitly from the server " + this);
+      final Task found = findTask(query);
+      if (found != null) {
+        result = ContainerUtil.append(result, found);
+      }
+    }
+    return ArrayUtil.toObjectArray(result, Task.class);
   }
 
   public List<RedmineIssue> fetchIssues(String query, int offset, int limit, boolean withClosed) throws Exception {
@@ -167,7 +179,7 @@ public class RedmineRepository extends NewBaseRepositoryImpl {
   }
 
   private URI getIssuesUrl(int offset, int limit, boolean withClosed) throws URISyntaxException {
-    URIBuilder builder = new URIBuilder(getRestApiUrl("issues.json"))
+    URIBuilder builder = createUriBuilderWithApiKey("issues.json")
       .addParameter("offset", String.valueOf(offset))
       .addParameter("limit", String.valueOf(limit))
       .addParameter("sort", "updated_on:desc")
@@ -179,9 +191,6 @@ public class RedmineRepository extends NewBaseRepositoryImpl {
     if (myCurrentProject != null && myCurrentProject != UNSPECIFIED_PROJECT) {
       builder.addParameter("project_id", String.valueOf(myCurrentProject.getId()));
     }
-    if (isUseApiKeyAuthentication()) {
-      builder.addParameter("key", myAPIKey);
-    }
     return builder.build();
   }
 
@@ -192,14 +201,8 @@ public class RedmineRepository extends NewBaseRepositoryImpl {
     int offset = 0;
     ProjectsWrapper wrapper;
     do {
-      URIBuilder builder = new URIBuilder(getRestApiUrl("projects.json"));
-      builder.addParameter("offset", String.valueOf(offset));
-      builder.addParameter("limit", "50");
-      if (isUseApiKeyAuthentication()) {
-        builder.addParameter("key", myAPIKey);
-      }
 
-      HttpGet method = new HttpGet(builder.toString());
+      HttpGet method = new HttpGet(getProjectsUrl(offset, 50));
       wrapper = client.execute(method, new GsonSingleObjectDeserializer<ProjectsWrapper>(GSON, ProjectsWrapper.class));
       offset += wrapper.getProjects().size();
       allProjects.addAll(wrapper.getProjects());
@@ -210,11 +213,19 @@ public class RedmineRepository extends NewBaseRepositoryImpl {
     return Collections.unmodifiableList(myProjects);
   }
 
+  @NotNull
+  private URI getProjectsUrl(int offset, int limit) throws URISyntaxException {
+    URIBuilder builder = createUriBuilderWithApiKey("projects.json");
+    builder.addParameter("offset", String.valueOf(offset));
+    builder.addParameter("limit", String.valueOf(limit));
+    return builder.build();
+  }
+
   @Nullable
   @Override
   public Task findTask(@NotNull String id) throws Exception {
     ensureProjectsDiscovered();
-    HttpGet method = new HttpGet(getRestApiUrl("issues", id + ".json"));
+    HttpGet method = new HttpGet(createUriBuilderWithApiKey("issues", id + ".json").build());
     IssueWrapper wrapper = getHttpClient().execute(method, new GsonSingleObjectDeserializer<IssueWrapper>(GSON, IssueWrapper.class, true));
     if (wrapper == null) {
       return null;
@@ -240,6 +251,15 @@ public class RedmineRepository extends NewBaseRepositoryImpl {
 
   private boolean isUseApiKeyAuthentication() {
     return !isUseHttpAuthentication() && StringUtil.isNotEmpty(myAPIKey);
+  }
+
+  @NotNull
+  private URIBuilder createUriBuilderWithApiKey(@NotNull Object... pathParts) throws URISyntaxException {
+    final URIBuilder builder = new URIBuilder(getRestApiUrl(pathParts));
+    if (isUseApiKeyAuthentication()) {
+      builder.addParameter("key", myAPIKey);
+    }
+    return builder;
   }
 
   @Override

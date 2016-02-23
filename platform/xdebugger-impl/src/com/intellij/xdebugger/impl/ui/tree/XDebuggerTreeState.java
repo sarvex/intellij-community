@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import gnu.trove.THashMap;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.swing.*;
 import javax.swing.tree.TreePath;
 import java.awt.*;
 import java.util.List;
@@ -35,10 +36,9 @@ public class XDebuggerTreeState {
   private Rectangle myLastVisibleNodeRect;
 
   private XDebuggerTreeState(@NotNull XDebuggerTree tree) {
-    myRootInfo = new NodeInfo("", "", false);
     ApplicationManager.getApplication().assertIsDispatchThread();
-
-    final XDebuggerTreeNode root = (XDebuggerTreeNode)tree.getTreeModel().getRoot();
+    XDebuggerTreeNode root = tree.getRoot();
+    myRootInfo = root != null ? new NodeInfo("", "", tree.isPathSelected(root.getPath())) : null;
     if (root != null) {
       addChildren(tree, myRootInfo, root);
     }
@@ -46,8 +46,11 @@ public class XDebuggerTreeState {
 
   public XDebuggerTreeRestorer restoreState(@NotNull XDebuggerTree tree) {
     ApplicationManager.getApplication().assertIsDispatchThread();
-    XDebuggerTreeRestorer restorer = new XDebuggerTreeRestorer(tree, myLastVisibleNodeRect);
-    restorer.restoreChildren(((XDebuggerTreeNode)tree.getTreeModel().getRoot()), myRootInfo);
+    XDebuggerTreeRestorer restorer = null;
+    if (myRootInfo != null) {
+      restorer = new XDebuggerTreeRestorer(tree, myLastVisibleNodeRect);
+      restorer.restore(tree.getRoot(), myRootInfo);
+    }
     return restorer;
   }
 
@@ -63,8 +66,12 @@ public class XDebuggerTreeState {
         for (XDebuggerTreeNode child : children) {
           final TreePath path = child.getPath();
           final Rectangle bounds = tree.getPathBounds(path);
-          if (bounds != null && tree.getVisibleRect().contains(bounds)) {
-            myLastVisibleNodeRect = bounds;
+          if (bounds != null) {
+            Rectangle treeVisibleRect =
+              tree.getParent() instanceof JViewport ? ((JViewport)tree.getParent()).getViewRect() : tree.getVisibleRect();
+            if (treeVisibleRect.contains(bounds)) {
+              myLastVisibleNodeRect = bounds;
+            }
           }
           NodeInfo childInfo = createNode(child, tree.isPathSelected(path));
           if (childInfo != null) {
@@ -120,7 +127,7 @@ public class XDebuggerTreeState {
     }
 
     @Nullable
-    public NodeInfo removeChild(@NotNull String name) {
+    public NodeInfo removeChild(String name) {
       return myChildren != null ? myChildren.remove(name) : null;
     }
   }

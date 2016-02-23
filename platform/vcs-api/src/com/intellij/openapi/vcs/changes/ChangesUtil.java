@@ -161,15 +161,13 @@ public class ChangesUtil {
     for (Change change : changes) {
       final ContentRevision afterRevision = change.getAfterRevision();
       if (afterRevision != null) {
-        VirtualFile file = afterRevision.getFile().getVirtualFile();
+        FilePath filePath = afterRevision.getFile();
+        VirtualFile file = filePath.getVirtualFile();
+        if (file == null || !file.isValid()) {
+          file = LocalFileSystem.getInstance().refreshAndFindFileByPath(filePath.getPath());
+        }
         if (file != null && file.isValid()) {
           files.add(file);
-        } else {
-          afterRevision.getFile().hardRefresh();
-          file = afterRevision.getFile().getVirtualFile();
-          if (file != null && file.isValid()) {
-            files.add(file);
-          }
         }
       }
     }
@@ -270,6 +268,7 @@ public class ChangesUtil {
     }
   }
 
+  @Nullable
   public static VirtualFile findValidParentAccurately(final FilePath filePath) {
     if (filePath.getVirtualFile() != null) return filePath.getVirtualFile();
     final LocalFileSystem lfs = LocalFileSystem.getInstance();
@@ -282,6 +281,7 @@ public class ChangesUtil {
     return getValidParentUnderReadAction(filePath);
   }
 
+  @Nullable
   private static VirtualFile getValidParentUnderReadAction(final FilePath filePath) {
     return ApplicationManager.getApplication().runReadAction(new Computable<VirtualFile>() {
       @Override

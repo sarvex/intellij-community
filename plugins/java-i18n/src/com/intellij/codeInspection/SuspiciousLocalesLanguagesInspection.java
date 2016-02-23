@@ -120,7 +120,7 @@ public class SuspiciousLocalesLanguagesInspection extends BaseLocalInspectionToo
       @Override
       public Locale fun(PropertiesFile propertiesFile) {
         final Locale locale = propertiesFile.getLocale();
-        return locale == ResourceBundleManager.DEFAULT_LOCALE ? null : locale;
+        return locale == PropertiesUtil.DEFAULT_LOCALE ? null : locale;
       }
     });
     bundleLocales = ContainerUtil.filter(bundleLocales, new Condition<Locale>() {
@@ -168,7 +168,7 @@ public class SuspiciousLocalesLanguagesInspection extends BaseLocalInspectionToo
   }
 
   private class MyOptions {
-    private JBList myAdditionalLocalesList;
+    private final JBList myAdditionalLocalesList;
 
     public MyOptions() {
       myAdditionalLocalesList = new JBList(new MyListModel());

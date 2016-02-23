@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,23 +29,22 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.vcs.changes.ChangeListManagerImpl;
+import com.intellij.openapi.util.Condition;
+import com.intellij.openapi.util.Conditions;
 import com.intellij.openapi.vfs.ReadonlyStatusHandler;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileFilter;
 import com.intellij.psi.*;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.LocalSearchScope;
 import com.intellij.psi.search.SearchScope;
 import com.intellij.psi.util.PsiUtilCore;
-import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayList;
-import java.util.List;
-import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 public class ReformatCodeAction extends AnAction implements DumbAware {
@@ -140,7 +139,7 @@ public class ReformatCodeAction extends AnAction implements DumbAware {
       processingScope = TextRangeType.SELECTED_TEXT;
     }
     else if (processingScope == TextRangeType.VCS_CHANGED_TEXT) {
-      if (isChangeNotTrackedForFile(project, file)) {
+      if (FormatChangedTextUtil.getInstance().isChangeNotTrackedForFile(project, file)) {
         processingScope = TextRangeType.WHOLE_FILE;
       }
     }
@@ -152,19 +151,6 @@ public class ReformatCodeAction extends AnAction implements DumbAware {
     new FileInEditorProcessor(file, editor, currentRunOptions).processCode();
   }
 
-
-  private static boolean isChangeNotTrackedForFile(@NotNull Project project, @NotNull PsiFile file) {
-    boolean isUnderVcs = VcsUtil.isFileUnderVcs(project, VcsUtil.getFilePath(file.getVirtualFile()));
-    if (!isUnderVcs) return true;
-
-    ChangeListManagerImpl changeListManager = ChangeListManagerImpl.getInstanceImpl(project);
-    List<VirtualFile> unversionedFiles = changeListManager.getUnversionedFiles();
-    if (unversionedFiles.contains(file.getVirtualFile())) {
-      return true;
-    }
-
-    return false;
-  }
 
   @Nullable
   private static DirectoryFormattingOptions getDirectoryFormattingOptions(@NotNull Project project, @NotNull PsiDirectory dir) {
@@ -238,7 +224,7 @@ public class ReformatCodeAction extends AnAction implements DumbAware {
       return;
     }
 
-    processor.addFileFilter(new FileFilter() {
+    processor.addFileFilter(new VirtualFileFilter() {
       @Override
       public boolean accept(@NotNull VirtualFile file) {
         if (scope instanceof LocalSearchScope) {
@@ -257,24 +243,21 @@ public class ReformatCodeAction extends AnAction implements DumbAware {
     if (fileTypeMask == null)
       return;
 
-    final Pattern pattern = getFileTypeMaskPattern(fileTypeMask);
-    if (pattern != null) {
-      processor.addFileFilter(new FileFilter() {
+    final Condition<String> patternCondition = getFileTypeMaskPattern(fileTypeMask);
+    processor.addFileFilter(new VirtualFileFilter() {
         @Override
         public boolean accept(@NotNull VirtualFile file) {
-          return pattern.matcher(file.getName()).matches();
+          return patternCondition.value(file.getName());
         }
       });
-    }
   }
 
-  @Nullable
-  private static Pattern getFileTypeMaskPattern(@Nullable String mask) {
+  private static Condition<String> getFileTypeMaskPattern(@Nullable String mask) {
     try {
-      return FindInProjectUtil.createFileMaskRegExp(mask);
+      return FindInProjectUtil.createFileMaskCondition(mask);
     } catch (PatternSyntaxException e) {
       LOG.info("Error while processing file mask: ", e);
-      return null;
+      return Conditions.alwaysTrue();
     }
   }
 

@@ -15,6 +15,7 @@
  */
 package org.jetbrains.jps.incremental.java;
 
+import com.intellij.compiler.instrumentation.FailSafeClassReader;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.io.FileUtil;
 import gnu.trove.THashSet;
@@ -69,11 +70,11 @@ class OutputFilesSink implements OutputFileConsumer {
     if (srcFile != null && content != null) {
       final String sourcePath = FileUtil.toSystemIndependentName(srcFile.getPath());
       final JavaSourceRootDescriptor rootDescriptor = myContext.getProjectDescriptor().getBuildRootIndex().findJavaRootDescriptor(myContext, srcFile);
-      if (rootDescriptor != null) {
-        isTemp = rootDescriptor.isTemp;
-        if (!isTemp) {
-          // first, handle [src->output] mapping and register paths for files_generated event
-          try {
+      try {
+        if (rootDescriptor != null) {
+          isTemp = rootDescriptor.isTemp;
+          if (!isTemp) {
+            // first, handle [src->output] mapping and register paths for files_generated event
             if (outKind == JavaFileObject.Kind.CLASS) {
               myOutputConsumer.registerCompiledClass(rootDescriptor.target, new CompiledClass(fileObject.getFile(), srcFile, fileObject.getClassName(), content)); // todo: avoid array copying?
             }
@@ -81,16 +82,22 @@ class OutputFilesSink implements OutputFileConsumer {
               myOutputConsumer.registerOutputFile(rootDescriptor.target, fileObject.getFile(), Collections.<String>singleton(sourcePath));
             }
           }
-          catch (IOException e) {
-            myContext.processMessage(new CompilerMessage(JavaBuilder.BUILDER_NAME, e));
+        }
+        else { 
+          // was not able to determine the source root descriptor or the source root is excluded from compilation (e.g. for annotation processors)
+          if (outKind == JavaFileObject.Kind.CLASS) {
+            myOutputConsumer.registerCompiledClass(null, new CompiledClass(fileObject.getFile(), srcFile, fileObject.getClassName(), content));
           }
         }
+      }
+      catch (IOException e) {
+        myContext.processMessage(new CompilerMessage(JavaBuilder.BUILDER_NAME, e));
       }
 
       if (!isTemp && outKind == JavaFileObject.Kind.CLASS) {
         // register in mappings any non-temp class file
         try {
-          final ClassReader reader = new ClassReader(content.getBuffer(), content.getOffset(), content.getLength());
+          final ClassReader reader = new FailSafeClassReader(content.getBuffer(), content.getOffset(), content.getLength());
           myMappingsCallback.associate(FileUtil.toSystemIndependentName(fileObject.getFile().getPath()), sourcePath, reader);
         }
         catch (Throwable e) {

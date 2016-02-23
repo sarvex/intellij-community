@@ -20,22 +20,17 @@ import com.intellij.openapi.application.Result;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.project.Project;
-import com.intellij.testFramework.PlatformTestCase;
 import com.intellij.testFramework.UsefulTestCase;
 import com.intellij.testFramework.fixtures.CodeInsightTestFixture;
 import com.intellij.testFramework.fixtures.IdeaProjectTestFixture;
 import com.intellij.testFramework.fixtures.IdeaTestFixtureFactory;
 import com.intellij.testFramework.fixtures.TestFixtureBuilder;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
 
-public abstract class BaseParseTestCase extends UsefulTestCase{
+public abstract class BaseParseTestCase extends UsefulTestCase {
   protected CodeInsightTestFixture myFixture;
-
-  @SuppressWarnings({"JUnitTestCaseWithNonTrivialConstructors"})
-  public BaseParseTestCase() {
-    PlatformTestCase.initPlatformLangPrefix();
-  }
 
   @Override
   protected void setUp() throws Exception {
@@ -51,18 +46,21 @@ public abstract class BaseParseTestCase extends UsefulTestCase{
 
     new WriteCommandAction(project) {
       @Override
-      protected void run(Result result) throws Throwable {
+      protected void run(@NotNull Result result) throws Throwable {
         FileTypeManager.getInstance().registerFileType(RegExpFileType.INSTANCE, new String[]{"regexp"});
       }
     }.execute();
-
   }
 
   @Override
   protected void tearDown() throws Exception {
-    myFixture.tearDown();
-    myFixture = null;
-    super.tearDown();
+    try {
+      myFixture.tearDown();
+    }
+    finally {
+      myFixture = null;
+      super.tearDown();
+    }
   }
 
   public static String getTestDataRoot() {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.intellij.refactoring.move.moveFilesOrDirectories;
 
 import com.intellij.ide.scratch.ScratchFileService;
@@ -22,9 +21,9 @@ import com.intellij.openapi.actionSystem.LangDataKeys;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.psi.util.PsiTreeUtil;
+import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.refactoring.move.MoveCallback;
 import com.intellij.refactoring.move.MoveHandlerDelegate;
 import org.jetbrains.annotations.Nullable;
@@ -62,13 +61,7 @@ public class MoveFilesOrDirectoriesHandler extends MoveHandlerDelegate {
 
   public static boolean isValidTarget(PsiElement psiElement) {
     if (!(psiElement instanceof PsiDirectory || psiElement instanceof PsiDirectoryContainer)) return false;
-    return psiElement.getManager().isInProject(psiElement) || isInScratches(psiElement);
-  }
-
-  protected static boolean isInScratches(PsiElement psiElement) {
-    VirtualFile virtualFile = psiElement instanceof PsiFileSystemItem ? ((PsiFileSystemItem)psiElement).getVirtualFile() : null;
-    if (virtualFile != null && ScratchFileService.getInstance().getRootType(virtualFile) != null) return true;
-    return false;
+    return psiElement.getManager().isInProject(psiElement) || ScratchFileService.isInScratchRoot(PsiUtilCore.getVirtualFile(psiElement));
   }
 
   public void doMove(final PsiElement[] elements, final PsiElement targetContainer) {

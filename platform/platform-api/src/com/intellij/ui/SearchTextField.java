@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.components.JBList;
 import com.intellij.util.ReflectionUtil;
+import com.intellij.util.ui.JBInsets;
 import com.intellij.util.ui.UIUtil;
 
 import javax.swing.*;
@@ -90,11 +91,13 @@ public class SearchTextField extends JPanel {
       public void setUI(TextUI ui) {
         if (SystemInfo.isMac) {
           try {
-            Class<?> uiClass = Class.forName("com.intellij.ide.ui.laf.darcula.ui.DarculaTextFieldUI");
+            Class<?> uiClass = UIUtil.isUnderIntelliJLaF() ? Class.forName("com.intellij.ide.ui.laf.intellij.MacIntelliJTextFieldUI")
+                                                           : Class.forName("com.intellij.ide.ui.laf.darcula.ui.DarculaTextFieldUI");
             Method method = ReflectionUtil.getMethod(uiClass, "createUI", JComponent.class);
             if (method != null) {
               super.setUI((TextUI)method.invoke(uiClass, this));
-              Class<?> borderClass = Class.forName("com.intellij.ide.ui.laf.darcula.ui.DarculaTextBorder");
+              Class<?> borderClass = UIUtil.isUnderIntelliJLaF() ? Class.forName("com.intellij.ide.ui.laf.intellij.MacIntelliJTextBorder")
+                                                                 : Class.forName("com.intellij.ide.ui.laf.darcula.ui.DarculaTextBorder");
               setBorder((Border)ReflectionUtil.newInstance(borderClass));
               setOpaque(false);
             }
@@ -409,9 +412,7 @@ public class SearchTextField extends JPanel {
     Dimension size = super.getPreferredSize();
     Border border = super.getBorder();
     if (border != null && UIUtil.isUnderAquaLookAndFeel()) {
-      Insets insets = border.getBorderInsets(this);
-      size.height += insets.top + insets.bottom;
-      size.width += insets.left + insets.right;
+      JBInsets.addTo(size, border.getBorderInsets(this));
     }
     return size;
   }

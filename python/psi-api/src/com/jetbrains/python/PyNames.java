@@ -22,6 +22,9 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -31,6 +34,34 @@ import java.util.regex.Pattern;
 @NonNls
 public class PyNames {
   public static final String SITE_PACKAGES = "site-packages";
+  /**
+   * int type
+   */
+  public static final String TYPE_INT = "int";
+  /**
+   * unicode string type (see {@link #TYPE_STRING_TYPES}
+   */
+  public static final String TYPE_UNICODE = "unicode";
+  /**
+   * string type (see {@link #TYPE_STRING_TYPES}
+   */
+  public static final String TYPE_STR = "str";
+  /**
+   * Any string type
+   */
+  public static final List<String> TYPE_STRING_TYPES = Collections.unmodifiableList(Arrays.asList(TYPE_UNICODE, TYPE_STR));
+  /**
+   * date type
+   */
+  public static final String TYPE_DATE = "datetime.date";
+  /**
+   * datetime type
+   */
+  public static final String TYPE_DATE_TIME = "datetime.datetime";
+  /**
+   * time type
+   */
+  public static final String TYPE_TIME = "datetime.time";
 
   private PyNames() {
   }
@@ -62,6 +93,7 @@ public class PyNames {
   public static final String FAKE_FUNCTION = "__function";
   public static final String FAKE_METHOD = "__method";
   public static final String FAKE_NAMEDTUPLE = "__namedtuple";
+  public static final String FAKE_COROUTINE = "__coroutine";
 
   public static final String FUTURE_MODULE = "__future__";
   public static final String UNICODE_LITERALS = "unicode_literals";
@@ -107,6 +139,7 @@ public class PyNames {
   public static final String CALLABLE = "Callable";
   public static final String SEQUENCE = "Sequence";
   public static final String MAPPING = "Mapping";
+  public static final String ASYNC_ITERABLE = "AsyncIterable";
 
   public static final String ABC_NUMBER = "Number";
   public static final String ABC_COMPLEX = "Complex";
@@ -128,9 +161,11 @@ public class PyNames {
   public static final String NEG = "__neg__";
   public static final String DIV = "__div__";
   public static final String TRUEDIV = "__truediv__";
+  public static final String AITER = "__aiter__";
 
   public static final String NAME = "__name__";
   public static final String ENTER = "__enter__";
+  public static final String EXIT = "__exit__";
 
   public static final String CALLABLE_BUILTIN = "callable";
   public static final String NAMEDTUPLE = "namedtuple";
@@ -141,6 +176,7 @@ public class PyNames {
 
   public static final String ABSTRACTMETHOD = "abstractmethod";
   public static final String ABSTRACTPROPERTY = "abstractproperty";
+  public static final String ABC_META_CLASS = "ABCMeta";
 
   public static final String TUPLE = "tuple";
   public static final String SET = "set";
@@ -162,7 +198,7 @@ public class PyNames {
 
   public static final String NOT_IMPLEMENTED_ERROR = "NotImplementedError";
 
-  public static final String UNKNOWN_TYPE = "unknown";
+  public static final String UNKNOWN_TYPE = "Any";
 
   public static final String UNNAMED_ELEMENT = "<unnamed>";
 
@@ -233,6 +269,7 @@ public class PyNames {
   private static final BuiltinDescription _self_other_descr = new BuiltinDescription("(self, other)");
   private static final BuiltinDescription _self_item_descr = new BuiltinDescription("(self, item)");
   private static final BuiltinDescription _self_key_descr = new BuiltinDescription("(self, key)");
+  private static final BuiltinDescription _exit_descr = new BuiltinDescription("(self, exc_type, exc_val, exc_tb)");
 
   private static final ImmutableMap<String, BuiltinDescription> BuiltinMethods = ImmutableMap.<String, BuiltinDescription>builder()
     .put("__abs__", _only_self_descr)
@@ -258,7 +295,7 @@ public class PyNames {
       //_BuiltinMethods.put("__doc__", _only_self_descr);
       //_BuiltinMethods.put("__docformat__", _only_self_descr);
     .put("__enter__", _only_self_descr)
-    .put("__exit__", new BuiltinDescription("(self, exc_type, exc_val, exc_tb)"))
+    .put("__exit__", _exit_descr)
     .put("__eq__", _self_other_descr)
       //_BuiltinMethods.put("__file__", _only_self_descr);
     .put("__float__", _only_self_descr)
@@ -347,6 +384,7 @@ public class PyNames {
     .putAll(BuiltinMethods)
     .put("__nonzero__", _only_self_descr)
     .put("__div__", _self_other_descr)
+    .put(NEXT, _only_self_descr)
     .build();
 
   public static ImmutableMap<String, BuiltinDescription> PY3_BUILTIN_METHODS = ImmutableMap.<String, BuiltinDescription>builder()
@@ -355,10 +393,31 @@ public class PyNames {
     .put("__bytes__", _only_self_descr)
     .put("__format__", new BuiltinDescription("(self, format_spec)"))
     .put("__round__", new BuiltinDescription("(self, n=None)"))
+    .put(DUNDER_NEXT, _only_self_descr)
+    .build();
+
+  public static ImmutableMap<String, BuiltinDescription> PY35_BUILTIN_METHODS = ImmutableMap.<String, BuiltinDescription>builder()
+    .putAll(PY3_BUILTIN_METHODS)
+    .put("__imatmul__", _self_other_descr)
+    .put("__matmul__", _self_other_descr)
+    .put("__rmatmul__", _self_other_descr)
+    .put("__await__", _only_self_descr)
+    .put("__aenter__", _only_self_descr)
+    .put("__aexit__", _exit_descr)
+    .put(AITER, _only_self_descr)
+    .put("__anext__", _only_self_descr)
     .build();
 
   public static ImmutableMap<String, BuiltinDescription> getBuiltinMethods(LanguageLevel level) {
-    return level.isPy3K() ? PY3_BUILTIN_METHODS : PY2_BUILTIN_METHODS;
+    if (level.isAtLeast(LanguageLevel.PYTHON35)) {
+      return PY35_BUILTIN_METHODS;
+    }
+    else if (level.isAtLeast(LanguageLevel.PYTHON30)) {
+      return PY3_BUILTIN_METHODS;
+    }
+    else {
+      return PY2_BUILTIN_METHODS;
+    }
   }
 
   // canonical names, not forced by interpreter
@@ -401,6 +460,8 @@ public class PyNames {
   public static final String IN = "in";
   public static final String NOT = "not";
   public static final String LAMBDA = "lambda";
+  public static final String ASYNC = "async";
+  public static final String AWAIT = "await";
 
   /**
    * Contains keywords as of CPython 2.5.
@@ -425,7 +486,7 @@ public class PyNames {
     EXCEPT,
     IMPORT,
     PRINT,
-    __CLASS__,
+    CLASS,
     EXEC,
     IN,
     RAISE,

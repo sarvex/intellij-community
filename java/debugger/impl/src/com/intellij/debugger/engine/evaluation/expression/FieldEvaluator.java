@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import com.intellij.psi.PsiType;
 import com.intellij.psi.util.PsiUtil;
 import com.sun.jdi.*;
 import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class FieldEvaluator implements Evaluator {
@@ -60,8 +61,9 @@ public class FieldEvaluator implements Evaluator {
     myTargetClassFilter = filter;
   }
 
-  public static TargetClassFilter createClassFilter(PsiType psiType) {
-    if(psiType instanceof PsiArrayType) {
+  @NotNull
+  public static TargetClassFilter createClassFilter(@Nullable PsiType psiType) {
+    if(psiType == null || psiType instanceof PsiArrayType) {
       return TargetClassFilter.ALL;
     }
     PsiClass psiClass = PsiUtil.resolveClassInType(psiType);
@@ -83,19 +85,19 @@ public class FieldEvaluator implements Evaluator {
   }
 
   @Nullable
-  private Field findField(Type t, final EvaluationContextImpl context) throws EvaluateException {
+  private Field findField(@Nullable Type t) {
     if(t instanceof ClassType) {
       ClassType cls = (ClassType) t;
       if(myTargetClassFilter.acceptClass(cls)) {
         return cls.fieldByName(myFieldName);
       }
       for (final InterfaceType interfaceType : cls.interfaces()) {
-        final Field field = findField(interfaceType, context);
+        final Field field = findField(interfaceType);
         if (field != null) {
           return field;
         }
       }
-      return findField(cls.superclass(), context);
+      return findField(cls.superclass());
     }
     else if(t instanceof InterfaceType) {
       InterfaceType iface = (InterfaceType) t;
@@ -103,7 +105,7 @@ public class FieldEvaluator implements Evaluator {
         return iface.fieldByName(myFieldName);
       }
       for (final InterfaceType interfaceType : iface.superinterfaces()) {
-        final Field field = findField(interfaceType, context);
+        final Field field = findField(interfaceType);
         if (field != null) {
           return field;
         }
@@ -124,7 +126,7 @@ public class FieldEvaluator implements Evaluator {
   private Object evaluateField(Object object, EvaluationContextImpl context) throws EvaluateException {
     if (object instanceof ReferenceType) {
       ReferenceType refType = (ReferenceType)object;
-      Field field = findField(refType, context);
+      Field field = findField(refType);
       if (field == null || !field.isStatic()) {
         field = refType.fieldByName(myFieldName);
       }
@@ -154,7 +156,7 @@ public class FieldEvaluator implements Evaluator {
         );
       }
 
-      Field field = findField(refType, context);
+      Field field = findField(refType);
       if (field == null) {
         field = refType.fieldByName(myFieldName);
       }
@@ -162,7 +164,7 @@ public class FieldEvaluator implements Evaluator {
       if (field == null) {
         throw EvaluateExceptionUtil.createEvaluateException(DebuggerBundle.message("evaluation.error.no.instance.field", myFieldName));
       }
-      myEvaluatedQualifier = field.isStatic()? (Object)refType : (Object)objRef;
+      myEvaluatedQualifier = field.isStatic() ? refType : objRef;
       myEvaluatedField = field;
       return field.isStatic()? refType.getValue(field) : objRef.getValue(field);
     }
@@ -210,6 +212,11 @@ public class FieldEvaluator implements Evaluator {
       };
     }
     return modifier;
+  }
+
+  @Override
+  public String toString() {
+    return "field " + myFieldName;
   }
 
   private static final class FQNameClassFilter implements TargetClassFilter {

@@ -30,7 +30,10 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.psi.*;
+import com.intellij.psi.JavaPsiFacade;
+import com.intellij.psi.PsiClass;
+import com.intellij.psi.PsiManager;
+import com.intellij.psi.PsiPackage;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.rt.coverage.data.ClassData;
 import com.intellij.rt.coverage.data.LineCoverage;
@@ -310,6 +313,8 @@ public class PackageAnnotator {
           final String toplevelClassSrcFQName = getSourceToplevelFQName(classFqVMName);
           final Ref<VirtualFile> containingFileRef = new Ref<VirtualFile>();
           final Ref<PsiClass> psiClassRef = new Ref<PsiClass>();
+          final CoverageSuitesBundle suitesBundle = myCoverageManager.getCurrentSuitesBundle();
+          if (suitesBundle == null) continue;
           final Boolean isInSource = DumbService.getInstance(myProject).runReadActionInSmartMode(new Computable<Boolean>() {
             public Boolean compute() {
               if (myProject.isDisposed()) return null;
@@ -330,21 +335,21 @@ public class PackageAnnotator {
           PackageCoverageInfo coverageInfoForClass = null;
           String classCoverageKey = classFqVMName.replace('/', '.');
           boolean ignoreClass = false;
+          boolean keepWithoutSource = false;
           for (JavaCoverageEngineExtension extension : JavaCoverageEngineExtension.EP_NAME.getExtensions()) {
-            if (extension.ignoreCoverageForClass(myCoverageManager.getCurrentSuitesBundle(), child)) {
+            if (extension.ignoreCoverageForClass(suitesBundle, child)) {
               ignoreClass = true;
               break;
             }
-            if (extension.keepCoverageInfoForClassWithoutSource(myCoverageManager.getCurrentSuitesBundle(), child)) {
-              coverageInfoForClass = classWithoutSourceCoverageInfo;
-              break;
+            if (extension.keepCoverageInfoForClassWithoutSource(suitesBundle, child)) {
+              keepWithoutSource = true;
             }
           }
           if (ignoreClass) {
             continue;
           }
 
-          if (coverageInfoForClass == null && isInSource != null && isInSource.booleanValue()) {
+          if (isInSource != null && isInSource.booleanValue()) {
             for (DirCoverageInfo dirCoverageInfo : dirs) {
               if (dirCoverageInfo.sourceRoot != null && VfsUtil.isAncestor(dirCoverageInfo.sourceRoot, containingFileRef.get(), false)) {
                 coverageInfoForClass = dirCoverageInfo;
@@ -352,6 +357,9 @@ public class PackageAnnotator {
                 break;
               }
             }
+          }
+          if (coverageInfoForClass == null && keepWithoutSource) {
+            coverageInfoForClass = classWithoutSourceCoverageInfo;
           }
           if (coverageInfoForClass != null) {
             collectClassCoverageInformation(child, psiClassRef.get(), coverageInfoForClass, projectInfo, toplevelClassCoverage,
@@ -518,7 +526,7 @@ public class PackageAnnotator {
   private static String getSourceToplevelFQName(String classFQVMName) {
     final int index = classFQVMName.indexOf('$');
     if (index > 0) classFQVMName = classFQVMName.substring(0, index);
-    if (classFQVMName.startsWith("/")) classFQVMName = classFQVMName.substring(1);
+    classFQVMName = StringUtil.trimStart(classFQVMName, "/");
     return classFQVMName.replaceAll("/", ".");
   }
 

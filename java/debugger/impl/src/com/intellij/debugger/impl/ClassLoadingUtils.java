@@ -16,7 +16,7 @@
 package com.intellij.debugger.impl;
 
 import com.intellij.debugger.engine.DebugProcess;
-import com.intellij.debugger.engine.SuspendContextImpl;
+import com.intellij.debugger.engine.JVMNameUtil;
 import com.intellij.debugger.engine.evaluation.EvaluateException;
 import com.intellij.debugger.engine.evaluation.EvaluationContext;
 import com.intellij.debugger.engine.evaluation.EvaluationContextImpl;
@@ -41,10 +41,10 @@ public class ClassLoadingUtils {
     try {
       // TODO [egor]: cache?
       ClassType loaderClass = (ClassType)process.findClass(context, "java.net.URLClassLoader", context.getClassLoader());
-      Method ctorMethod = loaderClass.concreteMethodByName("<init>", "([Ljava/net/URL;Ljava/lang/ClassLoader;)V");
+      Method ctorMethod = loaderClass.concreteMethodByName(JVMNameUtil.CONSTRUCTOR_NAME, "([Ljava/net/URL;Ljava/lang/ClassLoader;)V");
       ClassLoaderReference reference = (ClassLoaderReference)process.newInstance(context, loaderClass, ctorMethod, Arrays
         .asList(createURLArray(context), context.getClassLoader()));
-      keep(reference, context);
+      DebuggerUtilsEx.keep(reference, context);
       return reference;
     }
     catch (Exception e) {
@@ -62,7 +62,7 @@ public class ClassLoadingUtils {
       Method defineMethod =
         ((ClassType)classLoader.referenceType()).concreteMethodByName("defineClass", "(Ljava/lang/String;[BII)Ljava/lang/Class;");
       StringReference nameObj = proxy.mirrorOf(name);
-      keep(nameObj, context);
+      DebuggerUtilsEx.keep(nameObj, context);
       process.invokeMethod(context, classLoader, defineMethod,
                            Arrays.asList(nameObj,
                                          mirrorOf(bytes, context, process),
@@ -115,18 +115,20 @@ public class ClassLoadingUtils {
   }
 
   private static ArrayReference createURLArray(EvaluationContext context)
-    throws EvaluateException, InvocationException, InvalidTypeException, ClassNotLoadedException, IncompatibleThreadStateException {
+    throws EvaluateException, InvalidTypeException, ClassNotLoadedException {
     DebugProcess process = context.getDebugProcess();
     ArrayType arrayType = (ArrayType)process.findClass(context, "java.net.URL[]", context.getClassLoader());
     ArrayReference arrayRef = arrayType.newInstance(1);
-    keep(arrayRef, context);
+    DebuggerUtilsEx.keep(arrayRef, context);
     ClassType classType = (ClassType)process.findClass(context, "java.net.URL", context.getClassLoader());
     VirtualMachineProxyImpl proxy = (VirtualMachineProxyImpl)process.getVirtualMachineProxy();
     StringReference url = proxy.mirrorOf("file:a");
-    keep(url, context);
-    ObjectReference reference = process.newInstance(context, classType, classType.concreteMethodByName("<init>", "(Ljava/lang/String;)V"),
+    DebuggerUtilsEx.keep(url, context);
+    ObjectReference reference = process.newInstance(context,
+                                                    classType,
+                                                    classType.concreteMethodByName(JVMNameUtil.CONSTRUCTOR_NAME, "(Ljava/lang/String;)V"),
                                                     Collections.singletonList(url));
-    keep(reference, context);
+    DebuggerUtilsEx.keep(reference, context);
     arrayRef.setValues(Collections.singletonList(reference));
     return arrayRef;
   }
@@ -135,14 +137,10 @@ public class ClassLoadingUtils {
     throws EvaluateException, InvalidTypeException, ClassNotLoadedException {
     ArrayType arrayClass = (ArrayType)process.findClass(context, "byte[]", context.getClassLoader());
     ArrayReference reference = process.newInstance(arrayClass, bytes.length);
-    keep(reference, context);
+    DebuggerUtilsEx.keep(reference, context);
     for (int i = 0; i < bytes.length; i++) {
       reference.setValue(i, ((VirtualMachineProxyImpl)process.getVirtualMachineProxy()).mirrorOf(bytes[i]));
     }
     return reference;
-  }
-
-  public static void keep(ObjectReference reference, EvaluationContext context) {
-    ((SuspendContextImpl)context.getSuspendContext()).keep(reference);
   }
 }

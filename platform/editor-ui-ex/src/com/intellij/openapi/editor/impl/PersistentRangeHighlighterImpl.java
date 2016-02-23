@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,10 +56,10 @@ class PersistentRangeHighlighterImpl extends RangeHighlighterImpl implements Ran
   }
 
   @Override
-  protected void changedUpdateImpl(DocumentEvent e) {
+  protected void changedUpdateImpl(@NotNull DocumentEvent e) {
     // todo Denis Zhdanov
     DocumentEventImpl event = (DocumentEventImpl)e;
-    final boolean shouldTranslateViaDiff = PersistentRangeMarkerUtil.shouldTranslateViaDiff(event, this);
+    final boolean shouldTranslateViaDiff = isValid() && PersistentRangeMarkerUtil.shouldTranslateViaDiff(event, getStartOffset(), getEndOffset());
     boolean wasTranslatedViaDiff = shouldTranslateViaDiff;
     if (shouldTranslateViaDiff) {
       wasTranslatedViaDiff = translatedViaDiff(e, event);

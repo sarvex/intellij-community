@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,24 +23,18 @@ import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.Charset;
 
+/** @deprecated use {@link OSProcessHandler} (to be removed in IDEA 17) */
+@SuppressWarnings("unused")
 public class DefaultJavaProcessHandler extends OSProcessHandler {
-  private final Charset myCharset;
-
-  public DefaultJavaProcessHandler(final JavaParameters javaParameters) throws ExecutionException {
-    this(CommandLineBuilder.createFromJavaParameters(javaParameters));
+  public DefaultJavaProcessHandler(@NotNull JavaParameters javaParameters) throws ExecutionException {
+    super(CommandLineBuilder.createFromJavaParameters(javaParameters));
   }
 
-  public DefaultJavaProcessHandler(final GeneralCommandLine commandLine) throws ExecutionException {
-    this(commandLine.createProcess(), commandLine.getCommandLineString(), commandLine.getCharset());
+  public DefaultJavaProcessHandler(@NotNull GeneralCommandLine commandLine) throws ExecutionException {
+    super(commandLine);
   }
 
-  public DefaultJavaProcessHandler(final Process process, final String commandLine, @NotNull final Charset charset) {
-    super(process, commandLine);
-    myCharset = charset;
-  }
-
-  @Override
-  public Charset getCharset() {
-    return myCharset;
+  public DefaultJavaProcessHandler(@NotNull Process process, @NotNull String commandLine, @NotNull Charset charset) {
+    super(process, commandLine, charset);
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.intellij.internal.psiView.formattingblocks;
 import com.intellij.formatting.Block;
 import com.intellij.formatting.templateLanguages.DataLanguageBlockWrapper;
 import com.intellij.ide.projectView.PresentationData;
+import com.intellij.ui.JBColor;
 import com.intellij.ui.SimpleTextAttributes;
 import com.intellij.ui.treeStructure.SimpleNode;
 import com.intellij.util.Function;
@@ -26,6 +27,7 @@ import com.intellij.util.ui.PlatformColors;
 import org.jetbrains.annotations.NotNull;
 
 import java.awt.*;
+
 public class BlockTreeNode extends SimpleNode {
   private final Block myBlock;
 
@@ -63,15 +65,17 @@ public class BlockTreeNode extends SimpleNode {
       presentation.addText(" Indent: null", SimpleTextAttributes.GRAY_ATTRIBUTES);
     }
     if (myBlock.getAlignment() != null) {
+      float d = 1.f * System.identityHashCode(myBlock.getAlignment()) / Integer.MAX_VALUE;
+      Color color = new JBColor(Color.HSBtoRGB(1.0f * d, .3f, .7f),
+                                Color.HSBtoRGB(1.0f * d, .3f, .8f));
       presentation
-        .addText(" " + String.valueOf(myBlock.getAlignment()), new SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, Color.darkGray));
+        .addText(" " + String.valueOf(myBlock.getAlignment()), new SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, color));
     }
     if (myBlock.getWrap() != null) {
       presentation
         .addText(" " + String.valueOf(myBlock.getWrap()), new SimpleTextAttributes(SimpleTextAttributes.STYLE_ITALIC, PlatformColors.BLUE));
     }
   }
-
 
   @NotNull
   @Override

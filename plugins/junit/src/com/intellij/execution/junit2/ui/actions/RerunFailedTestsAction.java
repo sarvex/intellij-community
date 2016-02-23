@@ -34,7 +34,7 @@ public class RerunFailedTestsAction extends JavaRerunFailedTestsAction {
   @Override
   protected MyRunProfile getRunProfile(@NotNull ExecutionEnvironment environment) {
     //noinspection ConstantConditions
-    final JUnitConfiguration configuration = (JUnitConfiguration)getModel().getProperties().getConfiguration();
+    final JUnitConfiguration configuration = (JUnitConfiguration)myConsoleProperties.getConfiguration();
     final TestMethods testMethods = new TestMethods(configuration, environment, getFailedTests(configuration.getProject()));
     return new MyRunProfile(configuration) {
       @Override
@@ -47,12 +47,6 @@ public class RerunFailedTestsAction extends JavaRerunFailedTestsAction {
       public RunProfileState getState(@NotNull Executor executor, @NotNull ExecutionEnvironment env) {
         testMethods.clear();
         return testMethods;
-      }
-
-      @Override
-      public void clear() {
-        testMethods.clear();
-        super.clear();
       }
     };
   }

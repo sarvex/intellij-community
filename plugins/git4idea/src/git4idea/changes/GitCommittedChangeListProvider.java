@@ -35,6 +35,7 @@ import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.AsynchConsumer;
 import com.intellij.util.Consumer;
+import com.intellij.vcsUtil.VcsUtil;
 import git4idea.*;
 import git4idea.commands.GitSimpleHandler;
 import git4idea.history.GitHistoryUtils;
@@ -46,6 +47,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.util.*;
+
+import static com.intellij.util.ObjectUtils.assertNotNull;
 
 /**
  * The provider for committed change lists
@@ -184,7 +187,7 @@ public class GitCommittedChangeListProvider implements CommittedChangesProvider<
 
   @Override
   public Pair<CommittedChangeList, FilePath> getOneList(final VirtualFile file, final VcsRevisionNumber number) throws VcsException {
-    final FilePathImpl filePath = new FilePathImpl(file);
+    FilePath filePath = VcsUtil.getFilePath(file);
 
     final List<GitHeavyCommit> gitCommits =
       GitHistoryUtils.commitsDetails(myProject, filePath, new SymbolicRefs(), Collections.singletonList(number.asString()));
@@ -194,7 +197,8 @@ public class GitCommittedChangeListProvider implements CommittedChangesProvider<
     final GitHeavyCommit gitCommit = gitCommits.get(0);
     CommittedChangeList commit = new GitCommittedChangeList(gitCommit.getDescription() + " (" + gitCommit.getShortHash().getString() + ")",
                                                             gitCommit.getDescription(), gitCommit.getAuthor(), (GitRevisionNumber)number,
-                                                            new Date(gitCommit.getAuthorTime()), gitCommit.getChanges(), true);
+                                                            new Date(gitCommit.getAuthorTime()), gitCommit.getChanges(),
+                                                            assertNotNull(GitVcs.getInstance(myProject)), true);
 
     final Collection<Change> changes = commit.getChanges();
     if (changes.size() == 1) {

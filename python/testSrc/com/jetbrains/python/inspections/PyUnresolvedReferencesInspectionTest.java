@@ -53,7 +53,20 @@ public class PyUnresolvedReferencesInspectionTest extends PyInspectionTestCase {
     doTest();
   }
 
-  public void testSlots() {
+  public void testSlotsAndUnlistedAttrAssign() {
+    doTest();
+  }
+
+  public void testSlotsSuperclass() {
+    doTest();
+  }
+
+  public void testSlotsWithDict() {
+    doTest();
+  }
+
+  // PY-10397
+  public void testSlotsAndListedAttrAccess() {
     doTest();
   }
 
@@ -502,6 +515,36 @@ public class PyUnresolvedReferencesInspectionTest extends PyInspectionTestCase {
 
   // PY-15002
   public void testIncorrectFileLevelMetaclass() {
+    doTest();
+  }
+
+  // PY-11541
+  public void testBaseStringCheck() {
+    doTest();
+  }
+
+  // PY-16146
+  public void testUnresolvedSubscriptionOnClass() {
+    doTest();
+  }
+
+  public void testBuiltinListGetItem() {
+    doTest();
+  }
+  
+  // PY-13395
+  public void testPropertyNotListedInSlots() {
+    doTest();
+  }
+
+  // PY-18254
+  public void testVarargsAnnotatedWithFunctionComment() {
+    doTest();
+  }
+
+  // PY-18521
+  public void testFunctionTypeCommentUsesImportsFromTyping() {
+    myFixture.copyDirectoryToProject("typing", "");
     doTest();
   }
 

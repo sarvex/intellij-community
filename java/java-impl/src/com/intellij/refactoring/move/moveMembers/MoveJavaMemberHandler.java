@@ -143,7 +143,7 @@ public class MoveJavaMemberHandler implements MoveMemberHandler {
   }
 
   protected static boolean hasMethod(PsiClass targetClass, PsiMethod method) {
-    PsiMethod[] targetClassMethods = targetClass.getMethods();
+    PsiMethod[] targetClassMethods = targetClass.findMethodsByName(method.getName(), true);
     for (PsiMethod candidate : targetClassMethods) {
       if (candidate != method &&
           MethodSignatureUtil.areSignaturesEqual(method.getSignature(PsiSubstitutor.EMPTY),
@@ -155,15 +155,8 @@ public class MoveJavaMemberHandler implements MoveMemberHandler {
   }
 
   protected static boolean hasField(PsiClass targetClass, PsiField field) {
-    String fieldName = field.getName();
-    PsiField[] targetClassFields = targetClass.getFields();
-    for (PsiField candidate : targetClassFields) {
-      if (candidate != field &&
-          fieldName.equals(candidate.getName())) {
-        return true;
-      }
-    }
-    return false;
+    final PsiField fieldByName = targetClass.findFieldByName(field.getName(), true);
+    return fieldByName != null && fieldByName != field;
   }
 
   @Override
@@ -179,14 +172,15 @@ public class MoveJavaMemberHandler implements MoveMemberHandler {
           changeQualifier(refExpr, usage.qualifierClass, usage.member);
         }
         else {
-          final PsiReferenceParameterList parameterList = refExpr.getParameterList();
-          if (parameterList != null && parameterList.getTypeArguments().length == 0 && !(refExpr instanceof PsiMethodReferenceExpression)){
-            refExpr.setQualifierExpression(null);
-          } else {
-            final Project project = element.getProject();
-            final PsiClass targetClass =
-              JavaPsiFacade.getInstance(project).findClass(options.getTargetClassName(), GlobalSearchScope.projectScope(project));
-            if (targetClass != null) {
+          final Project project = element.getProject();
+          final PsiClass targetClass =
+            JavaPsiFacade.getInstance(project).findClass(options.getTargetClassName(), GlobalSearchScope.projectScope(project));
+          if (targetClass != null) {
+            final PsiReferenceParameterList parameterList = refExpr.getParameterList();
+            if ((targetClass.isEnum() || PsiTreeUtil.isAncestor(targetClass, element, true)) && parameterList != null && parameterList.getTypeArguments().length == 0 && !(refExpr instanceof PsiMethodReferenceExpression)) {
+              refExpr.setQualifierExpression(null);
+            }
+            else {
               changeQualifier(refExpr, targetClass, usage.member);
             }
           }
@@ -206,7 +200,7 @@ public class MoveJavaMemberHandler implements MoveMemberHandler {
     if (RefactoringUtil.hasOnDemandStaticImport(refExpr, aClass) && !(refExpr instanceof PsiMethodReferenceExpression)) {
       refExpr.setQualifierExpression(null);
     }
-    else if (!ImportsUtil.hasStaticImportOn(refExpr, member, false)){
+    else if (!ImportsUtil.hasStaticImportOn(refExpr, member, false) || refExpr.getQualifierExpression() != null){
       PsiElementFactory factory = JavaPsiFacade.getInstance(refExpr.getProject()).getElementFactory();
       refExpr.setQualifierExpression(factory.createReferenceExpression(aClass));
     }

@@ -21,6 +21,8 @@ import com.intellij.lifecycle.PeriodicalTasksCloser;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.progress.*;
+import com.intellij.openapi.project.DumbModePermission;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.io.FileUtil;
@@ -100,7 +102,7 @@ public class RollbackWorker {
       ProgressManager.getInstance().run(new Task.Modal(myProject, myOperationName, true) {
           @Override
           public void run(@NotNull ProgressIndicator indicator) {
-            rollbackAction.run();
+            DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, rollbackAction);
           }
         });
     }
@@ -190,6 +192,8 @@ public class RollbackWorker {
           LocalHistory.getInstance().putSystemLabel(myProject, (myLocalHistoryActionName == null) ?
                                                                                              myOperationName : myLocalHistoryActionName, -1);
           final VcsDirtyScopeManager manager = PeriodicalTasksCloser.getInstance().safeGetComponent(project, VcsDirtyScopeManager.class);
+          VcsGuess vcsGuess = new VcsGuess(myProject);
+
           for (Change change : changesToRefresh) {
             final ContentRevision beforeRevision = change.getBeforeRevision();
             final ContentRevision afterRevision = change.getAfterRevision();
@@ -197,18 +201,8 @@ public class RollbackWorker {
               manager.fileDirty(beforeRevision.getFile());
             }
             else {
-              if (beforeRevision != null) {
-                final FilePath parent = beforeRevision.getFile().getParentPath();
-                if (parent != null) {
-                  manager.dirDirtyRecursively(parent);
-                }
-              }
-              if (afterRevision != null) {
-                final FilePath parent = afterRevision.getFile().getParentPath();
-                if (parent != null) {
-                  manager.dirDirtyRecursively(parent);
-                }
-              }
+              markDirty(manager, vcsGuess, beforeRevision);
+              markDirty(manager, vcsGuess, afterRevision);
             }
           }
 
@@ -219,6 +213,22 @@ public class RollbackWorker {
       RefreshVFsSynchronously.updateChangesForRollback(changesToRefresh);
 
       WaitForProgressToShow.runOrInvokeLaterAboveProgress(forAwtThread, null, project);
+    }
+
+    private void markDirty(@NotNull VcsDirtyScopeManager manager, @NotNull VcsGuess vcsGuess, @Nullable ContentRevision revision) {
+      if (revision != null) {
+        FilePath parent = revision.getFile().getParentPath();
+        if (parent != null && couldBeMarkedDirty(vcsGuess, parent)) {
+          manager.dirDirtyRecursively(parent);
+        }
+        else {
+          manager.fileDirty(revision.getFile());
+        }
+      }
+    }
+
+    private boolean couldBeMarkedDirty(@NotNull VcsGuess vcsGuess, @NotNull FilePath path) {
+      return vcsGuess.getVcsForDirty(path) != null;
     }
 
     private void deleteAddedFilesLocally(final List<Change> changes) {

@@ -43,6 +43,7 @@ import com.intellij.vcs.log.util.StopWatch;
 import git4idea.*;
 import git4idea.branch.GitBranchUtil;
 import git4idea.commands.*;
+import git4idea.config.GitVersion;
 import git4idea.config.GitVersionSpecialty;
 import git4idea.history.browser.GitHeavyCommit;
 import git4idea.history.browser.SHAHash;
@@ -210,8 +211,22 @@ public class GitHistoryUtils {
    * @param exceptionConsumer This consumer is notified in case of error while executing git command.
    * @param parameters        Optional parameters which will be added to the git log command just before the path.
    */
-  public static void history(final Project project, FilePath path, @Nullable VirtualFile root, final Consumer<GitFileRevision> consumer,
-                             final Consumer<VcsException> exceptionConsumer, String... parameters) {
+  public static void history(@NotNull Project project,
+                             @NotNull FilePath path,
+                             @Nullable VirtualFile root,
+                             @NotNull Consumer<GitFileRevision> consumer,
+                             @NotNull Consumer<VcsException> exceptionConsumer,
+                             String... parameters) {
+    history(project, path, root, GitRevisionNumber.HEAD, consumer, exceptionConsumer, parameters);
+  }
+
+  public static void history(@NotNull final Project project,
+                             @NotNull FilePath path,
+                             @Nullable VirtualFile root,
+                             @NotNull VcsRevisionNumber startingRevision,
+                             @NotNull final Consumer<GitFileRevision> consumer,
+                             @NotNull final Consumer<VcsException> exceptionConsumer,
+                             String... parameters) {
     // adjust path using change manager
     final FilePath filePath = getLastCommitName(project, path);
     final VirtualFile finalRoot;
@@ -226,8 +241,8 @@ public class GitHistoryUtils {
                                                     HASH, COMMIT_TIME, AUTHOR_NAME, AUTHOR_EMAIL, COMMITTER_NAME, COMMITTER_EMAIL, PARENTS,
                                                     SUBJECT, BODY, RAW_BODY, AUTHOR_TIME);
 
-    final AtomicReference<String> firstCommit = new AtomicReference<String>("HEAD");
-    final AtomicReference<String> firstCommitParent = new AtomicReference<String>("HEAD");
+    final AtomicReference<String> firstCommit = new AtomicReference<String>(startingRevision.asString());
+    final AtomicReference<String> firstCommitParent = new AtomicReference<String>(firstCommit.get());
     final AtomicReference<FilePath> currentPath = new AtomicReference<FilePath>(filePath);
     final AtomicReference<GitLineHandler> logHandler = new AtomicReference<GitLineHandler>();
     final AtomicBoolean skipFurtherOutput = new AtomicBoolean();
@@ -268,7 +283,7 @@ public class GitHistoryUtils {
           final Couple<String> committerPair =
             record.getCommitterName() == null ? null : Couple.of(record.getCommitterName(), record.getCommitterEmail());
           Collection<String> parents = parentHashes == null ? Collections.<String>emptyList() : Arrays.asList(parentHashes);
-          consumer.consume(new GitFileRevision(project, revisionPath, revision, Couple.of(authorPair, committerPair), message, null,
+          consumer.consume(new GitFileRevision(project, finalRoot, revisionPath, revision, Couple.of(authorPair, committerPair), message, null,
                                                new Date(record.getAuthorTimeStamp()), parents));
           List<GitLogStatusInfo> statusInfos = record.getStatusInfos();
           if (statusInfos.isEmpty()) {
@@ -285,9 +300,11 @@ public class GitHistoryUtils {
       }
     };
 
+    GitVcs vcs = GitVcs.getInstance(project);
+    GitVersion version = vcs != null ? vcs.getVersion() : GitVersion.NULL;
     final AtomicBoolean criticalFailure = new AtomicBoolean();
     while (currentPath.get() != null && firstCommitParent.get() != null) {
-      logHandler.set(getLogHandler(project, finalRoot, logParser, currentPath.get(), firstCommitParent.get(), parameters));
+      logHandler.set(getLogHandler(project, version, finalRoot, logParser, currentPath.get(), firstCommitParent.get(), parameters));
       final MyTokenAccumulator accumulator = new MyTokenAccumulator(logParser);
       final Semaphore semaphore = new Semaphore();
 
@@ -339,7 +356,7 @@ public class GitHistoryUtils {
 
       try {
         Pair<String, FilePath> firstCommitParentAndPath = getFirstCommitParentAndPathIfRename(project, finalRoot, firstCommit.get(),
-                                                                                              currentPath.get());
+                                                                                              currentPath.get(), version);
         currentPath.set(firstCommitParentAndPath == null ? null : firstCommitParentAndPath.second);
         firstCommitParent.set(firstCommitParentAndPath == null ? null : firstCommitParentAndPath.first);
         skipFurtherOutput.set(false);
@@ -353,10 +370,19 @@ public class GitHistoryUtils {
 
   }
 
-  private static GitLineHandler getLogHandler(Project project, VirtualFile root, GitLogParser parser, FilePath path, String lastCommit, String... parameters) {
+  private static GitLineHandler getLogHandler(Project project,
+                                              @NotNull GitVersion version,
+                                              VirtualFile root,
+                                              GitLogParser parser,
+                                              FilePath path,
+                                              String lastCommit,
+                                              String... parameters) {
     final GitLineHandler h = new GitLineHandler(project, root, GitCommand.LOG);
     h.setStdoutSuppressed(true);
-    h.addParameters("--name-status", parser.getPretty(), "--encoding=UTF-8", "--full-history", "--simplify-merges", lastCommit);
+    h.addParameters("--name-status", parser.getPretty(), "--encoding=UTF-8", lastCommit);
+    if (GitVersionSpecialty.FULL_HISTORY_SIMPLIFY_MERGES_WORKS_CORRECTLY.existsIn(version)) {
+      h.addParameters("--full-history", "--simplify-merges");
+    }
     if (parameters != null && parameters.length > 0) {
       h.addParameters(parameters);
     }
@@ -374,15 +400,15 @@ public class GitHistoryUtils {
   private static Pair<String, FilePath> getFirstCommitParentAndPathIfRename(Project project,
                                                                             VirtualFile root,
                                                                             String commit,
-                                                                            FilePath filePath) throws VcsException {
+                                                                            FilePath filePath,
+                                                                            @NotNull GitVersion version) throws VcsException {
     // 'git show -M --name-status <commit hash>' returns the information about commit and detects renames.
     // NB: we can't specify the filepath, because then rename detection will work only with the '--follow' option, which we don't wanna use.
     final GitSimpleHandler h = new GitSimpleHandler(project, root, GitCommand.SHOW);
     final GitLogParser parser = new GitLogParser(project, GitLogParser.NameStatus.STATUS, HASH, COMMIT_TIME, PARENTS);
     h.setStdoutSuppressed(true);
     h.addParameters("-M", "--name-status", parser.getPretty(), "--encoding=UTF-8", commit);
-    GitVcs vcs = GitVcs.getInstance(project);
-    if (vcs != null && !GitVersionSpecialty.FOLLOW_IS_BUGGY_IN_THE_LOG.existsIn(vcs.getVersion())) {
+    if (!GitVersionSpecialty.FOLLOW_IS_BUGGY_IN_THE_LOG.existsIn(version)) {
       h.addParameters("--follow");
       h.endOptions();
       h.addRelativePaths(filePath);
@@ -493,8 +519,6 @@ public class GitHistoryUtils {
                                                  AUTHOR_NAME, AUTHOR_EMAIL, REF_NAMES);
     h.setStdoutSuppressed(true);
     h.addParameters(parser.getPretty(), "--encoding=UTF-8");
-    h.addParameters("--full-history");
-    h.addParameters("--date-order");
     h.addParameters("--decorate=full");
     h.addParameters(parameters);
     h.endOptions();
@@ -673,19 +697,22 @@ public class GitHistoryUtils {
     return history(project, path, root, parameters);
   }
 
-  /**
-   * Get history for the file
-   *
-   * @param project the context project
-   * @param path    the file path
-   * @return the list of the revisions
-   * @throws VcsException if there is problem with running git
-   */
-  public static List<VcsFileRevision> history(final Project project, FilePath path, final VirtualFile root, final String... parameters) throws VcsException {
+  public static List<VcsFileRevision> history(@NotNull Project project,
+                                              @NotNull FilePath path,
+                                              @Nullable VirtualFile root,
+                                              String... parameters) throws VcsException {
+    return history(project, path, root, GitRevisionNumber.HEAD, parameters);
+  }
+
+  public static List<VcsFileRevision> history(@NotNull Project project,
+                                              @NotNull FilePath path,
+                                              @Nullable VirtualFile root,
+                                              @NotNull VcsRevisionNumber startingFrom,
+                                              String... parameters) throws VcsException {
     final List<VcsFileRevision> rc = new ArrayList<VcsFileRevision>();
     final List<VcsException> exceptions = new ArrayList<VcsException>();
 
-    history(project, path, root, new Consumer<GitFileRevision>() {
+    history(project, path, root, startingFrom, new Consumer<GitFileRevision>() {
       @Override public void consume(GitFileRevision gitFileRevision) {
         rc.add(gitFileRevision);
       }
@@ -701,8 +728,7 @@ public class GitHistoryUtils {
   }
 
   /**
-   * Keep for compatibility with TeamCity plugin.
-   * To remove in IDEA 15.
+   * @deprecated To remove in IDEA 17
    */
   @Deprecated
   @SuppressWarnings("unused")
@@ -712,6 +738,10 @@ public class GitHistoryUtils {
     return onlyHashesHistory(project, path, root, parameters);
   }
 
+  /**
+   * @deprecated To remove in IDEA 17
+   */
+  @Deprecated
   public static List<Pair<SHAHash, Date>> onlyHashesHistory(Project project, FilePath path, final VirtualFile root, final String... parameters)
     throws VcsException {
     // adjust path using change manager
@@ -843,30 +873,6 @@ public class GitHistoryUtils {
         return factory.createHash(hash);
       }
     });
-  }
-
-  private static void takeLine(final Project project, String line,
-                               StringBuilder sb,
-                               GitLogParser parser,
-                               SymbolicRefsI refs,
-                               VirtualFile root,
-                               VcsException[] exc, GitLineHandler h, AsynchConsumer<GitHeavyCommit> gitCommitConsumer) {
-    final String text = sb.toString();
-    sb.setLength(0);
-    sb.append(line);
-    if (text.length() == 0) return;
-    GitLogRecord record = parser.parseOneRecord(text);
-
-    final GitHeavyCommit gitCommit;
-    try {
-      gitCommit = createCommit(project, refs, root, record);
-    }
-    catch (VcsException e) {
-      exc[0] = e;
-      h.cancel();
-      return;
-    }
-    gitCommitConsumer.consume(gitCommit);
   }
 
   @NotNull

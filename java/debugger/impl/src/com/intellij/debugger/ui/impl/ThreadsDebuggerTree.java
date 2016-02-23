@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,8 +76,8 @@ public class ThreadsDebuggerTree extends DebuggerTree {
     DebuggerSession session = context.getDebuggerSession();
     final RefreshThreadsTreeCommand command = new RefreshThreadsTreeCommand(session);
     
-    final int state = session != null? session.getState() : DebuggerSession.STATE_DISPOSED;
-    if (ApplicationManager.getApplication().isUnitTestMode() || state == DebuggerSession.STATE_PAUSED || state == DebuggerSession.STATE_RUNNING) {
+    final DebuggerSession.State state = session != null ? session.getState() : DebuggerSession.State.DISPOSED;
+    if (ApplicationManager.getApplication().isUnitTestMode() || state == DebuggerSession.State.PAUSED || state == DebuggerSession.State.RUNNING) {
       showMessage(MessageDescriptor.EVALUATING);
       context.getDebugProcess().getManagerThread().schedule(command);
     }
@@ -97,7 +97,7 @@ public class ThreadsDebuggerTree extends DebuggerTree {
       final DebuggerTreeNodeImpl root = getNodeFactory().getDefaultNode();
 
       final DebugProcessImpl debugProcess = mySession.getProcess();
-      if(debugProcess == null || !debugProcess.isAttached()) {
+      if (!debugProcess.isAttached()) {
         return;
       }
       final DebuggerContextImpl context = mySession.getContextManager().getContext();
@@ -143,7 +143,7 @@ public class ThreadsDebuggerTree extends DebuggerTree {
           if (currentThread != null) {
             root.insert(nodeManager.createNode(nodeManager.getThreadDescriptor(null, currentThread), evaluationContext), 0);
           }
-          List<ThreadReferenceProxyImpl> allThreads = new ArrayList<ThreadReferenceProxyImpl>(vm.allThreads());
+          List<ThreadReferenceProxyImpl> allThreads = new ArrayList<>(vm.allThreads());
           Collections.sort(allThreads, ThreadReferenceProxyImpl.ourComparator);
 
           for (ThreadReferenceProxyImpl threadProxy : allThreads) {
@@ -164,7 +164,7 @@ public class ThreadsDebuggerTree extends DebuggerTree {
       final boolean hasThreadToSelect = suspendContextThread != null; // thread can be null if pause was pressed
       final List<ThreadGroupReferenceProxyImpl> groups;
       if (hasThreadToSelect && showGroups) {
-        groups = new ArrayList<ThreadGroupReferenceProxyImpl>();
+        groups = new ArrayList<>();
         for(ThreadGroupReferenceProxyImpl group = suspendContextThread.threadGroupProxy(); group != null; group = group.parent()) {
           groups.add(group);
         }

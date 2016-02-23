@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,6 @@ import com.intellij.psi.util.CachedValuesManager;
 import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.util.CachedValuesManagerImpl;
 import com.intellij.util.messages.MessageBus;
-import com.intellij.util.messages.MessageBusFactory;
 import org.jetbrains.annotations.NotNull;
 import org.picocontainer.PicoContainer;
 
@@ -62,7 +61,7 @@ public class CoreProjectEnvironment {
     preregisterServices();
 
     myFileIndexFacade = createFileIndexFacade();
-    myMessageBus = MessageBusFactory.newMessageBus("CoreProjectEnvironment");
+    myMessageBus = myProject.getMessageBus();
 
     PsiModificationTrackerImpl modificationTracker = new PsiModificationTrackerImpl(myProject);
     myProject.registerService(PsiModificationTracker.class, modificationTracker);
@@ -74,7 +73,7 @@ public class CoreProjectEnvironment {
     registerProjectComponent(PsiManager.class, myPsiManager);
     myProject.registerService(SmartPointerManager.class, SmartPointerManagerImpl.class);
     registerProjectComponent(PsiDocumentManager.class, new CorePsiDocumentManager(myProject, myPsiManager,
-                                                                                  SmartPointerManager.getInstance(myProject), myMessageBus,
+                                                                                  myMessageBus,
                                                                                   new MockDocumentCommitProcessor()));
 
     myProject.registerService(ResolveScopeManager.class, createResolveScopeManager(myPsiManager));

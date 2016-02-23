@@ -17,20 +17,21 @@ package com.intellij.openapi.vfs.newvfs;
 
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.io.FileUtil;
-import com.intellij.openapi.util.io.ZipFileCache;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.openapi.vfs.*;
+import com.intellij.openapi.vfs.LocalFileSystem;
+import com.intellij.openapi.vfs.VFileProperty;
+import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.openapi.vfs.impl.ArchiveHandler;
 import com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent;
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
 import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent;
 import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent;
+import com.intellij.util.Consumer;
 import com.intellij.util.Function;
-import com.intellij.util.Processor;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -50,8 +51,7 @@ public class VfsImplUtil {
 
   private static final String FILE_SEPARATORS = "/" + File.separator;
 
-  private VfsImplUtil() {
-  }
+  private VfsImplUtil() { }
 
   @Nullable
   public static NewVirtualFile findFileByPath(@NotNull NewVirtualFileSystem vfs, @NotNull @NonNls String path) {
@@ -196,7 +196,6 @@ public class VfsImplUtil {
     checkSubscription();
 
     ArchiveHandler handler;
-    boolean refresh = false;
 
     synchronized (ourLock) {
       Pair<ArchiveFileSystem, ArchiveHandler> record = ourHandlers.get(localPath);
@@ -206,41 +205,29 @@ public class VfsImplUtil {
         ourHandlers.put(localPath, record);
 
         final String finalRootPath = localPath;
-        forEachDirectoryComponent(localPath, new Processor<String>() {
+        forEachDirectoryComponent(localPath, new Consumer<String>() {
           @Override
-          public boolean process(String containingDirectoryPath) {
+          public void consume(String containingDirectoryPath) {
             Set<String> handlers = ourDominatorsMap.get(containingDirectoryPath);
             if (handlers == null) {
               ourDominatorsMap.put(containingDirectoryPath, handlers = ContainerUtil.newTroveSet());
             }
             handlers.add(finalRootPath);
-            return true;
           }
         });
-        refresh = true;
       }
       handler = record.second;
-    }
-
-    if (refresh) {
-      final File file = handler.getFile();
-      ApplicationManager.getApplication().invokeLater(new Runnable() {
-        @Override
-        public void run() {
-          LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file);
-        }
-      }, ModalityState.defaultModalityState());
     }
 
     @SuppressWarnings("unchecked") T t = (T)handler;
     return t;
   }
 
-  private static void forEachDirectoryComponent(String rootPath, Processor<String> processor) {
+  private static void forEachDirectoryComponent(String rootPath, Consumer<String> consumer) {
     int index = rootPath.lastIndexOf('/');
     while (index > 0) {
       String containingDirectoryPath = rootPath.substring(0, index);
-      if (!processor.process(containingDirectoryPath)) return;
+      consumer.consume(containingDirectoryPath);
       index = rootPath.lastIndexOf('/', index - 1);
     }
   }
@@ -295,20 +282,20 @@ public class VfsImplUtil {
   }
 
   private static class InvalidationState {
-    private Map<String, VirtualFile> rootsToRefresh;
+    private Set<NewVirtualFile> myRootsToRefresh;
 
     @Nullable
-    public static InvalidationState invalidate(@Nullable InvalidationState state, final String path) {
+    static InvalidationState invalidate(@Nullable InvalidationState state, final String path) {
       Pair<ArchiveFileSystem, ArchiveHandler> handlerPair = ourHandlers.remove(path);
       if (handlerPair != null) {
-        forEachDirectoryComponent(path, new Processor<String>() {
+        handlerPair.second.dispose();
+        forEachDirectoryComponent(path, new Consumer<String>() {
           @Override
-          public boolean process(String containingDirectoryPath) {
+          public void consume(String containingDirectoryPath) {
             Set<String> handlers = ourDominatorsMap.get(containingDirectoryPath);
-            if (handlers != null && handlers.remove(path) && handlers.size() == 0) {
+            if (handlers != null && handlers.remove(path) && handlers.isEmpty()) {
               ourDominatorsMap.remove(containingDirectoryPath);
             }
-            return true;
           }
         });
 
@@ -322,19 +309,18 @@ public class VfsImplUtil {
     private void registerPathToRefresh(String path, ArchiveFileSystem vfs) {
       NewVirtualFile root = ManagingFS.getInstance().findRoot(vfs.composeRootPath(path), vfs);
       if (root != null) {
-        if (rootsToRefresh == null) rootsToRefresh = ContainerUtil.newHashMap();
-        rootsToRefresh.put(path, root);
+        if (myRootsToRefresh == null) myRootsToRefresh = ContainerUtil.newHashSet();
+        myRootsToRefresh.add(root);
       }
     }
 
-    public void scheduleRefresh() {
-      if (rootsToRefresh != null) {
-        for (VirtualFile root : rootsToRefresh.values()) {
-          ((NewVirtualFile)root).markDirtyRecursively();
+    void scheduleRefresh() {
+      if (myRootsToRefresh != null) {
+        for (NewVirtualFile root : myRootsToRefresh) {
+          root.markDirtyRecursively();
         }
-        ZipFileCache.reset(rootsToRefresh.keySet());
         boolean async = !ApplicationManager.getApplication().isUnitTestMode();
-        RefreshQueue.getInstance().refresh(async, true, null, rootsToRefresh.values());
+        RefreshQueue.getInstance().refresh(async, true, null, myRootsToRefresh);
       }
     }
   }

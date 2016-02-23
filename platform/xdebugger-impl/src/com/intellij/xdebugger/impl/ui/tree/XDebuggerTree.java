@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,6 +40,8 @@ import com.intellij.util.ui.UIUtil;
 import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider;
 import com.intellij.xdebugger.frame.XDebuggerTreeNodeHyperlink;
+import com.intellij.xdebugger.frame.XValueNode;
+import com.intellij.xdebugger.frame.XValuePlace;
 import com.intellij.xdebugger.impl.actions.XDebuggerActions;
 import com.intellij.xdebugger.impl.frame.XValueMarkers;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
@@ -82,18 +84,15 @@ public class XDebuggerTree extends DnDAwareTree implements DataProvider, Disposa
     }
   }, 100, this);
 
-  private static final Convertor<TreePath, String> SPEED_SEARCH_CONVERTER = new Convertor<TreePath, String>() {
-    @Override
-    public String convert(TreePath o) {
-      String text = null;
-      if (o != null) {
-        final Object node = o.getLastPathComponent();
-        if (node instanceof XDebuggerTreeNode) {
-          text = ((XDebuggerTreeNode)node).getText().toString();
-        }
+  private static final Convertor<TreePath, String> SPEED_SEARCH_CONVERTER = o -> {
+    String text = null;
+    if (o != null) {
+      final Object node = o.getLastPathComponent();
+      if (node instanceof XDebuggerTreeNode) {
+        text = ((XDebuggerTreeNode)node).getText().toString();
       }
-      return StringUtil.notNullize(text);
     }
+    return StringUtil.notNullize(text);
   };
 
   private static final TransferHandler DEFAULT_TRANSFER_HANDLER = new TransferHandler() {
@@ -308,6 +307,9 @@ public class XDebuggerTree extends DnDAwareTree implements DataProvider, Disposa
     Object rootNode = myTreeModel.getRoot();
     if (rootNode instanceof XDebuggerTreeNode) {
       ((XDebuggerTreeNode)rootNode).clearChildren();
+      if (isRootVisible() && rootNode instanceof XValueNodeImpl) {
+        ((XValueNodeImpl)rootNode).getValueContainer().computePresentation((XValueNode)rootNode, XValuePlace.TREE);
+      }
       treeState.restoreState(this);
       repaint();
     }
@@ -336,32 +338,28 @@ public class XDebuggerTree extends DnDAwareTree implements DataProvider, Disposa
 
   @Override
   public void dispose() {
-    ActionManager actionManager = ActionManager.getInstance();
-    actionManager.getAction(XDebuggerActions.SET_VALUE).unregisterCustomShortcutSet(this);
-    actionManager.getAction(XDebuggerActions.COPY_VALUE).unregisterCustomShortcutSet(this);
-    actionManager.getAction(XDebuggerActions.JUMP_TO_SOURCE).unregisterCustomShortcutSet(this);
-    actionManager.getAction(XDebuggerActions.JUMP_TO_TYPE_SOURCE).unregisterCustomShortcutSet(this);
-    actionManager.getAction(XDebuggerActions.MARK_OBJECT).unregisterCustomShortcutSet(this);
-
     // clear all possible inner fields that may still have links to debugger objects
+    setModel(null);
     myTreeModel.setRoot(null);
     setCellRenderer(null);
     UIUtil.dispose(this);
     setLeadSelectionPath(null);
     setAnchorSelectionPath(null);
     removeComponentListener(myMoveListener);
+    myListeners.clear();
   }
 
   private void registerShortcuts() {
     ActionManager actionManager = ActionManager.getInstance();
     actionManager.getAction(XDebuggerActions.SET_VALUE)
-      .registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_F2, 0)), this);
-    actionManager.getAction(XDebuggerActions.COPY_VALUE).registerCustomShortcutSet(CommonShortcuts.getCopy(), this);
-    actionManager.getAction(XDebuggerActions.JUMP_TO_SOURCE).registerCustomShortcutSet(CommonShortcuts.getEditSource(), this);
+      .registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_F2, 0)), this, this);
+    actionManager.getAction(XDebuggerActions.COPY_VALUE).registerCustomShortcutSet(CommonShortcuts.getCopy(), this, this);
+    actionManager.getAction(XDebuggerActions.JUMP_TO_SOURCE).registerCustomShortcutSet(CommonShortcuts.getEditSource(), this, this);
     Shortcut[] editTypeShortcuts = KeymapManager.getInstance().getActiveKeymap().getShortcuts(XDebuggerActions.EDIT_TYPE_SOURCE);
-    actionManager.getAction(XDebuggerActions.JUMP_TO_TYPE_SOURCE).registerCustomShortcutSet(new CustomShortcutSet(editTypeShortcuts), this);
-    actionManager.getAction(XDebuggerActions.MARK_OBJECT)
-      .registerCustomShortcutSet(new CustomShortcutSet(KeymapManager.getInstance().getActiveKeymap().getShortcuts("ToggleBookmark")), this);
+    actionManager.getAction(XDebuggerActions.JUMP_TO_TYPE_SOURCE).registerCustomShortcutSet(
+      new CustomShortcutSet(editTypeShortcuts), this, this);
+    actionManager.getAction(XDebuggerActions.MARK_OBJECT).registerCustomShortcutSet(
+      new CustomShortcutSet(KeymapManager.getInstance().getActiveKeymap().getShortcuts("ToggleBookmark")), this, this);
   }
 
   private static void markNodesObsolete(final XValueContainerNode<?> node) {
@@ -394,6 +392,7 @@ public class XDebuggerTree extends DnDAwareTree implements DataProvider, Disposa
       public void nodeLoaded(@NotNull RestorableStateNode node, String name) {
         if (nodeFilter.value(node)) {
           setSelectionPath(node.getPath());
+          removeTreeListener(this); // remove the listener on first match
         }
       }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,6 +51,11 @@ public abstract class ApplicationInfoEx extends ApplicationInfo {
 
   public abstract String getEditorBackgroundImageUrl();
 
+  /**
+   * This method is used to detect that the product isn't meant to be used as an IDE but is embedded to another product or used as a
+   * standalone tool so different licensing scheme should be applied.
+   */
+  @Nullable
   public abstract String getPackageCode();
 
   public abstract String getFullApplicationName();
@@ -72,6 +77,8 @@ public abstract class ApplicationInfoEx extends ApplicationInfo {
   public abstract String getPluginManagerUrl();
 
   public abstract String getPluginsListUrl();
+
+  public abstract String getChannelsListUrl();
 
   public abstract String getPluginsDownloadUrl();
 
@@ -100,24 +107,10 @@ public abstract class ApplicationInfoEx extends ApplicationInfo {
 
   public abstract List<PluginChooserPage> getPluginChooserPages();
 
-
-  /** @deprecated to remove in IDEA 14 */
-  @SuppressWarnings("UnusedDeclaration")
-  public boolean isEssentialPlugin(String pluginId) {
-    return false;
-  }
-
-  /** @deprecated to remove in IDEA 14 */
-  @SuppressWarnings("UnusedDeclaration")
-  public abstract String getOpaqueIconUrl();
-
-  /** @deprecated to remove in IDEA 14 */
-  @SuppressWarnings("UnusedDeclaration")
-  public abstract String getWelcomeScreenCaptionUrl();
-
-  /** @deprecated to remove in IDEA 14 */
-  @SuppressWarnings("UnusedDeclaration")
-  public abstract String getWelcomeScreenDeveloperSloganUrl();
+  /**
+   * @return {@code true} if the specified plugin is an essential part of the IDE so it cannot be disabled and isn't shown in Settings | Plugins
+   */
+  public abstract boolean isEssentialPlugin(String pluginId);
 
   @Nullable
   public abstract String getCustomizeIDEWizardStepsProvider();

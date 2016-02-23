@@ -57,7 +57,7 @@ public abstract class ContentChooser<Data> extends DialogWrapper {
 
   private final boolean myUseIdeaEditor;
 
-  private final JList      myList;
+  private final JBList     myList;
   private final JBSplitter mySplitter;
   private final Project    myProject;
   private final boolean    myAllowMultipleSelections;
@@ -77,6 +77,7 @@ public abstract class ContentChooser<Data> extends DialogWrapper {
     mySplitter = new JBSplitter(true, 0.3f);
     mySplitter.setSplitterProportionKey(getDimensionServiceKey() + ".splitter");
     myList = new JBList(new CollectionListModel<Item>());
+    myList.setExpandableItemsEnabled(false);
 
     setOKButtonText(CommonBundle.getOkButtonText());
     setTitle(title);
@@ -168,8 +169,8 @@ public abstract class ContentChooser<Data> extends DialogWrapper {
     mySplitter.setSecondComponent(new JPanel());
     rebuildListContent();
 
-    ListScrollingUtil.installActions(myList);
-    ListScrollingUtil.ensureSelectionExists(myList);
+    ScrollingUtil.installActions(myList);
+    ScrollingUtil.ensureSelectionExists(myList);
     updateViewerForSelection();
     myList.addListSelectionListener(new ListSelectionListener() {
       @Override
@@ -309,7 +310,7 @@ public abstract class ContentChooser<Data> extends DialogWrapper {
   
   public void setSelectedIndex(int index) {
     myList.setSelectedIndex(index);
-    ListScrollingUtil.ensureIndexIsVisible(myList, index, 0);
+    ScrollingUtil.ensureIndexIsVisible(myList, index, 0);
     updateViewerForSelection();
   }
 
@@ -330,7 +331,10 @@ public abstract class ContentChooser<Data> extends DialogWrapper {
   @NotNull
   public String getSelectedText() {
     StringBuilder sb = new StringBuilder();
+    boolean first = true;
     for (Object o : myList.getSelectedValues()) {
+      if (first) first = false;
+      else sb.append("\n");
       String s = ((Item)o).longText;
       sb.append(StringUtil.convertLineSeparators(s));
     }

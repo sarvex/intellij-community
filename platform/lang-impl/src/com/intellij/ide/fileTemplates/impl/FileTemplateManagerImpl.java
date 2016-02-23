@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,16 +47,9 @@ import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
-/**
- * @author MYakovlev
- *         Date: Jul 24
- * @author 2002
- */
 @State(
   name = "FileTemplateManagerImpl",
-  storages = {
-    @Storage(file = StoragePathMacros.WORKSPACE_FILE)
-  }
+  storages = @Storage(StoragePathMacros.WORKSPACE_FILE)
 )
 public class FileTemplateManagerImpl extends FileTemplateManager implements PersistentStateComponent<FileTemplateManagerImpl.State> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.ide.fileTemplates.impl.FileTemplateManagerImpl");
@@ -85,13 +78,13 @@ public class FileTemplateManagerImpl extends FileTemplateManager implements Pers
   }
 
   public FileTemplateManagerImpl(@NotNull FileTypeManagerEx typeManager,
+                                 FileTemplatesLoader loader,
                                  /*need this to ensure disposal of the service _after_ project manager*/
                                  @SuppressWarnings("UnusedParameters") ProjectManager pm,
                                  final Project project) {
     myTypeManager = typeManager;
     myProject = project;
 
-    FileTemplatesLoader loader = ExportableFileTemplateSettings.getInstance();
     myInternalTemplatesManager = loader.getInternalTemplatesManager();
     myDefaultTemplatesManager = loader.getDefaultTemplatesManager();
     myPatternsManager = loader.getPatternsManager();
@@ -272,13 +265,7 @@ public class FileTemplateManagerImpl extends FileTemplateManager implements Pers
 
   @Override
   public FileTemplate getInternalTemplate(@NotNull @NonNls String templateName) {
-    LOG.assertTrue(myInternalTemplatesManager != null);
-    FileTemplateBase template = myInternalTemplatesManager.findTemplateByName(templateName);
-
-    if (template == null) {
-      // todo: review the hack and try to get rid of this weird logic completely
-      template = myDefaultTemplatesManager.findTemplateByName(templateName);
-    }
+    FileTemplateBase template = (FileTemplateBase)findInternalTemplate(templateName);
 
     if (template == null) {
       template = (FileTemplateBase)getJ2eeTemplate(templateName); // Hack to be able to register class templates from the plugin.
@@ -290,6 +277,18 @@ public class FileTemplateManagerImpl extends FileTemplateManager implements Pers
         template = myInternalTemplatesManager.addTemplate(templateName, "java");
         template.setText(text);
       }
+    }
+    return template;
+  }
+
+  @Override
+  public FileTemplate findInternalTemplate(@NotNull @NonNls String templateName) {
+    LOG.assertTrue(myInternalTemplatesManager != null);
+    FileTemplateBase template = myInternalTemplatesManager.findTemplateByName(templateName);
+
+    if (template == null) {
+      // todo: review the hack and try to get rid of this weird logic completely
+      template = myDefaultTemplatesManager.findTemplateByName(templateName);
     }
     return template;
   }
@@ -452,9 +451,14 @@ public class FileTemplateManagerImpl extends FileTemplateManager implements Pers
 
   @Override
   public void loadState(State state) {
+    ExportableFileTemplateSettings.getInstance(myProject);
     XmlSerializerUtil.copyBean(state, myState);
     FileTemplatesScheme scheme = myProjectScheme != null && myProjectScheme.getName().equals(state.SCHEME) ? myProjectScheme : FileTemplatesScheme.DEFAULT;
     setScheme(scheme);
+  }
+
+  FTManager[] getAllManagers() {
+    return myAllManagers;
   }
 
   public static class State {

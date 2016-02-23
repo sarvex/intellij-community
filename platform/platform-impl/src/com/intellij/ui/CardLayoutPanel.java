@@ -15,10 +15,15 @@
  */
 package com.intellij.ui;
 
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.util.ActionCallback;
+import com.intellij.util.ui.JBInsets;
 
+import javax.accessibility.Accessible;
+import javax.accessibility.AccessibleContext;
+import javax.accessibility.AccessibleRole;
 import javax.swing.JComponent;
 import java.awt.*;
 import java.util.IdentityHashMap;
@@ -32,8 +37,9 @@ import java.util.Map.Entry;
  *
  * @author Sergey.Malenkov
  */
-public abstract class CardLayoutPanel<K, UI, V extends Component> extends JComponent {
+public abstract class CardLayoutPanel<K, UI, V extends Component> extends JComponent implements Accessible, Disposable {
   private final IdentityHashMap<K, V> myContent = new IdentityHashMap<K, V>();
+  private volatile boolean myDisposed;
   private K myKey;
 
   /**
@@ -56,6 +62,14 @@ public abstract class CardLayoutPanel<K, UI, V extends Component> extends JCompo
   protected abstract V create(UI ui);
 
   protected void dispose(K key) {
+  }
+
+  @Override
+  public void dispose() {
+    if (!myDisposed) {
+      myDisposed = true;
+      removeAll();
+    }
   }
 
   public K getKey() {
@@ -111,13 +125,19 @@ public abstract class CardLayoutPanel<K, UI, V extends Component> extends JCompo
     ApplicationManager.getApplication().executeOnPooledThread(new Runnable() {
       @Override
       public void run() {
-        final UI ui = prepare(key);
-        ApplicationManager.getApplication().invokeLater(new Runnable() {
-          @Override
-          public void run() {
-            select(callback, key, ui);
-          }
-        }, ModalityState.any());
+        if (!myDisposed) {
+          final UI ui = prepare(key);
+          ApplicationManager.getApplication().invokeLater(new Runnable() {
+            @Override
+            public void run() {
+              if (!myDisposed) {
+                select(callback, key, ui);
+              }
+              else callback.setRejected();
+            }
+          }, ModalityState.any());
+        }
+        else callback.setRejected();
       }
     });
   }
@@ -125,13 +145,7 @@ public abstract class CardLayoutPanel<K, UI, V extends Component> extends JCompo
   @Override
   public void doLayout() {
     Rectangle bounds = new Rectangle(getWidth(), getHeight());
-    Insets insets = getInsets();
-    if (insets != null) {
-      bounds.x += insets.left;
-      bounds.y += insets.top;
-      bounds.width -= insets.left + insets.right;
-      bounds.height -= insets.top + insets.bottom;
-    }
+    JBInsets.removeFrom(bounds, getInsets());
     for (Component component : getComponents()) {
       component.setBounds(bounds);
     }
@@ -186,5 +200,20 @@ public abstract class CardLayoutPanel<K, UI, V extends Component> extends JCompo
       dispose(key);
     }
     myContent.clear();
+  }
+
+  @Override
+  public AccessibleContext getAccessibleContext() {
+    if (accessibleContext == null) {
+      accessibleContext = new AccessibleCardLayoutPanel();
+    }
+    return accessibleContext;
+  }
+
+  protected class AccessibleCardLayoutPanel extends AccessibleJComponent {
+    @Override
+    public AccessibleRole getAccessibleRole() {
+      return AccessibleRole.PANEL;
+    }
   }
 }

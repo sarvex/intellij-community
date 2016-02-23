@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ package com.intellij.testFramework;
 
 import com.intellij.codeInsight.CodeInsightSettings;
 import com.intellij.diagnostic.PerformanceWatcher;
-import com.intellij.ide.IdeEventQueue;
 import com.intellij.mock.MockApplication;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.Application;
@@ -51,11 +50,11 @@ import junit.framework.TestCase;
 import junit.framework.TestSuite;
 import org.intellij.lang.annotations.RegExp;
 import org.jdom.Element;
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import sun.awt.AWTAutoShutdown;
 
 import javax.swing.*;
 import javax.swing.Timer;
@@ -81,8 +80,8 @@ import java.util.regex.Pattern;
 @SuppressWarnings("UseOfSystemOutOrSystemErr")
 public abstract class UsefulTestCase extends TestCase {
   public static final boolean IS_UNDER_TEAMCITY = System.getenv("TEAMCITY_VERSION") != null;
-
-  public static final String IDEA_MARKER_CLASS = "com.intellij.openapi.components.impl.stores.IdeaProjectStoreImpl";
+  @Deprecated
+  public static final String IDEA_MARKER_CLASS = "com.intellij.openapi.roots.IdeaModifiableModelsProvider";
   public static final String TEMP_DIR_MARKER = "unitTest_";
 
   protected static boolean OVERWRITE_TESTDATA = false;
@@ -94,6 +93,7 @@ public abstract class UsefulTestCase extends TestCase {
   public static Map<String, Long> TOTAL_SETUP_COST_MILLIS = new HashMap<String, Long>();
   public static Map<String, Long> TOTAL_TEARDOWN_COST_MILLIS = new HashMap<String, Long>();
 
+  @NotNull
   protected final Disposable myTestRootDisposable = new Disposable() {
     @Override
     public void dispose() { }
@@ -106,6 +106,7 @@ public abstract class UsefulTestCase extends TestCase {
   };
 
   protected static String ourPathToKeep = null;
+  private List<String> myPathsToKeep = new ArrayList<String>();
 
   private CodeStyleSettings myOldCodeStyleSettings;
   private String myTempDir;
@@ -127,6 +128,8 @@ public abstract class UsefulTestCase extends TestCase {
     }
   }
 
+  private boolean oldDisposerDebug;
+
   protected boolean shouldContainTempFiles() {
     return true;
   }
@@ -136,13 +139,16 @@ public abstract class UsefulTestCase extends TestCase {
     super.setUp();
 
     if (shouldContainTempFiles()) {
-      String testName = getTestName(true);
+      String testName =  FileUtil.sanitizeFileName(getTestName(true));
       if (StringUtil.isEmptyOrSpaces(testName)) testName = "";
       testName = new File(testName).getName(); // in case the test name contains file separators
-      myTempDir = FileUtil.toSystemDependentName(ORIGINAL_TEMP_DIR + "/" + TEMP_DIR_MARKER + testName + "_"+ RNG.nextInt(1000));
+      myTempDir = new File(ORIGINAL_TEMP_DIR, TEMP_DIR_MARKER + testName).getPath();
       FileUtil.resetCanonicalTempPathCache(myTempDir);
     }
-    ApplicationInfoImpl.setInPerformanceTest(isPerformanceTest());
+    boolean isPerformanceTest = isPerformanceTest();
+    ApplicationInfoImpl.setInPerformanceTest(isPerformanceTest);
+    // turn off Disposer debugging for performance tests
+    oldDisposerDebug = Disposer.setDebugMode(Disposer.isDebugMode() && !isPerformanceTest);
   }
 
   @Override
@@ -153,13 +159,14 @@ public abstract class UsefulTestCase extends TestCase {
       cleanupDeleteOnExitHookList();
     }
     finally {
+      Disposer.setDebugMode(oldDisposerDebug);
       if (shouldContainTempFiles()) {
         FileUtil.resetCanonicalTempPathCache(ORIGINAL_TEMP_DIR);
-        if (ourPathToKeep != null && FileUtil.isAncestor(myTempDir, ourPathToKeep, false)) {
+        if (hasTmpFilesToKeep()) {
           File[] files = new File(myTempDir).listFiles();
           if (files != null) {
             for (File file : files) {
-              if (!FileUtil.pathsEqual(file.getPath(), ourPathToKeep)) {
+              if (!shouldKeepTmpFile(file)) {
                 FileUtil.delete(file);
               }
             }
@@ -175,6 +182,23 @@ public abstract class UsefulTestCase extends TestCase {
     super.tearDown();
   }
 
+  protected void addTmpFileToKeep(File file) {
+    myPathsToKeep.add(file.getPath());
+  }
+
+  private boolean hasTmpFilesToKeep() {
+    return ourPathToKeep != null && FileUtil.isAncestor(myTempDir, ourPathToKeep, false) || !myPathsToKeep.isEmpty();
+  }
+
+  private boolean shouldKeepTmpFile(File file) {
+    String path = file.getPath();
+    if (FileUtil.pathsEqual(path, ourPathToKeep)) return true;
+    for (String pathToKeep : myPathsToKeep) {
+      if (FileUtil.pathsEqual(path, pathToKeep)) return true;
+    }
+    return false;
+  }
+
   private static final Set<String> DELETE_ON_EXIT_HOOK_DOT_FILES;
   private static final Class DELETE_ON_EXIT_HOOK_CLASS;
   static {
@@ -185,7 +209,7 @@ public abstract class UsefulTestCase extends TestCase {
     catch (Exception e) {
       throw new RuntimeException(e);
     }
-    Set<String> files = ReflectionUtil.getField(aClass, null, Set.class, "files");
+    Set<String> files = ReflectionUtil.getStaticFieldValue(aClass, Set.class, "files");
     DELETE_ON_EXIT_HOOK_CLASS = aClass;
     DELETE_ON_EXIT_HOOK_DOT_FILES = files;
   }
@@ -215,21 +239,23 @@ public abstract class UsefulTestCase extends TestCase {
     containerMap.clear();
   }
 
-  protected CompositeException checkForSettingsDamage() throws Exception {
+  protected void checkForSettingsDamage(@NotNull List<Throwable> exceptions) {
     Application app = ApplicationManager.getApplication();
     if (isPerformanceTest() || app == null || app instanceof MockApplication) {
-      return new CompositeException();
+      return;
     }
 
     CodeStyleSettings oldCodeStyleSettings = myOldCodeStyleSettings;
+    if (oldCodeStyleSettings == null) {
+      return;
+    }
+
     myOldCodeStyleSettings = null;
 
-    return doCheckForSettingsDamage(oldCodeStyleSettings, getCurrentCodeStyleSettings());
+    doCheckForSettingsDamage(oldCodeStyleSettings, getCurrentCodeStyleSettings(), exceptions);
   }
 
-  public static CompositeException doCheckForSettingsDamage(@NotNull CodeStyleSettings oldCodeStyleSettings,
-                                                            @NotNull CodeStyleSettings currentCodeStyleSettings) throws Exception {
-    CompositeException result = new CompositeException();
+  public static void doCheckForSettingsDamage(@NotNull CodeStyleSettings oldCodeStyleSettings, @NotNull CodeStyleSettings currentCodeStyleSettings, @NotNull List<Throwable> exceptions) {
     final CodeInsightSettings settings = CodeInsightSettings.getInstance();
     try {
       Element newS = new Element("temp");
@@ -245,15 +271,15 @@ public abstract class UsefulTestCase extends TestCase {
         catch (Exception ignored) {
         }
       }
-      result.add(error);
+      exceptions.add(error);
     }
 
     currentCodeStyleSettings.getIndentOptions(StdFileTypes.JAVA);
     try {
       checkSettingsEqual(oldCodeStyleSettings, currentCodeStyleSettings, "Code style settings damaged");
     }
-    catch (AssertionError e) {
-      result.add(e);
+    catch (Throwable e) {
+      exceptions.add(e);
     }
     finally {
       currentCodeStyleSettings.clearCodeStyleSettings();
@@ -263,16 +289,14 @@ public abstract class UsefulTestCase extends TestCase {
       InplaceRefactoring.checkCleared();
     }
     catch (AssertionError e) {
-      result.add(e);
+      exceptions.add(e);
     }
     try {
       StartMarkAction.checkCleared();
     }
     catch (AssertionError e) {
-      result.add(e);
+      exceptions.add(e);
     }
-
-    return result;
   }
 
   protected void storeSettings() {
@@ -287,7 +311,8 @@ public abstract class UsefulTestCase extends TestCase {
     return CodeStyleSettingsManager.getInstance().getCurrentSettings();
   }
 
-  public Disposable getTestRootDisposable() {
+  @NotNull
+  public final Disposable getTestRootDisposable() {
     return myTestRootDisposable;
   }
 
@@ -326,33 +351,35 @@ public abstract class UsefulTestCase extends TestCase {
     return PlatformTestUtil.canRunTest(getClass());
   }
 
-  public static void edt(Runnable r) {
-    UIUtil.invokeAndWaitIfNeeded(r);
+  public static void edt(@NotNull Runnable r) {
+    EdtTestUtil.runInEdtAndWait(r);
   }
 
   protected void invokeTestRunnable(@NotNull Runnable runnable) throws Exception {
-    UIUtil.invokeAndWaitIfNeeded(runnable);
-    //runnable.run();
+    EdtTestUtil.runInEdtAndWait(runnable);
   }
 
   protected void defaultRunBare() throws Throwable {
     Throwable exception = null;
-    long setupStart = System.nanoTime();
-    setUp();
-    long setupCost = (System.nanoTime() - setupStart) / 1000000;
-    logPerClassCost(setupCost, TOTAL_SETUP_COST_MILLIS);
-
     try {
+      long setupStart = System.nanoTime();
+      setUp();
+      long setupCost = (System.nanoTime() - setupStart) / 1000000;
+      logPerClassCost(setupCost, TOTAL_SETUP_COST_MILLIS);
+
       runTest();
-    } catch (Throwable running) {
+    }
+    catch (Throwable running) {
       exception = running;
-    } finally {
+    }
+    finally {
       try {
         long teardownStart = System.nanoTime();
         tearDown();
         long teardownCost = (System.nanoTime() - teardownStart) / 1000000;
         logPerClassCost(teardownCost, TOTAL_TEARDOWN_COST_MILLIS);
-      } catch (Throwable tearingDown) {
+      }
+      catch (Throwable tearingDown) {
         if (exception == null) exception = tearingDown;
       }
     }
@@ -388,51 +415,18 @@ public abstract class UsefulTestCase extends TestCase {
     System.out.println(String.format("##teamcity[buildStatisticValue key='ideaTests.totalTeardownMs' value='%d']", totalTeardown));
   }
 
-  public static void replaceIdeEventQueueSafely() {
-    if (Toolkit.getDefaultToolkit().getSystemEventQueue() instanceof IdeEventQueue) {
-      return;
-    }
-    if (SwingUtilities.isEventDispatchThread()) {
-      throw new RuntimeException("must not call under EDT");
-    }
-    AWTAutoShutdown.getInstance().notifyThreadBusy(Thread.currentThread());
-    UIUtil.pump();
-    // in JDK 1.6 java.awt.EventQueue.push() causes slow painful death of current EDT
-    // so we have to wait through its agony to termination
-    try {
-      SwingUtilities.invokeAndWait(new Runnable() {
-        @Override
-        public void run() {
-          IdeEventQueue.getInstance();
-        }
-      });
-      SwingUtilities.invokeAndWait(EmptyRunnable.getInstance());
-      SwingUtilities.invokeAndWait(EmptyRunnable.getInstance());
-    }
-    catch (Exception e) {
-      throw new RuntimeException(e);
-    }
-  }
-
   @Override
   public void runBare() throws Throwable {
     if (!shouldRunTest()) return;
 
     if (runInDispatchThread()) {
-      replaceIdeEventQueueSafely();
-      final Throwable[] exception = {null};
-      UIUtil.invokeAndWaitIfNeeded(new Runnable() {
+      TestRunnerUtil.replaceIdeEventQueueSafely();
+      EdtTestUtil.runInEdtAndWait(new ThrowableRunnable<Throwable>() {
         @Override
-        public void run() {
-          try {
-            defaultRunBare();
-          }
-          catch (Throwable tearingDown) {
-            if (exception[0] == null) exception[0] = tearingDown;
-          }
+        public void run() throws Throwable {
+          defaultRunBare();
         }
       });
-      if (exception[0] != null) throw exception[0];
     }
     else {
       defaultRunBare();
@@ -475,6 +469,17 @@ public abstract class UsefulTestCase extends TestCase {
     for (int i = 0; i < actual.length; i++) {
       byte a = actual[i];
       byte e = expected[i];
+      assertEquals("not equals at index: "+i, e, a);
+    }
+  }
+
+  public static void assertOrderedEquals(@NotNull int[] actual, @NotNull int[] expected) {
+    if (actual.length != expected.length) {
+      fail("Expected size: "+expected.length+"; actual: "+actual.length+"\nexpected: "+Arrays.toString(expected)+"\nactual  : "+Arrays.toString(actual));
+    }
+    for (int i = 0; i < actual.length; i++) {
+      int a = actual[i];
+      int e = expected[i];
       assertEquals("not equals at index: "+i, e, a);
     }
   }
@@ -530,21 +535,21 @@ public abstract class UsefulTestCase extends TestCase {
     }
   }
 
-  public <T> void assertContainsOrdered(Collection<? extends T> collection, T... expected) {
+  public static <T> void assertContainsOrdered(Collection<? extends T> collection, T... expected) {
     assertContainsOrdered(collection, Arrays.asList(expected));
   }
 
-  public <T> void assertContainsOrdered(Collection<? extends T> collection, Collection<T> expected) {
+  public static <T> void assertContainsOrdered(Collection<? extends T> collection, Collection<T> expected) {
     ArrayList<T> copy = new ArrayList<T>(collection);
     copy.retainAll(expected);
     assertOrderedEquals(toString(collection), copy, expected);
   }
 
-  public <T> void assertContainsElements(Collection<? extends T> collection, T... expected) {
+  public static <T> void assertContainsElements(Collection<? extends T> collection, T... expected) {
     assertContainsElements(collection, Arrays.asList(expected));
   }
 
-  public <T> void assertContainsElements(Collection<? extends T> collection, Collection<T> expected) {
+  public static <T> void assertContainsElements(Collection<? extends T> collection, Collection<T> expected) {
     ArrayList<T> copy = new ArrayList<T>(collection);
     copy.retainAll(expected);
     assertSameElements(toString(collection), copy, expected);
@@ -554,11 +559,11 @@ public abstract class UsefulTestCase extends TestCase {
     return toString(Arrays.asList(collection), separator);
   }
 
-  public <T> void assertDoesntContain(Collection<? extends T> collection, T... notExpected) {
+  public static <T> void assertDoesntContain(Collection<? extends T> collection, T... notExpected) {
     assertDoesntContain(collection, Arrays.asList(notExpected));
   }
 
-  public <T> void assertDoesntContain(Collection<? extends T> collection, Collection<T> notExpected) {
+  public static <T> void assertDoesntContain(Collection<? extends T> collection, Collection<T> notExpected) {
     ArrayList<T> expected = new ArrayList<T>(collection);
     expected.removeAll(notExpected);
     assertSameElements(collection, expected);
@@ -645,6 +650,7 @@ public abstract class UsefulTestCase extends TestCase {
     }
   }
 
+  @Contract("null, _ -> fail")
   public static <T> T assertInstanceOf(Object o, Class<T> aClass) {
     Assert.assertNotNull("Expected instance of: " + aClass.getName() + " actual: " + null, o);
     Assert.assertTrue("Expected instance of: " + aClass.getName() + " actual: " + o.getClass().getName(), aClass.isInstance(o));
@@ -668,6 +674,7 @@ public abstract class UsefulTestCase extends TestCase {
     return ts[0];
   }
 
+  @Contract("null, _ -> fail")
   public static <T> void assertOneOf(T value, T... values) {
     boolean found = false;
     for (T v : values) {
@@ -735,39 +742,23 @@ public abstract class UsefulTestCase extends TestCase {
   }
 
   protected String getTestName(boolean lowercaseFirstLetter) {
-    String name = getName();
-    return getTestName(name, lowercaseFirstLetter);
+    return getTestName(getName(), lowercaseFirstLetter);
   }
 
   public static String getTestName(String name, boolean lowercaseFirstLetter) {
-    if (name == null) {
-      return "";
-    }
-    name = StringUtil.trimStart(name, "test");
-    if (StringUtil.isEmpty(name)) {
-      return "";
-    }
-    return lowercaseFirstLetter(name, lowercaseFirstLetter);
+    return name == null ? "" : PlatformTestUtil.getTestName(name, lowercaseFirstLetter);
   }
 
+  /** @deprecated use {@link PlatformTestUtil#lowercaseFirstLetter(String, boolean)} (to be removed in IDEA 17) */
+  @SuppressWarnings("unused")
   public static String lowercaseFirstLetter(String name, boolean lowercaseFirstLetter) {
-    if (lowercaseFirstLetter && !isAllUppercaseName(name)) {
-      name = Character.toLowerCase(name.charAt(0)) + name.substring(1);
-    }
-    return name;
+    return PlatformTestUtil.lowercaseFirstLetter(name, lowercaseFirstLetter);
   }
 
+  /** @deprecated use {@link PlatformTestUtil#isAllUppercaseName(String)} (to be removed in IDEA 17) */
+  @SuppressWarnings("unused")
   public static boolean isAllUppercaseName(String name) {
-    int uppercaseChars = 0;
-    for (int i = 0; i < name.length(); i++) {
-      if (Character.isLowerCase(name.charAt(i))) {
-        return false;
-      }
-      if (Character.isUpperCase(name.charAt(i))) {
-        uppercaseChars++;
-      }
-    }
-    return uppercaseChars >= 3;
+    return PlatformTestUtil.isAllUppercaseName(name);
   }
 
   protected String getTestDirectoryName() {
@@ -775,7 +766,11 @@ public abstract class UsefulTestCase extends TestCase {
     return testName.replaceAll("_.*", "");
   }
 
-  protected static void assertSameLinesWithFile(String filePath, String actualText) {
+  public static void assertSameLinesWithFile(String filePath, String actualText) {
+    assertSameLinesWithFile(filePath, actualText, true);
+  }
+
+  public static void assertSameLinesWithFile(String filePath, String actualText, boolean trimBeforeComparing) {
     String fileText;
     try {
       if (OVERWRITE_TESTDATA) {
@@ -791,8 +786,8 @@ public abstract class UsefulTestCase extends TestCase {
     catch (IOException e) {
       throw new RuntimeException(e);
     }
-    String expected = StringUtil.convertLineSeparators(fileText.trim());
-    String actual = StringUtil.convertLineSeparators(actualText.trim());
+    String expected = StringUtil.convertLineSeparators(trimBeforeComparing ? fileText.trim() : fileText);
+    String actual = StringUtil.convertLineSeparators(trimBeforeComparing ? actualText.trim() : actualText);
     if (!Comparing.equal(expected, actual)) {
       throw new FileComparisonFailure(null, expected, actual, filePath);
     }
@@ -849,7 +844,7 @@ public abstract class UsefulTestCase extends TestCase {
     });
   }
 
-  protected static void checkAllTimersAreDisposed() {
+  protected static void checkAllTimersAreDisposed(@NotNull List<Throwable> exceptions) {
     Field firstTimerF;
     Object timerQueue;
     Object timer;
@@ -872,8 +867,10 @@ public abstract class UsefulTestCase extends TestCase {
       }
     }
     catch (Throwable e) {
-      throw new RuntimeException(e);
+      exceptions.add(e);
+      return;
     }
+
     if (timer != null) {
       if (firstTimerF != null) {
         ReflectionUtil.resetField(timerQueue, firstTimerF);
@@ -888,13 +885,13 @@ public abstract class UsefulTestCase extends TestCase {
           timer = getTimer.invoke(timer);
         }
         catch (Exception e) {
-          throw new RuntimeException(e);
+          exceptions.add(e);
+          return;
         }
       }
       Timer t = (Timer)timer;
       text = "Timer (listeners: "+Arrays.asList(t.getActionListeners()) + ") "+text;
-
-      fail("Not disposed Timer: " + text + "; queue:" + timerQueue);
+      exceptions.add(new AssertionFailedError("Not disposed Timer: " + text + "; queue:" + timerQueue));
     }
   }
 

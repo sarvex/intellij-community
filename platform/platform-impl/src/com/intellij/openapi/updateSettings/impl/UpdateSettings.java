@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 package com.intellij.openapi.updateSettings.impl;
 
 import com.intellij.openapi.application.ApplicationInfo;
-import com.intellij.openapi.application.impl.ApplicationInfoImpl;
 import com.intellij.openapi.components.*;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.SmartList;
@@ -32,37 +31,40 @@ import java.util.List;
 @State(
   name = "UpdatesConfigurable",
   storages = {
-    @Storage(file = StoragePathMacros.APP_CONFIG + "/updates.xml", roamingType = RoamingType.DISABLED),
-    @Storage(file = StoragePathMacros.APP_CONFIG + "/other.xml", deprecated = true)
+    @Storage(value = "updates.xml", roamingType = RoamingType.DISABLED),
+    @Storage(value = "other.xml", deprecated = true)
   }
 )
 public class UpdateSettings implements PersistentStateComponent<UpdateSettings.State>, UserUpdateSettings {
-  private State myState = new State();
+  public static class State {
+    @CollectionBean public final List<String> pluginHosts = new SmartList<String>();
+    @CollectionBean public final List<String> knownUpdateChannels = new SmartList<String>();
+    @CollectionBean public final List<String> ignoredBuildNumbers = new SmartList<String>();
 
-  public UpdateSettings() {
-    updateDefaultChannel();
+    public boolean CHECK_NEEDED = true;
+    public long LAST_TIME_CHECKED = 0;
+
+    public String LAST_BUILD_CHECKED;
+    public String UPDATE_CHANNEL_TYPE = ChannelStatus.RELEASE.getCode();
+    public boolean SECURE_CONNECTION = true;
   }
 
   public static UpdateSettings getInstance() {
     return ServiceManager.getService(UpdateSettings.class);
   }
 
-  static class State {
-    @CollectionBean
-    public final List<String> pluginHosts = new SmartList<String>();
-    @CollectionBean
-    public final List<String> knownUpdateChannels = new SmartList<String>();
-    @CollectionBean
-    public final List<String> ignoredBuildNumbers = new SmartList<String>();
-    @CollectionBean
-    public final List<String> outdatedPlugins = new SmartList<String>();
+  private State myState = new State();
 
-    public boolean CHECK_NEEDED = true;
-    public long LAST_TIME_CHECKED = 0;
+  @NotNull
+  @Override
+  public State getState() {
+    return myState;
+  }
 
-    public String LAST_BUILD_CHECKED;
-    public String UPDATE_CHANNEL_TYPE = ChannelStatus.RELEASE_CODE;
-    public boolean SECURE_CONNECTION = false;
+  @Override
+  public void loadState(@NotNull State state) {
+    myState = state;
+    myState.LAST_BUILD_CHECKED = StringUtil.nullize(myState.LAST_BUILD_CHECKED);
   }
 
   @Nullable
@@ -91,40 +93,8 @@ public class UpdateSettings implements PersistentStateComponent<UpdateSettings.S
     myState.SECURE_CONNECTION = value;
   }
 
-  @NotNull
-  public String getUpdateChannelType() {
-    return myState.UPDATE_CHANNEL_TYPE;
-  }
-
   public long getLastTimeChecked() {
     return myState.LAST_TIME_CHECKED;
-  }
-
-  public void setUpdateChannelType(@NotNull String value) {
-    myState.UPDATE_CHANNEL_TYPE = value;
-  }
-
-  @NotNull
-  public List<String> getOutdatedPlugins() {
-    return myState.outdatedPlugins;
-  }
-
-  private void updateDefaultChannel() {
-    if (ApplicationInfoImpl.getShadowInstance().isEAP()) {
-      myState.UPDATE_CHANNEL_TYPE = ChannelStatus.EAP_CODE;
-    }
-  }
-
-  @Override
-  public State getState() {
-    return myState;
-  }
-
-  @Override
-  public void loadState(State state) {
-    myState = state;
-    myState.LAST_BUILD_CHECKED = StringUtil.nullize(myState.LAST_BUILD_CHECKED);
-    updateDefaultChannel();
   }
 
   @NotNull
@@ -136,9 +106,7 @@ public class UpdateSettings implements PersistentStateComponent<UpdateSettings.S
   @Override
   public void setKnownChannelIds(@NotNull List<String> ids) {
     myState.knownUpdateChannels.clear();
-    for (String id : ids) {
-      myState.knownUpdateChannels.add(id);
-    }
+    myState.knownUpdateChannels.addAll(ids);
   }
 
   public void forgetChannelId(String id) {
@@ -154,6 +122,10 @@ public class UpdateSettings implements PersistentStateComponent<UpdateSettings.S
   @Override
   public ChannelStatus getSelectedChannelStatus() {
     return ChannelStatus.fromCode(myState.UPDATE_CHANNEL_TYPE);
+  }
+
+  public void setSelectedChannelStatus(@NotNull ChannelStatus channel) {
+    myState.UPDATE_CHANNEL_TYPE = channel.getCode();
   }
 
   public List<String> getPluginHosts() {
@@ -176,5 +148,17 @@ public class UpdateSettings implements PersistentStateComponent<UpdateSettings.S
 
   public boolean canUseSecureConnection() {
     return myState.SECURE_CONNECTION && NetUtils.isSniEnabled();
+  }
+
+  /** @deprecated use {@link #getSelectedChannelStatus()} (to be removed in IDEA 17) */
+  @SuppressWarnings("unused")
+  public String getUpdateChannelType() {
+    return myState.UPDATE_CHANNEL_TYPE;
+  }
+
+  /** @deprecated use {@link #setSelectedChannelStatus(ChannelStatus)} (to be removed in IDEA 17) */
+  @SuppressWarnings("unused")
+  public void setUpdateChannelType(@NotNull String value) {
+    myState.UPDATE_CHANNEL_TYPE = value;
   }
 }

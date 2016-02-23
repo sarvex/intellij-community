@@ -26,6 +26,7 @@ import com.intellij.ui.tabs.UiDecorator;
 import com.intellij.ui.tabs.impl.JBEditorTabs;
 import com.intellij.ui.tabs.impl.JBTabsImpl;
 import com.intellij.ui.tabs.impl.TabLabel;
+import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -49,7 +50,7 @@ public class JBRunnerTabs extends JBEditorTabs {
 
   @Override
   public int getToolbarInset() {
-    return 1;
+    return 0;
   }
 
   @Override
@@ -72,12 +73,6 @@ public class JBRunnerTabs extends JBEditorTabs {
       bounds.height -= 5;
       return super.layout(c, bounds);
     }
-    if (c instanceof GridImpl) {
-      if (!isHideTabs()) {
-        bounds.y -= 1;
-        bounds.height += 1;
-      }
-    }
     return super.layout(c, bounds);
   }
 
@@ -93,6 +88,11 @@ public class JBRunnerTabs extends JBEditorTabs {
         break;
       }
     }
+  }
+
+  @Override
+  protected Color getEmptySpaceColor() {
+    return UIUtil.getBgFillColor(getParent());
   }
 
   @Override
@@ -129,7 +129,7 @@ public class JBRunnerTabs extends JBEditorTabs {
     @Override
     public Dimension getPreferredSize() {
       Dimension result = super.getPreferredSize();
-      result.height += myTabs.getActiveTabUnderlineHeight();
+      result.height += myTabs.getActiveTabUnderlineHeight() - 1;
       return result;
     }
   }

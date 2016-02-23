@@ -19,6 +19,7 @@ import com.intellij.lang.ASTNode;
 import com.intellij.openapi.util.Ref;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.stubs.IStubElementType;
+import com.intellij.util.ArrayUtil;
 import com.jetbrains.python.PyElementTypes;
 import com.jetbrains.python.PyTokenTypes;
 import com.jetbrains.python.PythonDialectsTokenSetProvider;
@@ -74,7 +75,7 @@ public class PyParameterListImpl extends PyBaseElementImpl<PyParameterListStub> 
           }
         }
       }
-      final ASTNode previous = PyUtil.getPreviousNonWhitespace(beforeWhat);
+      final ASTNode previous = PyPsiUtils.getPrevNonWhitespaceSibling(beforeWhat);
       PyUtil.addListNode(this, param, beforeWhat, !isLast || params.length == 0 ||
                                           previous.getElementType() == PyTokenTypes.COMMA, isLast,
                                           beforeWhat.getElementType() != PyTokenTypes.RPAR);
@@ -148,7 +149,15 @@ public class PyParameterListImpl extends PyBaseElementImpl<PyParameterListStub> 
   @Nullable
   @Override
   public PyFunction getContainingFunction() {
-    final PsiElement parent = getStubOrPsiParent();
+    final PsiElement parent = getParentByStub();
     return parent instanceof PyFunction ? (PyFunction) parent : null;
+  }
+
+  @Override
+  public void deleteChildInternal(@NotNull ASTNode node) {
+    if (ArrayUtil.contains(node.getPsi(), getParameters())) {
+      PyPsiUtils.deleteAdjacentCommaWithWhitespaces(this, node.getPsi());
+    }
+    super.deleteChildInternal(node);
   }
 }

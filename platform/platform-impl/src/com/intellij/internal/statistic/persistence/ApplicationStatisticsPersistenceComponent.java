@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,11 @@
 package com.intellij.internal.statistic.persistence;
 
 import com.intellij.ide.AppLifecycleListener;
-import com.intellij.internal.statistic.AbstractApplicationUsagesCollector;
 import com.intellij.internal.statistic.UsagesCollector;
 import com.intellij.internal.statistic.beans.GroupDescriptor;
 import com.intellij.internal.statistic.beans.UsageDescriptor;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.*;
-import com.intellij.openapi.extensions.Extensions;
-import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.project.ProjectManagerAdapter;
@@ -41,7 +38,7 @@ import java.util.Set;
 
 @State(
   name = "StatisticsApplicationUsages",
-  storages = {@Storage(file = StoragePathMacros.APP_CONFIG + "/statistics.application.usages.xml", roamingType = RoamingType.DISABLED)}
+  storages = @Storage(value = "statistics.application.usages.xml", roamingType = RoamingType.DISABLED)
 )
 public class ApplicationStatisticsPersistenceComponent extends ApplicationStatisticsPersistence
   implements ApplicationComponent, PersistentStateComponent<Element> {
@@ -164,7 +161,7 @@ public class ApplicationStatisticsPersistenceComponent extends ApplicationStatis
       public String fun(UsageDescriptor usageDescriptor) {
         final String key = usageDescriptor.getKey();
         final int value = usageDescriptor.getValue();
-        return value > 1 ? key + "=" + value : key;
+        return value != 1 ? key + "=" + value : key;
       }
     }, TOKENIZER);
   }
@@ -190,7 +187,7 @@ public class ApplicationStatisticsPersistenceComponent extends ApplicationStatis
       @Override
       public void projectClosing(Project project) {
         if (persistOnClosing && project != null) {
-          doPersistProjectUsages(project);
+          UsagesCollector.doPersistProjectUsages(project);
         }
       }
     });
@@ -210,23 +207,10 @@ public class ApplicationStatisticsPersistenceComponent extends ApplicationStatis
 
   private static void persistOpenedProjects() {
     for (Project project : ProjectManager.getInstance().getOpenProjects()) {
-      doPersistProjectUsages(project);
+      UsagesCollector.doPersistProjectUsages(project);
     }
   }
 
-  private static void doPersistProjectUsages(@NotNull Project project) {
-    synchronized (ApplicationStatisticsPersistenceComponent.class) {
-      if (!project.isInitialized() || DumbService.isDumb(project)) {
-        return;
-      }
-
-      for (UsagesCollector usagesCollector : Extensions.getExtensions(UsagesCollector.EP_NAME)) {
-        if (usagesCollector instanceof AbstractApplicationUsagesCollector) {
-          ((AbstractApplicationUsagesCollector)usagesCollector).persistProjectUsages(project);
-        }
-      }
-    }
-  }
 
   @Override
   public void disposeComponent() {

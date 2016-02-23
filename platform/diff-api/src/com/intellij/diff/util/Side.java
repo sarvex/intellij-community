@@ -35,8 +35,20 @@ public enum Side {
   }
 
   @NotNull
+  public static Side fromIndex(int index) {
+    if (index == 0) return LEFT;
+    if (index == 1) return RIGHT;
+    throw new IndexOutOfBoundsException("index: " + index);
+  }
+
+  @NotNull
   public static Side fromLeft(boolean isLeft) {
     return isLeft ? LEFT : RIGHT;
+  }
+
+  @NotNull
+  public static Side fromRight(boolean isRight) {
+    return isRight ? RIGHT : LEFT;
   }
 
   public int getIndex() {
@@ -74,6 +86,11 @@ public enum Side {
   @NotNull
   public <T> T selectNotNull(@NotNull T left, @NotNull T right) {
     return isLeft() ? left : right;
+  }
+
+  public boolean select(@NotNull boolean[] array) {
+    assert array.length == 2;
+    return array[myIndex];
   }
 
   public int select(@NotNull int[] array) {

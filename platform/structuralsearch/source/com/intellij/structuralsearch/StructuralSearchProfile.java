@@ -1,3 +1,18 @@
+/*
+ * Copyright 2000-2016 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.structuralsearch;
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
@@ -25,7 +40,6 @@ import com.intellij.structuralsearch.plugin.replace.impl.Replacer;
 import com.intellij.structuralsearch.plugin.ui.Configuration;
 import com.intellij.structuralsearch.plugin.ui.SearchContext;
 import com.intellij.structuralsearch.plugin.ui.UIUtil;
-import com.intellij.util.ArrayUtil;
 import com.intellij.util.LocalTimeCounter;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
@@ -62,13 +76,6 @@ public abstract class StructuralSearchProfile {
   }
 
   public abstract boolean isMyLanguage(@NotNull Language language);
-
-  public boolean isMyFile(PsiFile file, @NotNull Language language, Language... patternLanguages) {
-    if (isMyLanguage(language) && ArrayUtil.find(patternLanguages, language) >= 0) {
-      return true;
-    }
-    return false;
-  }
 
   @NotNull
   public PsiElement[] createPatternTree(@NotNull String text,
@@ -226,20 +233,16 @@ public abstract class StructuralSearchProfile {
                                 StringBuilder result,
                                 int offset,
                                 HashMap<String, MatchResult> matchMap) {
-    return defaultHandleSubstitution(info, match, result, offset);
-  }
-
-  public static int defaultHandleSubstitution(ParameterInfo info, MatchResult match, StringBuilder result, int offset) {
     if (info.getName().equals(match.getName())) {
       String replacementString = match.getMatchImage();
       boolean forceAddingNewLine = false;
-      if (match.getAllSons().size() > 0 && !match.isScopeMatch()) {
+      if (match.hasSons() && !match.isScopeMatch()) {
         // compound matches
         StringBuilder buf = new StringBuilder();
 
         for (final MatchResult matchResult : match.getAllSons()) {
           final PsiElement currentElement = matchResult.getMatch();
-          
+
           if (buf.length() > 0) {
             if (info.isArgumentContext()) {
               buf.append(',');
@@ -261,13 +264,21 @@ public abstract class StructuralSearchProfile {
       offset = Replacer.insertSubstitution(result, offset, info, replacementString);
       if (forceAddingNewLine && info.isStatementContext()) {
         result.insert(info.getStartIndex() + offset + 1, '\n');
-        offset ++;
+        offset++;
       }
     }
     return offset;
   }
 
-  public int processAdditionalOptions(ParameterInfo info, int offset, StringBuilder result, MatchResult r) {
+  public int handleNoSubstitution(ParameterInfo info, int offset, StringBuilder result) {
+    if (info.isHasCommaBefore()) {
+      result.delete(info.getBeforeDelimiterPos() + offset, info.getBeforeDelimiterPos() + 1 + offset);
+      --offset;
+    }
+    else if (info.isHasCommaAfter()) {
+      result.delete(info.getAfterDelimiterPos() + offset, info.getAfterDelimiterPos() + 1 + offset);
+      --offset;
+    }
     return offset;
   }
 
@@ -275,11 +286,17 @@ public abstract class StructuralSearchProfile {
     return false;
   }
 
+  @NotNull
   public Collection<String> getReservedWords() {
     return Collections.emptySet();
   }
 
   public boolean isDocCommentOwner(PsiElement match) {
     return false;
+  }
+
+  @NotNull
+  public PsiElement getPresentableElement(PsiElement element) {
+    return element;
   }
 }

@@ -22,6 +22,7 @@ import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.fileTypes.LanguageFileType;
 import com.intellij.openapi.fileTypes.impl.FileTypeRenderer;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.ui.DialogWrapper;
@@ -37,6 +38,7 @@ import com.intellij.psi.codeStyle.CodeStyleManager;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.SearchScope;
 import com.intellij.structuralsearch.*;
+import com.intellij.structuralsearch.impl.matcher.CompiledPattern;
 import com.intellij.structuralsearch.impl.matcher.MatcherImpl;
 import com.intellij.structuralsearch.plugin.StructuralSearchPlugin;
 import com.intellij.ui.ComboboxSpeedSearch;
@@ -108,7 +110,7 @@ public class SearchDialog extends DialogWrapper {
     if (showScope) setModal(false);
     myShowScopePanel = showScope;
     myRunFindActionOnClose = runFindActionOnClose;
-    this.searchContext = (SearchContext)searchContext.clone();
+    this.searchContext = searchContext;
     setTitle(getDefaultTitle());
 
     if (runFindActionOnClose) {
@@ -125,7 +127,7 @@ public class SearchDialog extends DialogWrapper {
     this.useLastConfiguration = useLastConfiguration;
   }
 
-  public void setSearchPattern(final Configuration config) {
+  private void setSearchPattern(final Configuration config) {
     model.setShadowConfig(config);
     setValuesFromConfig(config);
     initiateValidation();
@@ -190,6 +192,9 @@ public class SearchDialog extends DialogWrapper {
               });
             }
           });
+        }
+        catch (ProcessCanceledException e) {
+          throw e;
         }
         catch (RuntimeException e) {
           Logger.getInstance(SearchDialog.class).error(e);
@@ -617,7 +622,7 @@ public class SearchDialog extends DialogWrapper {
 
           if (name != null) {
             final Project project = searchContext.getProject();
-            final ConfigurationManager configurationManager = StructuralSearchPlugin.getInstance(project).getConfigurationManager();
+            final ConfigurationManager configurationManager = ConfigurationManager.getInstance(project);
             final Collection<Configuration> configurations = configurationManager.getConfigurations();
 
             if (configurations != null) {
@@ -626,26 +631,21 @@ public class SearchDialog extends DialogWrapper {
             }
 
             final Configuration configuration = model.getConfig();
+            model = new SearchModel(createConfiguration());
+            model.setShadowConfig(configuration);
             configuration.setName(name);
             setValuesToConfig(configuration);
             setDialogTitle(configuration);
 
-            if (model.getShadowConfig() == null || model.getShadowConfig().isPredefined()) {
-              filterOutUnusedVariableConstraints(configuration);
-              existingTemplatesComponent.addConfigurationToUserTemplates(configuration);
-            }
-            else {  // ???
-              setValuesToConfig(model.getShadowConfig());
-              model.getShadowConfig().setName(name);
-            }
+            filterOutUnusedVariableConstraints(configuration);
+            configurationManager.addConfiguration(configuration);
+            existingTemplatesComponent.setUserTemplates(configurationManager);
           }
         }
       })
     );
 
-    panel.add(
-      Box.createHorizontalStrut(8)
-    );
+    panel.add(Box.createHorizontalStrut(8));
 
     panel.add(
       createJButtonForAction(
@@ -659,7 +659,7 @@ public class SearchDialog extends DialogWrapper {
             EditVarConstraintsDialog.setProject(searchContext.getProject());
             new EditVarConstraintsDialog(
               searchContext.getProject(),
-              model, getVariablesFromListeners(),
+              model.getConfig(), getVariablesFromListeners(),
               (FileType)fileTypes.getSelectedItem()
             ).show();
             initiateValidation();
@@ -774,9 +774,7 @@ public class SearchDialog extends DialogWrapper {
       if (!setSomeText) {
         int selection = existingTemplatesComponent.getHistoryList().getSelectedIndex();
         if (selection != -1) {
-          setValuesFromConfig(
-            (Configuration)existingTemplatesComponent.getHistoryList().getSelectedValue()
-          );
+          setValuesFromConfig((Configuration)existingTemplatesComponent.getHistoryList().getSelectedValue());
         }
       }
     }
@@ -838,6 +836,7 @@ public class SearchDialog extends DialogWrapper {
       variableNames.add(variable.getName());
     }
     variableNames.add(Configuration.CONTEXT_VAR_NAME);
+    variableNames.add(CompiledPattern.ALL_CLASS_UNMATCHED_CONTENT_VAR_ARTIFICIAL_NAME);
     configuration.getMatchOptions().retainVariableConstraints(variableNames);
   }
 

@@ -5,7 +5,10 @@ import com.intellij.codeInsight.CodeInsightSettings;
 import com.intellij.codeInsight.lookup.Lookup;
 import com.intellij.codeInsight.lookup.LookupElement;
 import com.intellij.codeInsight.lookup.LookupElementPresentation;
-import com.intellij.codeInsight.template.*;
+import com.intellij.codeInsight.template.SmartCompletionContextType;
+import com.intellij.codeInsight.template.Template;
+import com.intellij.codeInsight.template.TemplateContextType;
+import com.intellij.codeInsight.template.TemplateManager;
 import com.intellij.codeInsight.template.impl.TemplateImpl;
 import com.intellij.lang.java.JavaLanguage;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
@@ -13,6 +16,7 @@ import com.intellij.openapi.util.Condition;
 import com.intellij.psi.codeStyle.CodeStyleSettings;
 import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
 import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
+import com.intellij.testFramework.fixtures.CodeInsightTestUtil;
 import com.intellij.util.containers.ContainerUtil;
 
 public class SmartTypeCompletionTest extends LightFixtureCompletionTestCase {
@@ -424,6 +428,8 @@ public class SmartTypeCompletionTest extends LightFixtureCompletionTestCase {
 
   public void testJavadocThrows() throws Throwable { doTest(); }
 
+  public void testMethodThrows() throws Throwable { doTest(); }
+
   public void testDoNotExcludeAssignedVariable() throws Throwable { doTest(); }
 
   public void testArrayIndexTailType() throws Throwable { doTest(); }
@@ -648,7 +654,7 @@ public class SmartTypeCompletionTest extends LightFixtureCompletionTestCase {
     final SmartCompletionContextType completionContextType =
       ContainerUtil.findInstance(TemplateContextType.EP_NAME.getExtensions(), SmartCompletionContextType.class);
     ((TemplateImpl)template).getTemplateContext().setEnabled(completionContextType, true);
-    LiveTemplateTest.addTemplate(template, myTestRootDisposable);
+    CodeInsightTestUtil.addTemplate(template, myTestRootDisposable);
     doTest();
   }
 
@@ -718,6 +724,7 @@ public class SmartTypeCompletionTest extends LightFixtureCompletionTestCase {
 
   public void testMethodColon() throws Exception { doFirstItemTest(':'); }
   public void testVariableColon() throws Exception { doFirstItemTest(':'); }
+  public void testConditionalColonOnNextLine() { doFirstItemTest(':'); }
 
   private void doFirstItemTest(char c) {
     configureByTestName();
@@ -905,6 +912,7 @@ public class SmartTypeCompletionTest extends LightFixtureCompletionTestCase {
   public void testTypeArgs2() throws Exception {
     doTest();
   }
+  public void testTypeArgsOverwrite() { doTest(); }
 
   public void testIfConditionExpectedType() throws Exception { doTest(); }
 
@@ -1144,7 +1152,18 @@ public class SmartTypeCompletionTest extends LightFixtureCompletionTestCase {
     doFirstItemTest('\t');
   }
 
+  public void testSuggestMethodReturnType() { 
+    configureByTestName();
+    myFixture.assertPreferredCompletionItems(0, "Serializable", "CharSequence", "Object");
+  }
+
+  public void testSuggestCastReturnTypeByCalledMethod() { doTest(); }
+
+  public void testOnlyInterfacesInImplements() { doTest(); }
+
   public void testNonStaticField() throws Exception { doAntiTest(); }
+
+  public void testLocalClassInExpectedTypeArguments() { doTest(); }
 
   private void doActionTest() throws Exception {
     configureByTestName();

@@ -17,27 +17,20 @@ package org.jetbrains.plugins.gradle;
 
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.SimpleJavaParameters;
-import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.externalSystem.ExternalSystemAutoImportAware;
 import com.intellij.openapi.externalSystem.ExternalSystemConfigurableAware;
 import com.intellij.openapi.externalSystem.ExternalSystemManager;
 import com.intellij.openapi.externalSystem.ExternalSystemUiAware;
-import com.intellij.openapi.externalSystem.model.DataNode;
 import com.intellij.openapi.externalSystem.model.ProjectSystemId;
 import com.intellij.openapi.externalSystem.model.execution.ExternalSystemTaskExecutionSettings;
 import com.intellij.openapi.externalSystem.model.execution.ExternalTaskExecutionInfo;
 import com.intellij.openapi.externalSystem.model.execution.ExternalTaskPojo;
 import com.intellij.openapi.externalSystem.model.project.ExternalProjectPojo;
-import com.intellij.openapi.externalSystem.model.project.ProjectData;
-import com.intellij.openapi.externalSystem.service.execution.ProgressExecutionMode;
-import com.intellij.openapi.externalSystem.service.project.ExternalProjectRefreshCallback;
 import com.intellij.openapi.externalSystem.service.project.ExternalSystemProjectResolver;
 import com.intellij.openapi.externalSystem.service.project.autoimport.CachingExternalSystemAutoImportAware;
-import com.intellij.openapi.externalSystem.service.project.manage.ProjectDataManager;
 import com.intellij.openapi.externalSystem.service.ui.DefaultExternalSystemUiAware;
 import com.intellij.openapi.externalSystem.task.ExternalSystemTaskManager;
-import com.intellij.openapi.externalSystem.util.DisposeAwareProjectChange;
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import com.intellij.openapi.externalSystem.util.ExternalSystemConstants;
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil;
@@ -45,7 +38,6 @@ import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.projectRoots.Sdk;
-import com.intellij.openapi.roots.ex.ProjectRootManagerEx;
 import com.intellij.openapi.startup.StartupActivity;
 import com.intellij.openapi.util.AtomicNotNullLazyValue;
 import com.intellij.openapi.util.NotNullLazyValue;
@@ -148,8 +140,9 @@ public class GradleManager
 
       @Override
       public GradleExecutionSettings fun(Pair<Project, String> pair) {
-        GradleSettings settings = GradleSettings.getInstance(pair.first);
-        File gradleHome = myInstallationManager.getGradleHome(pair.first, pair.second);
+        final Project project = pair.first;
+        GradleSettings settings = GradleSettings.getInstance(project);
+        File gradleHome = myInstallationManager.getGradleHome(project, pair.second);
         String localGradlePath = null;
         if (gradleHome != null) {
           try {
@@ -182,12 +175,13 @@ public class GradleManager
           result.addResolverExtensionClass(ClassHolder.from(extension.getClass()));
         }
 
-        final Sdk gradleJdk = myInstallationManager.getGradleJdk(pair.first, pair.second);
+        final Sdk gradleJdk = myInstallationManager.getGradleJdk(project, pair.second);
         final String javaHome = gradleJdk != null ? gradleJdk.getHomePath() : null;
         if (!StringUtil.isEmpty(javaHome)) {
           LOG.info("Instructing gradle to use java from " + javaHome);
         }
         result.setJavaHome(javaHome);
+        result.setIdeProjectPath(project.getBasePath() == null ? pair.second : project.getBasePath());
         return result;
       }
     };
@@ -289,38 +283,6 @@ public class GradleManager
       @Override
       public void onGradleDistributionTypeChange(DistributionType currentValue, @NotNull String linkedProjectPath) {
         ensureProjectsRefresh();
-      }
-
-      @Override
-      public void onProjectsLinked(@NotNull Collection<GradleProjectSettings> settings) {
-        final ProjectDataManager projectDataManager = ServiceManager.getService(ProjectDataManager.class);
-        for (GradleProjectSettings gradleProjectSettings : settings) {
-          ExternalSystemUtil.refreshProject(
-            project, GradleConstants.SYSTEM_ID, gradleProjectSettings.getExternalProjectPath(),
-            new ExternalProjectRefreshCallback() {
-              @Override
-              public void onSuccess(@Nullable final DataNode<ProjectData> externalProject) {
-                if (externalProject == null) {
-                  return;
-                }
-                ExternalSystemApiUtil.executeProjectChangeAction(true, new DisposeAwareProjectChange(project) {
-                  @Override
-                  public void execute() {
-                    ProjectRootManagerEx.getInstanceEx(project).mergeRootsChangesDuring(new Runnable() {
-                      @Override
-                      public void run() {
-                        projectDataManager.importData(externalProject.getKey(), Collections.singleton(externalProject), project, true);
-                      }
-                    });
-                  }
-                });
-              }
-
-              @Override
-              public void onFailure(@NotNull String errorMessage, @Nullable String errorDetails) {
-              }
-            }, false, ProgressExecutionMode.MODAL_SYNC);
-        }
       }
 
       private void ensureProjectsRefresh() {

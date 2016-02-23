@@ -101,4 +101,12 @@ public class FindMethodDuplicatesMiscTest extends FindMethodDuplicatesBaseTest {
   public void testAnonymousInitializer() throws Exception {
     doTest();
   }
+
+  public void testReplaceDuplicateInsideAnonymous() throws Exception {
+    doTest();
+  }
+
+  public void testMakeStaticWhenUsedInInheritor() throws Exception {
+    doTest();
+  }
 }

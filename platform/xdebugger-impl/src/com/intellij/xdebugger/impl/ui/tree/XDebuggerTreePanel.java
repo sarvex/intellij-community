@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,11 +24,11 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Pair;
 import com.intellij.ui.ScrollPaneFactory;
-import com.intellij.ui.treeStructure.Tree;
 import com.intellij.xdebugger.XDebuggerBundle;
 import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider;
 import com.intellij.xdebugger.impl.frame.XValueMarkers;
+import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -51,6 +51,12 @@ public class XDebuggerTreePanel implements DnDSource {
     myMainPanel = new JPanel(new BorderLayout());
     myMainPanel.add(ScrollPaneFactory.createScrollPane(myTree), BorderLayout.CENTER);
     Disposer.register(parentDisposable, myTree);
+    Disposer.register(parentDisposable, new Disposable() {
+      @Override
+      public void dispose() {
+        myMainPanel.removeAll();
+      }
+    });
   }
 
   public XDebuggerTree getTree() {
@@ -67,12 +73,7 @@ public class XDebuggerTreePanel implements DnDSource {
   }
 
   private XValueNodeImpl[] getNodesToDrag() {
-    return myTree.getSelectedNodes(XValueNodeImpl.class, new Tree.NodeFilter<XValueNodeImpl>() {
-      @Override
-      public boolean accept(final XValueNodeImpl node) {
-        return node.getValueContainer().getEvaluationExpression() != null;
-      }
-    });
+    return myTree.getSelectedNodes(XValueNodeImpl.class, node -> DebuggerUIUtil.hasEvaluationExpression(node.getValueContainer()));
   }
 
   @Override

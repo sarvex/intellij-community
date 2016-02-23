@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.patterns.StringPattern;
 import com.intellij.psi.*;
 import com.intellij.psi.search.SearchScope;
 import com.intellij.psi.tree.IElementType;
@@ -65,6 +66,7 @@ import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.Predicate;
 import com.intellij.util.messages.MessageBus;
 import com.intellij.util.text.CharArrayUtil;
+import com.intellij.util.text.ImmutableCharSequence;
 import com.intellij.util.text.StringSearcher;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
@@ -239,10 +241,9 @@ public class FindManagerImpl extends FindManager {
   public FindModel getFindNextModel(@NotNull final Editor editor) {
     if (myFindNextModel == null) return null;
 
-    final JComponent header = editor.getHeaderComponent();
-    if (header instanceof EditorSearchComponent && !isSelectNextOccurrenceWasPerformed) {
-      final EditorSearchComponent searchComponent = (EditorSearchComponent)header;
-      final String textInField = searchComponent.getTextInField();
+    EditorSearchSession search = EditorSearchSession.get(editor);
+    if (search != null && !isSelectNextOccurrenceWasPerformed) {
+      String textInField = search.getTextInField();
       if (!Comparing.equal(textInField, myFindInFileModel.getStringToFind()) && !textInField.isEmpty()) {
         FindModel patched = new FindModel();
         patched.copyFrom(myFindNextModel);
@@ -303,10 +304,12 @@ public class FindManagerImpl extends FindManager {
     private final VirtualFile myFile;
     private final FindModel myFindModel;
     private final TreeMap<Integer, Integer> mySkipRangesSet;
+    private final CharSequence myText;
 
     private FindExceptCommentsOrLiteralsData(VirtualFile file, FindModel model, CharSequence text) {
       myFile = file;
       myFindModel = model.clone();
+      myText = ImmutableCharSequence.asImmutable(text);
 
       TreeMap<Integer, Integer> result = new TreeMap<Integer, Integer>();
 
@@ -340,8 +343,11 @@ public class FindManagerImpl extends FindManager {
       }
     }
 
-    boolean isAcceptableFor(FindModel model, VirtualFile file) {
-      return Comparing.equal(myFile, file) && myFindModel.equals(model);
+    boolean isAcceptableFor(FindModel model, VirtualFile file, CharSequence text) {
+      return Comparing.equal(myFile, file) &&
+             myFindModel.equals(model) &&
+             myText.length() == text.length()
+        ;
     }
 
     @Override
@@ -367,7 +373,7 @@ public class FindManagerImpl extends FindManager {
     }
 
     FindExceptCommentsOrLiteralsData data = model.getUserData(ourExceptCommentsOrLiteralsDataKey);
-    if (data == null || !data.isAcceptableFor(model, file)) {
+    if (data == null || !data.isAcceptableFor(model, file, text)) {
       model.putUserData(ourExceptCommentsOrLiteralsDataKey, data = new FindExceptCommentsOrLiteralsData(file, model, text));
     }
 
@@ -390,14 +396,32 @@ public class FindManagerImpl extends FindManager {
   }
 
   private static boolean isWholeWord(CharSequence text, int startOffset, int endOffset) {
-    boolean isWordStart = startOffset == 0 ||
-                          !Character.isJavaIdentifierPart(text.charAt(startOffset - 1)) ||
-                          !Character.isJavaIdentifierPart(text.charAt(startOffset)) ||
-                          startOffset > 1 && text.charAt(startOffset - 2) == '\\';
+    boolean isWordStart;
 
-    boolean isWordEnd = endOffset == text.length() ||
-                        !Character.isJavaIdentifierPart(text.charAt(endOffset)) ||
-                        endOffset > 0 && !Character.isJavaIdentifierPart(text.charAt(endOffset - 1));
+    if (startOffset != 0) {
+      boolean previousCharacterIsIdentifier = Character.isJavaIdentifierPart(text.charAt(startOffset - 1)) &&
+                                              (startOffset <= 1 || text.charAt(startOffset - 2) != '\\');
+      boolean previousCharacterIsSameAsNext = text.charAt(startOffset - 1) == text.charAt(startOffset);
+
+      boolean firstCharacterIsIdentifier = Character.isJavaIdentifierPart(text.charAt(startOffset));
+      isWordStart = !firstCharacterIsIdentifier && !previousCharacterIsSameAsNext ||
+                    firstCharacterIsIdentifier && !previousCharacterIsIdentifier;
+    } else {
+      isWordStart = true;
+    }
+
+    boolean isWordEnd;
+
+    if (endOffset != text.length()) {
+      boolean nextCharacterIsIdentifier = Character.isJavaIdentifierPart(text.charAt(endOffset));
+      boolean nextCharacterIsSameAsPrevious = endOffset > 0 && text.charAt(endOffset) == text.charAt(endOffset - 1);
+      boolean lastSearchedCharacterIsIdentifier = endOffset  > 0 && Character.isJavaIdentifierPart(text.charAt(endOffset - 1));
+
+      isWordEnd = lastSearchedCharacterIsIdentifier && !nextCharacterIsIdentifier ||
+                  !lastSearchedCharacterIsIdentifier && !nextCharacterIsSameAsPrevious;
+    } else {
+      isWordEnd = true;
+    }
 
     return isWordStart && isWordEnd;
   }
@@ -626,7 +650,7 @@ public class FindManagerImpl extends FindManager {
               }
             }
           } else {
-            data.matcher.reset(text.subSequence(start, end));
+            data.matcher.reset(StringPattern.newBombedCharSequence(text.subSequence(start, end)));
             if (data.matcher.find()) {
               final int matchEnd = start + data.matcher.end();
               int matchStart = start + data.matcher.start();
@@ -716,19 +740,9 @@ public class FindManagerImpl extends FindManager {
 
   private static Matcher compileRegExp(FindModel model, CharSequence text) {
     Pattern pattern = model.compileRegExp();
-    return pattern == null ? null : pattern.matcher(text);
-  }
-
-  @Override
-  public String getStringToReplace(@NotNull String foundString, @NotNull FindModel model) throws MalformedReplacementStringException {
-    String toReplace = model.getStringToReplace();
-    if (model.isRegularExpressions()) {
-      return getStringToReplaceByRegexp0(foundString, model);
-    }
-    if (model.isPreserveCase()) {
-      return replaceWithCaseRespect (toReplace, foundString);
-    }
-    return toReplace;
+    return pattern == null ?
+           null :
+           pattern.matcher( StringPattern.newBombedCharSequence(text) );
   }
 
   @Override
@@ -750,13 +764,10 @@ public class FindManagerImpl extends FindManager {
   }
 
   private static String getStringToReplaceByRegexp(@NotNull final FindModel model, Matcher matcher) throws MalformedReplacementStringException{
-    StringBuffer replaced = new StringBuffer();
     if (matcher == null) return null;
     try {
-      String toReplace = StringUtil.unescapeStringCharacters(model.getStringToReplace());
-      matcher.appendReplacement(replaced, toReplace);
-
-      return replaced.substring(matcher.start());
+      String toReplace = model.getStringToReplace();
+      return new RegExReplacementBuilder(matcher).createReplacement(toReplace);
     }
     catch (Exception e) {
       throw createMalformedReplacementException(model, e);
@@ -832,6 +843,7 @@ public class FindManagerImpl extends FindManager {
     else {
       buffer.append(Character.toLowerCase(toReplace.charAt(0)));
     }
+
     if (toReplace.length() == 1) return buffer.toString();
 
     if (foundString.length() == 1) {
@@ -839,18 +851,30 @@ public class FindManagerImpl extends FindManager {
       return buffer.toString();
     }
 
+    boolean isReplacementLowercase = true;
+    boolean isReplacementUppercase = true;
+    for (int i = 1; i < toReplace.length(); i++) {
+      char replacementChar = toReplace.charAt(i);
+      if (!Character.isLetter(replacementChar)) continue;
+      isReplacementLowercase &= Character.isLowerCase(replacementChar);
+      isReplacementUppercase &= Character.isUpperCase(replacementChar);
+      if (!isReplacementLowercase && !isReplacementUppercase) break;
+    }
+
     boolean isTailUpper = true;
     boolean isTailLower = true;
     for (int i = 1; i < foundString.length(); i++) {
-      isTailUpper &= Character.isUpperCase(foundString.charAt(i));
-      isTailLower &= Character.isLowerCase(foundString.charAt(i));
+      char foundChar = foundString.charAt(i);
+      if (!Character.isLetter(foundChar)) continue;
+      isTailUpper &= Character.isUpperCase(foundChar);
+      isTailLower &= Character.isLowerCase(foundChar);
       if (!isTailUpper && !isTailLower) break;
     }
 
-    if (isTailUpper) {
+    if (isTailUpper && (isReplacementLowercase || isReplacementUppercase)) {
       buffer.append(StringUtil.toUpperCase(toReplace.substring(1)));
     }
-    else if (isTailLower) {
+    else if (isTailLower && (isReplacementLowercase || isReplacementUppercase)) {
       buffer.append(toReplace.substring(1).toLowerCase());
     }
     else {
@@ -902,16 +926,15 @@ public class FindManagerImpl extends FindManager {
   }
 
   private static boolean tryToFindNextUsageViaEditorSearchComponent(Editor editor, SearchResults.Direction forwardOrBackward) {
-    if (editor.getHeaderComponent() instanceof EditorSearchComponent) {
-      EditorSearchComponent searchComponent = (EditorSearchComponent)editor.getHeaderComponent();
-      if (searchComponent.hasMatches()) {
-        if (forwardOrBackward == SearchResults.Direction.UP) {
-          searchComponent.searchBackward();
-        } else {
-          searchComponent.searchForward();
-        }
-        return true;
+    EditorSearchSession search = EditorSearchSession.get(editor);
+    if (search != null && search.hasMatches()) {
+      if (forwardOrBackward == SearchResults.Direction.UP) {
+        search.searchBackward();
       }
+      else {
+        search.searchForward();
+      }
+      return true;
     }
     return false;
   }
@@ -925,6 +948,7 @@ public class FindManagerImpl extends FindManager {
     if (fileEditor instanceof TextEditor) {
       TextEditor textEditor = (TextEditor)fileEditor;
       Editor editor = textEditor.getEditor();
+      editor.getCaretModel().removeSecondaryCarets();
       if (tryToFindNextUsageViaEditorSearchComponent(editor, direction)) {
         return true;
       }

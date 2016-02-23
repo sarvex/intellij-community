@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.intellij.openapi.options.ex.SortedConfigurableGroup;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.ActionCallback;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.ui.*;
 import com.intellij.ui.components.GradientViewport;
 import com.intellij.ui.treeStructure.CachingSimpleNode;
@@ -33,10 +34,7 @@ import com.intellij.ui.treeStructure.SimpleTreeStructure;
 import com.intellij.ui.treeStructure.filtered.FilteringTreeBuilder;
 import com.intellij.ui.treeStructure.filtered.FilteringTreeStructure;
 import com.intellij.util.ArrayUtil;
-import com.intellij.util.ui.ButtonlessScrollBarUI;
-import com.intellij.util.ui.GraphicsUtil;
-import com.intellij.util.ui.TextTransferable;
-import com.intellij.util.ui.UIUtil;
+import com.intellij.util.ui.*;
 import com.intellij.util.ui.tree.TreeUtil;
 import com.intellij.util.ui.tree.WideSelectionTreeUI;
 import com.intellij.util.ui.update.MergingUpdateQueue;
@@ -44,6 +42,9 @@ import com.intellij.util.ui.update.Update;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.accessibility.Accessible;
+import javax.accessibility.AccessibleContext;
+import javax.accessibility.AccessibleRole;
 import javax.swing.*;
 import javax.swing.event.TreeExpansionEvent;
 import javax.swing.event.TreeExpansionListener;
@@ -68,7 +69,7 @@ import java.util.List;
 /**
  * @author Sergey.Malenkov
  */
-final class SettingsTreeView extends JComponent implements Disposable, OptionsEditorColleague {
+final class SettingsTreeView extends JComponent implements Accessible, Disposable, OptionsEditorColleague {
   private static final int ICON_GAP = 5;
   private static final String NODE_ICON = "settings.tree.view.icon";
   private static final Color WRONG_CONTENT = JBColor.RED;
@@ -130,7 +131,7 @@ final class SettingsTreeView extends JComponent implements Disposable, OptionsEd
     });
 
     myScroller = ScrollPaneFactory.createScrollPane(null, true);
-    myScroller.setViewport(new GradientViewport(myTree, 5, 0, 0, 0, true) {
+    myScroller.setViewport(new GradientViewport(myTree, JBUI.insetsTop(5), true) {
       private JLabel myHeader;
 
       @Override
@@ -155,10 +156,14 @@ final class SettingsTreeView extends JComponent implements Disposable, OptionsEd
         return myHeader;
       }
     });
-    myScroller.getVerticalScrollBar().setUI(ButtonlessScrollBarUI.createTransparent());
-    myScroller.setBackground(UIUtil.SIDE_PANEL_BACKGROUND);
-    myScroller.getViewport().setBackground(UIUtil.SIDE_PANEL_BACKGROUND);
-    myScroller.getVerticalScrollBar().setBackground(UIUtil.SIDE_PANEL_BACKGROUND);
+    if (!Registry.is("ide.scroll.new.layout")) {
+      myScroller.getVerticalScrollBar().setUI(ButtonlessScrollBarUI.createTransparent());
+    }
+    if (!Registry.is("ide.scroll.background.auto")) {
+      myScroller.setBackground(UIUtil.SIDE_PANEL_BACKGROUND);
+      myScroller.getViewport().setBackground(UIUtil.SIDE_PANEL_BACKGROUND);
+      myScroller.getVerticalScrollBar().setBackground(UIUtil.SIDE_PANEL_BACKGROUND);
+    }
     add(myScroller);
 
     myTree.addComponentListener(new ComponentAdapter() {
@@ -328,7 +333,7 @@ final class SettingsTreeView extends JComponent implements Disposable, OptionsEd
 
   ActionCallback select(@Nullable final Configurable configurable) {
     if (myBuilder.isSelectionBeingAdjusted()) {
-      return new ActionCallback.Rejected();
+      return ActionCallback.REJECTED;
     }
     final ActionCallback callback = new ActionCallback();
     myQueuedConfigurable = configurable;
@@ -395,18 +400,18 @@ final class SettingsTreeView extends JComponent implements Disposable, OptionsEd
   @Override
   public ActionCallback onModifiedAdded(Configurable configurable) {
     myTree.repaint();
-    return new ActionCallback.Done();
+    return ActionCallback.DONE;
   }
 
   @Override
   public ActionCallback onModifiedRemoved(Configurable configurable) {
     myTree.repaint();
-    return new ActionCallback.Done();
+    return ActionCallback.DONE;
   }
 
   @Override
   public ActionCallback onErrorsChanged() {
-    return new ActionCallback.Done();
+    return ActionCallback.DONE;
   }
 
   private final class MyRoot extends CachingSimpleNode {
@@ -489,6 +494,23 @@ final class SettingsTreeView extends JComponent implements Disposable, OptionsEd
       setBorder(BorderFactory.createEmptyBorder(1, 10, 3, 10));
     }
 
+    @Override
+    public AccessibleContext getAccessibleContext() {
+      if (accessibleContext == null) {
+        accessibleContext = new MyAccessibleContext();
+      }
+      return accessibleContext;
+    }
+
+    // TODO: consider making MyRenderer a subclass of SimpleColoredComponent.
+    // This should eliminate the need to add this accessibility stuff.
+    private class MyAccessibleContext extends JPanel.AccessibleJPanel {
+      @Override
+      public String getAccessibleName() {
+        return myTextLabel.getText();
+      }
+    }
+
     public Component getTreeCellRendererComponent(JTree tree,
                                                   Object value,
                                                   boolean selected,
@@ -558,12 +580,12 @@ final class SettingsTreeView extends JComponent implements Disposable, OptionsEd
       }
       // configure node icon
       Icon nodeIcon = null;
-      if (node != null) {
-        if (0 == node.getChildCount()) {
+      if (value instanceof DefaultMutableTreeNode) {
+        DefaultMutableTreeNode treeNode = (DefaultMutableTreeNode)value;
+        if (0 == treeNode.getChildCount()) {
           nodeIcon = myTree.getEmptyHandle();
         }
-        else if (value instanceof DefaultMutableTreeNode) {
-          DefaultMutableTreeNode treeNode = (DefaultMutableTreeNode)value;
+        else {
           nodeIcon = myTree.isExpanded(new TreePath(treeNode.getPath()))
                      ? myTree.getExpandedHandle()
                      : myTree.getCollapsedHandle();
@@ -742,7 +764,7 @@ final class SettingsTreeView extends JComponent implements Disposable, OptionsEd
         Container parent = tree.getParent();
         if (parent instanceof JViewport) {
           JViewport viewport = (JViewport)parent;
-          bounds.width = viewport.getWidth() - viewport.getViewPosition().x;
+          bounds.width = viewport.getWidth() - viewport.getViewPosition().x - insets.right / 2;
         }
         bounds.width -= bounds.x;
       }
@@ -848,6 +870,21 @@ final class SettingsTreeView extends JComponent implements Disposable, OptionsEd
       for (TreePath each : toCollapse) {
         myTree.collapsePath(each);
       }
+    }
+  }
+
+  @Override
+  public AccessibleContext getAccessibleContext() {
+    if (accessibleContext == null) {
+      accessibleContext = new AccessibleSettingsTreeView();
+    }
+    return accessibleContext;
+  }
+
+  protected class AccessibleSettingsTreeView extends AccessibleJComponent {
+    @Override
+    public AccessibleRole getAccessibleRole() {
+      return AccessibleRole.PANEL;
     }
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,16 @@ package com.intellij.debugger.ui.impl.watch;
 
 import com.intellij.debugger.DebuggerBundle;
 import com.intellij.debugger.DebuggerContext;
+import com.intellij.debugger.DebuggerManagerEx;
 import com.intellij.debugger.engine.DebuggerUtils;
+import com.intellij.debugger.engine.JavaValue;
+import com.intellij.debugger.engine.JavaValueModifier;
 import com.intellij.debugger.engine.evaluation.EvaluateException;
 import com.intellij.debugger.engine.evaluation.EvaluationContextImpl;
+import com.intellij.debugger.impl.DebuggerContextImpl;
 import com.intellij.debugger.impl.PositionUtil;
 import com.intellij.debugger.jdi.LocalVariableProxyImpl;
 import com.intellij.debugger.jdi.StackFrameProxyImpl;
-import com.intellij.debugger.settings.NodeRendererSettings;
 import com.intellij.debugger.ui.tree.LocalVariableDescriptor;
 import com.intellij.debugger.ui.tree.NodeDescriptor;
 import com.intellij.openapi.project.Project;
@@ -31,8 +34,10 @@ import com.intellij.psi.JavaPsiFacade;
 import com.intellij.psi.PsiElementFactory;
 import com.intellij.psi.PsiExpression;
 import com.intellij.util.IncorrectOperationException;
-import com.sun.jdi.Value;
+import com.intellij.xdebugger.frame.XValueModifier;
+import com.sun.jdi.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class LocalVariableDescriptorImpl extends ValueDescriptorImpl implements LocalVariableDescriptor {
   private final StackFrameProxyImpl myFrameProxy;
@@ -95,12 +100,10 @@ public class LocalVariableDescriptorImpl extends ValueDescriptorImpl implements 
     return myLocalVariable.name();
   }
 
+  @Nullable
   @Override
-  public String calcValueName() {
-    if (NodeRendererSettings.getInstance().getClassRenderer().SHOW_DECLARED_TYPE) {
-      return addDeclaredType(myTypeName);
-    }
-    return super.calcValueName();
+  public String getDeclaredType() {
+    return myTypeName;
   }
 
   @Override
@@ -112,5 +115,35 @@ public class LocalVariableDescriptorImpl extends ValueDescriptorImpl implements 
     catch (IncorrectOperationException e) {
       throw new EvaluateException(DebuggerBundle.message("error.invalid.local.variable.name", getName()), e);
     }
+  }
+
+  @Override
+  public XValueModifier getModifier(JavaValue value) {
+    return new JavaValueModifier(value) {
+      @Override
+      protected void setValueImpl(@NotNull String expression, @NotNull XModificationCallback callback) {
+        final LocalVariableProxyImpl local = LocalVariableDescriptorImpl.this.getLocalVariable();
+        if (local != null) {
+          final DebuggerContextImpl debuggerContext = DebuggerManagerEx.getInstanceEx(getProject()).getContext();
+          set(expression, callback, debuggerContext, new SetValueRunnable() {
+            public void setValue(EvaluationContextImpl evaluationContext, Value newValue) throws ClassNotLoadedException,
+                                                                                                 InvalidTypeException,
+                                                                                                 EvaluateException {
+              debuggerContext.getFrameProxy().setValue(local, preprocessValue(evaluationContext, newValue, local.getType()));
+              update(debuggerContext);
+            }
+
+            public ReferenceType loadClass(EvaluationContextImpl evaluationContext, String className) throws InvocationException,
+                                                                                                             ClassNotLoadedException,
+                                                                                                             IncompatibleThreadStateException,
+                                                                                                             InvalidTypeException,
+                                                                                                             EvaluateException {
+              return evaluationContext.getDebugProcess().loadClass(evaluationContext, className,
+                                                                   evaluationContext.getClassLoader());
+            }
+          });
+        }
+      }
+    };
   }
 }

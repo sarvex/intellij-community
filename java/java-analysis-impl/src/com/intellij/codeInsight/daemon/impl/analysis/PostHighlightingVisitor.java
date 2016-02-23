@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,12 +56,14 @@ import com.intellij.psi.search.searches.SuperMethodsSearch;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.util.Processor;
+import com.intellij.util.containers.ConcurrentFactoryMap;
 import com.intellij.util.containers.Predicate;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.PropertyKey;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 class PostHighlightingVisitor {
@@ -71,7 +73,6 @@ class PostHighlightingVisitor {
   @NotNull private final Project myProject;
   private final PsiFile myFile;
   @NotNull private final Document myDocument;
-  @NotNull private final HighlightingSession myHighlightingSession;
 
   private boolean myHasRedundantImports;
   private int myCurrentEntryIndex;
@@ -92,30 +93,27 @@ class PostHighlightingVisitor {
           ApplicationManager.getApplication().invokeLater(new Runnable() {
             @Override
             public void run() {
-              if (myProject.isDisposed() || !myFile.isValid()) return;
+              if (myProject.isDisposed() || !myFile.isValid() || !myFile.isWritable()) return;
               IntentionAction optimizeImportsFix = QuickFixFactory.getInstance().createOptimizeImportsFix(true);
-              if (optimizeImportsFix.isAvailable(myProject, null, myFile) && myFile.isWritable()) {
+              if (optimizeImportsFix.isAvailable(myProject, null, myFile)) {
                 optimizeImportsFix.invoke(myProject, null, myFile);
               }
             }
           });
         }
       };
-      Disposer.register(myHighlightingSession, invokeFixLater);
+      Disposer.register((DaemonProgressIndicator)progress, invokeFixLater);
       if (progress.isCanceled()) {
         Disposer.dispose(invokeFixLater);
-        Disposer.dispose(myHighlightingSession);
+        Disposer.dispose((DaemonProgressIndicator)progress);
         progress.checkCanceled();
       }
     }
   }
 
-  // returns true if error highlight was created
-  public PostHighlightingVisitor(@NotNull PsiFile file,
-                                 @NotNull Document document,
-                                 @NotNull RefCountHolder refCountHolder,
-                                 @NotNull HighlightingSession highlightingSession) throws ProcessCanceledException {
-    myHighlightingSession = highlightingSession;
+  PostHighlightingVisitor(@NotNull PsiFile file,
+                          @NotNull Document document,
+                          @NotNull RefCountHolder refCountHolder) throws ProcessCanceledException {
     myProject = file.getProject();
     myFile = file;
     myDocument = document;
@@ -149,9 +147,9 @@ class PostHighlightingVisitor {
                                                                        HighlightInfoType.UNUSED_SYMBOL.getAttributesKey());
   }
 
-  public void collectHighlights(@NotNull PsiFile file,
-                                @NotNull HighlightInfoHolder result,
-                                @NotNull ProgressIndicator progress) {
+  void collectHighlights(@NotNull PsiFile file,
+                         @NotNull HighlightInfoHolder result,
+                         @NotNull ProgressIndicator progress) {
     DaemonCodeAnalyzerEx daemonCodeAnalyzer = DaemonCodeAnalyzerEx.getInstanceEx(myProject);
     FileStatusMap fileStatusMap = daemonCodeAnalyzer.getFileStatusMap();
     InspectionProfile profile = InspectionProjectProfileManager.getInstance(myProject).getInspectionProfile();
@@ -372,9 +370,17 @@ class PostHighlightingVisitor {
     return highlightInfo;
   }
 
-  private static boolean isOverriddenOrOverrides(PsiMethod method) {
-    boolean overrides = SuperMethodsSearch.search(method, null, true, false).findFirst() != null;
-    return overrides || OverridingMethodsSearch.search(method).findFirst() != null;
+  private final Map<PsiMethod, Boolean> isOverriddenOrOverrides = new ConcurrentFactoryMap<PsiMethod, Boolean>() {
+    @Nullable
+    @Override
+    protected Boolean create(PsiMethod method) {
+      boolean overrides = SuperMethodsSearch.search(method, null, true, false).findFirst() != null;
+      return overrides || OverridingMethodsSearch.search(method).findFirst() != null;
+    }
+  };
+
+  private boolean isOverriddenOrOverrides(@NotNull PsiMethod method) {
+    return isOverriddenOrOverrides.get(method);
   }
 
   @Nullable

@@ -15,7 +15,6 @@
  */
 package org.jetbrains.plugins.gradle.integrations.maven.codeInsight.actions;
 
-import com.intellij.testFramework.IdeaTestCase;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.fixtures.CodeInsightTestUtil;
 import com.intellij.testFramework.fixtures.LightPlatformCodeInsightFixtureTestCase;
@@ -29,10 +28,6 @@ import java.io.File;
  * @since 10/30/13
  */
 public class AddGradleDslDependencyActionTest extends LightPlatformCodeInsightFixtureTestCase {
-
-  public AddGradleDslDependencyActionTest() {
-    IdeaTestCase.initPlatformPrefix();
-  }
 
   public void testAddMavenDependencyInEmptyFile() throws Exception {
     AddGradleDslDependencyAction.TEST_THREAD_LOCAL.set(ContainerUtil.list(new MavenId("testGroupId", "testArtifactId", "1.0")));

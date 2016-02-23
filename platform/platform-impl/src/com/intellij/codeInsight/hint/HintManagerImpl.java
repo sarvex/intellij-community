@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.LogicalPosition;
+import com.intellij.openapi.editor.ScrollType;
 import com.intellij.openapi.editor.event.*;
 import com.intellij.openapi.editor.event.DocumentAdapter;
 import com.intellij.openapi.editor.ex.EditorEx;
@@ -141,11 +142,22 @@ public class HintManagerImpl extends HintManager implements Disposable {
       public void focusLost(final FocusEvent e) {
         //if (UIUtil.isFocusProxy(e.getOppositeComponent())) return;
         myHideAlarm.addRequest(new Runnable() {
+          private boolean myNotFocused; // previous focus state
+
           @Override
           public void run() {
-            if (!JBPopupFactory.getInstance().isChildPopupFocused(e.getComponent())) {
+            // see implementation here: com.intellij.ui.popup.AbstractPopup.isFocused(java.awt.Component[])
+            // the following method may return null while switching focus between popups:
+            // KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner()
+            // http://docs.oracle.com/javase/7/docs/webnotes/tsg/TSG-Desktop/html/awt.html#gdabn
+            boolean notFocused = !JBPopupFactory.getInstance().isChildPopupFocused(e.getComponent());
+            if (myNotFocused && notFocused) {
+              // hide all hints if a child popup is not focused now
+              // and if it was not focused 200 milliseconds ago
               hideAllHints();
             }
+            // TODO: find a way to replace this hack with com.intellij.openapi.wm.IdeFocusManager
+            myNotFocused = notFocused;
           }
         }, 200);
       }
@@ -160,6 +172,7 @@ public class HintManagerImpl extends HintManager implements Disposable {
       @Override
       public void documentChanged(DocumentEvent event) {
         LOG.assertTrue(SwingUtilities.isEventDispatchThread());
+        if (event.getOldLength() == 0 && event.getNewLength() == 0) return;
         HintInfo[] infos = getHintsStackArray();
         for (HintInfo info : infos) {
           if ((info.flags & HIDE_BY_TEXT_CHANGE) != 0) {
@@ -175,6 +188,10 @@ public class HintManagerImpl extends HintManager implements Disposable {
         }
       }
     };
+  }
+
+  public boolean isHint(Window component) {
+    return myHintsStack.contains(component);
   }
 
   @NotNull
@@ -262,10 +279,19 @@ public class HintManagerImpl extends HintManager implements Disposable {
     }
   }
 
-  public void showEditorHint(LightweightHint hint, Editor editor, @PositionFlags short constraint, @HideFlags int flags, int timeout, boolean reviveOnEditorChange) {
-    LogicalPosition pos = editor.getCaretModel().getLogicalPosition();
-    Point p = getHintPosition(hint, editor, pos, constraint);
-    showEditorHint(hint, editor, p, flags, timeout, reviveOnEditorChange, createHintHint(editor, p, hint, constraint));
+  /**
+   * In this method the point to show hint depends on current caret position.
+   * So, first of all, editor will be scrolled to make the caret position visible.
+   */
+  public void showEditorHint(final LightweightHint hint, final Editor editor, @PositionFlags final short constraint, @HideFlags final int flags, final int timeout, final boolean reviveOnEditorChange) {
+    editor.getScrollingModel().scrollToCaret(ScrollType.MAKE_VISIBLE);
+    editor.getScrollingModel().runActionOnScrollingFinished(new Runnable() {
+      @Override
+      public void run() {
+        LogicalPosition pos = editor.getCaretModel().getLogicalPosition();
+        Point p = getHintPosition(hint, editor, pos, constraint);
+        showEditorHint(hint, editor, p, flags, timeout, reviveOnEditorChange, createHintHint(editor, p, hint, constraint));
+      }});
   }
 
   /**
@@ -423,10 +449,10 @@ public class HintManagerImpl extends HintManager implements Disposable {
 
     if (hint.isVisible()) {
       if (updateSize) {
-        hint.updateBounds(p.x, p.y);
-      } else {
-        hint.updateLocation(p.x, p.y);
+        hint.pack();
       }
+      hint.updatePosition(hintInfo.getPreferredPosition());
+      hint.updateLocation(p.x, p.y);
     }
     else {
       hint.show(externalComponent, p.x, p.y, editor.getContentComponent(), hintInfo);
@@ -730,7 +756,6 @@ public class HintManagerImpl extends HintManager implements Disposable {
 
   @Override
   public void showQuestionHint(@NotNull Editor editor, @NotNull String hintText, int offset1, int offset2, @NotNull QuestionAction action) {
-
     JComponent label = HintUtil.createQuestionLabel(hintText);
     LightweightHint hint = new LightweightHint(label);
     showQuestionHint(editor, offset1, offset2, hint, action, ABOVE);
@@ -757,27 +782,23 @@ public class HintManagerImpl extends HintManager implements Disposable {
                                @NotNull final QuestionAction action,
                                @PositionFlags short constraint) {
     ApplicationManager.getApplication().assertIsDispatchThread();
+    hideQuestionHint();
     TextAttributes attributes = new TextAttributes();
     attributes.setEffectColor(HintUtil.QUESTION_UNDERSCORE_COLOR);
     attributes.setEffectType(EffectType.LINE_UNDERSCORE);
     final RangeHighlighter highlighter = editor.getMarkupModel()
       .addRangeHighlighter(offset1, offset2, HighlighterLayer.ERROR + 1, attributes, HighlighterTargetArea.EXACT_RANGE);
-    if (myQuestionHint != null) {
-      myQuestionHint.hide();
-      myQuestionHint = null;
-      myQuestionAction = null;
-    }
 
     hint.addHintListener(new HintListener() {
       @Override
       public void hintHidden(EventObject event) {
+        hint.removeHintListener(this);
         highlighter.dispose();
 
         if (myQuestionHint == hint) {
           myQuestionAction = null;
           myQuestionHint = null;
         }
-        hint.removeHintListener(this);
       }
     });
 
@@ -785,6 +806,15 @@ public class HintManagerImpl extends HintManager implements Disposable {
                    createHintHint(editor, p, hint, constraint));
     myQuestionAction = action;
     myQuestionHint = hint;
+  }
+
+  public void hideQuestionHint() {
+    ApplicationManager.getApplication().assertIsDispatchThread();
+    if (myQuestionHint != null) {
+      myQuestionHint.hide();
+      myQuestionHint = null;
+      myQuestionAction = null;
+    }
   }
 
   public static HintHint createHintHint(Editor editor, Point p, LightweightHint hint, @PositionFlags short constraint) {

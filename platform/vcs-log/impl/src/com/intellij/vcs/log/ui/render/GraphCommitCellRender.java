@@ -10,10 +10,8 @@ import com.intellij.util.ui.UIUtil;
 import com.intellij.vcs.log.VcsRef;
 import com.intellij.vcs.log.data.VcsLogDataHolder;
 import com.intellij.vcs.log.graph.PrintElement;
-import com.intellij.vcs.log.graph.VisibleGraph;
-import com.intellij.vcs.log.printer.idea.GraphCellPainter;
-import com.intellij.vcs.log.printer.idea.PrintParameters;
-import com.intellij.vcs.log.ui.VcsLogColorManager;
+import com.intellij.vcs.log.paint.GraphCellPainter;
+import com.intellij.vcs.log.paint.PaintParameters;
 import com.intellij.vcs.log.ui.frame.VcsLogGraphTable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -33,28 +31,42 @@ public class GraphCommitCellRender extends ColoredTableCellRenderer {
   @NotNull private final VcsLogDataHolder myDataHolder;
   @NotNull private final GraphCellPainter myPainter;
   @NotNull private final VcsLogGraphTable myGraphTable;
-  @NotNull private final RefPainter myRefPainter;
+  @NotNull private final TextLabelPainter myTextLabelPainter;
   @NotNull private final IssueLinkRenderer myIssueLinkRenderer;
 
-  @NotNull private VisibleGraph<Integer> myVisibleGraph;
   @Nullable private PaintInfo myGraphImage;
   @Nullable private Collection<VcsRef> myRefs;
+  @NotNull private Font myFont;
+  private int myHeight;
 
-  public GraphCommitCellRender(@NotNull VcsLogColorManager colorManager,
-                               @NotNull VcsLogDataHolder dataHolder,
-                               @NotNull GraphCellPainter painter,
-                               @NotNull VisibleGraph<Integer> graph,
-                               @NotNull VcsLogGraphTable table) {
+  public GraphCommitCellRender(@NotNull VcsLogDataHolder dataHolder, @NotNull GraphCellPainter painter, @NotNull VcsLogGraphTable table) {
     myDataHolder = dataHolder;
     myPainter = painter;
-    myVisibleGraph = graph;
     myGraphTable = table;
-    myRefPainter = new RefPainter(colorManager, false);
+    myTextLabelPainter = TextLabelPainter.createPainter(false);
     myIssueLinkRenderer = new IssueLinkRenderer(dataHolder.getProject(), this);
+    myFont = TextLabelPainter.getFont();
+    myHeight = calculateHeight();
   }
 
-  public void updateVisibleGraph(@NotNull VisibleGraph<Integer> visibleGraph) {
-    myVisibleGraph = visibleGraph;
+  @NotNull
+  @Override
+  public Dimension getPreferredSize() {
+    Dimension preferredSize = super.getPreferredSize();
+    return new Dimension(preferredSize.width, getPreferredHeight());
+  }
+
+  public int getPreferredHeight() {
+    Font font = TextLabelPainter.getFont();
+    if (myFont != font) {
+      myFont = font;
+      myHeight = calculateHeight();
+    }
+    return myHeight;
+  }
+
+  private int calculateHeight() {
+    return myTextLabelPainter.calculateSize("", getFontMetrics(myFont)).height + 4;
   }
 
   @Override
@@ -62,8 +74,14 @@ public class GraphCommitCellRender extends ColoredTableCellRenderer {
     super.paintComponent(g);
 
     if (myRefs != null) {
-      int graphPadding = myGraphImage != null ? myGraphImage.getWidth() : 0;
-      drawRefs((Graphics2D)g, myRefs, graphPadding);
+      int paddingX = (myGraphImage != null ? myGraphImage.getWidth() : 0) + PaintParameters.LABEL_PADDING;
+      Map<String, Color> labelsForReferences = collectLabelsForRefs(myRefs);
+      for (Map.Entry<String, Color> entry : labelsForReferences.entrySet()) {
+        Dimension size = myTextLabelPainter.calculateSize(entry.getKey(), g.getFontMetrics(TextLabelPainter.getFont()));
+        int paddingY = (myGraphTable.getRowHeight() - size.height) / 2;
+        myTextLabelPainter.paint((Graphics2D)g, entry.getKey(), paddingX, paddingY, entry.getValue());
+        paddingX += size.width + PaintParameters.LABEL_PADDING;
+      }
     }
 
     if (myGraphImage != null) {
@@ -94,39 +112,35 @@ public class GraphCommitCellRender extends ColoredTableCellRenderer {
     else {
       graphPadding = 0;
     }
-    int textPadding = graphPadding + calcRefsPadding(myRefs);
+    int textPadding = graphPadding + calculateReferencePadding(myRefs);
 
     setBorder(null);
     append("");
     appendTextPadding(textPadding);
-    myGraphTable.applyHighlighters(this, row, column, "", hasFocus, isSelected);
-    myIssueLinkRenderer.appendTextWithLinks(cell.getText());
+    myIssueLinkRenderer.appendTextWithLinks(cell.getText(), myGraphTable.applyHighlighters(this, row, column, "", hasFocus, isSelected));
   }
 
   @Nullable
   private PaintInfo getGraphImage(int row) {
-    Collection<? extends PrintElement> printElements = myVisibleGraph.getRowInfo(row).getPrintElements();
+    Collection<? extends PrintElement> printElements = myGraphTable.getVisibleGraph().getRowInfo(row).getPrintElements();
     int maxIndex = 0;
     for (PrintElement printElement : printElements) {
       maxIndex = Math.max(maxIndex, printElement.getPositionInCurrentRow());
     }
     maxIndex++;
-    final BufferedImage image =
-      UIUtil.createImage(PrintParameters.WIDTH_NODE * (maxIndex + 4), PrintParameters.HEIGHT_CELL, BufferedImage.TYPE_INT_ARGB);
+    final BufferedImage image = UIUtil
+      .createImage(PaintParameters.getNodeWidth(myGraphTable.getRowHeight()) * (maxIndex + 4), myGraphTable.getRowHeight(),
+                   BufferedImage.TYPE_INT_ARGB);
     Graphics2D g2 = image.createGraphics();
     myPainter.draw(g2, printElements);
 
-    final int width = maxIndex * PrintParameters.WIDTH_NODE;
+    final int width = maxIndex * PaintParameters.getNodeWidth(myGraphTable.getRowHeight());
     return new PaintInfo(image, width);
   }
 
   private static GraphCommitCell getAssertCommitCell(Object value) {
     assert value instanceof GraphCommitCell : "Value of incorrect class was supplied: " + value;
     return (GraphCommitCell)value;
-  }
-
-  private void drawRefs(@NotNull Graphics2D g2, @NotNull Collection<VcsRef> refs, int padding) {
-    myRefPainter.drawLabels(g2, collectLabelsForRefs(refs), padding);
   }
 
   @NotNull
@@ -141,8 +155,15 @@ public class GraphCommitCellRender extends ColoredTableCellRenderer {
     return getLabelsForRefs(branches, tags);
   }
 
-  private int calcRefsPadding(@NotNull Collection<VcsRef> refs) {
-    return myRefPainter.padding(collectLabelsForRefs(refs).keySet(), this.getFontMetrics(RefPainter.DEFAULT_FONT));
+  private int calculateReferencePadding(@NotNull Collection<VcsRef> references) {
+    if (references.isEmpty()) return 0;
+
+    int paddingX = 2 * PaintParameters.LABEL_PADDING;
+    for (String label : collectLabelsForRefs(references).keySet()) {
+      Dimension size = myTextLabelPainter.calculateSize(label, this.getFontMetrics(TextLabelPainter.getFont()));
+      paddingX += size.width + PaintParameters.LABEL_PADDING;
+    }
+    return paddingX;
   }
 
   @NotNull

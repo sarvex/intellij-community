@@ -18,6 +18,7 @@ package com.intellij.openapi.diff.impl.dir;
 import com.intellij.CommonBundle;
 import com.intellij.ide.IdeBundle;
 import com.intellij.ide.diff.*;
+import com.intellij.internal.statistic.UsageTrigger;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.Application;
@@ -25,6 +26,8 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.diff.impl.dir.actions.popup.WarnOnDeletion;
+import com.intellij.openapi.progress.EmptyProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.MessageDialogBuilder;
@@ -81,8 +84,10 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
   private String myStatus = null;
   public static final String EMPTY_STRING = "                                                  ";
   private DirDiffPanel myPanel;
+  private volatile boolean myDisposed;
 
-  public DirDiffTableModel(Project project, DiffElement src, DiffElement trg, DirDiffSettings settings) {
+  public DirDiffTableModel(@NotNull Project project, DiffElement src, DiffElement trg, DirDiffSettings settings) {
+    UsageTrigger.trigger("diff.DirDiffTableModel");
     myProject = project;
     mySettings = settings;
     mySrc = src;
@@ -168,7 +173,7 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
   }
 
   public boolean isOperationsEnabled() {
-    return mySrc.isOperationsEnabled() && myTrg.isOperationsEnabled();
+    return !myDisposed && mySrc.isOperationsEnabled() && myTrg.isOperationsEnabled();
   }
 
   public List<DirDiffElementImpl> getElements() {
@@ -214,29 +219,46 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
     myTable.getEmptyText().setText(StatusText.DEFAULT_EMPTY_TEXT);
     final JBLoadingPanel loadingPanel = getLoadingPanel();
     loadingPanel.startLoading();
+
+    final ModalityState modalityState = ModalityState.current();
+
     ApplicationManager.getApplication().executeOnPooledThread(new Runnable() {
       public void run() {
-        try {
-          myUpdater = new Updater(loadingPanel, 100);
-          myUpdater.start();
-          myTree = new DTree(null, "", true);
-          mySrc.refresh(userForcedRefresh);
-          myTrg.refresh(userForcedRefresh);
-          scan(mySrc, myTree, true);
-          scan(myTrg, myTree, false);
-        }
-        catch (final IOException e) {
-          LOG.warn(e);
-          reportException(VcsBundle.message("refresh.failed.message", StringUtil.decapitalize(e.getLocalizedMessage())));
-        }
-        finally {
-          if (myTree != null) {
-            myTree.setSource(mySrc);
-            myTree.setTarget(myTrg);
-            myTree.update(mySettings);
-            applySettings();
+        EmptyProgressIndicator indicator = new EmptyProgressIndicator() {
+          @NotNull
+          @Override
+          public ModalityState getModalityState() {
+            return modalityState;
           }
-        }
+        };
+        ProgressManager.getInstance().executeProcessUnderProgress(new Runnable() {
+          @Override
+          public void run() {
+            try {
+              if (myDisposed) return;
+              myUpdater = new Updater(loadingPanel, 100);
+              myUpdater.start();
+              text.set("Loading...");
+              myTree = new DTree(null, "", true);
+              mySrc.refresh(userForcedRefresh);
+              myTrg.refresh(userForcedRefresh);
+              scan(mySrc, myTree, true);
+              scan(myTrg, myTree, false);
+            }
+            catch (final IOException e) {
+              LOG.warn(e);
+              reportException(VcsBundle.message("refresh.failed.message", StringUtil.decapitalize(e.getLocalizedMessage())));
+            }
+            finally {
+              if (myTree != null) {
+                myTree.setSource(mySrc);
+                myTree.setTarget(myTrg);
+                myTree.update(mySettings);
+                applySettings();
+              }
+            }
+          }
+        }, indicator);
       }
     });
   }
@@ -310,11 +332,13 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
     final Application app = ApplicationManager.getApplication();
     app.executeOnPooledThread(new Runnable() {
       public void run() {
+        if (myDisposed) return;
         myTree.updateVisibility(mySettings);
         final ArrayList<DirDiffElementImpl> elements = new ArrayList<DirDiffElementImpl>();
         fillElements(myTree, elements);
         final Runnable uiThread = new Runnable() {
           public void run() {
+            if (myDisposed) return;
             clear();
             myElements.addAll(elements);
             myUpdating.set(false);
@@ -405,6 +429,7 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
   }
 
   public String getTitle() {
+    if (myDisposed) return "";
     return IdeBundle.message("diff.dialog.title", mySrc.getPresentablePath(), myTrg.getPresentablePath());
   }
 
@@ -562,6 +587,7 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
 
   @Override
   public void dispose() {
+    myDisposed = true;
     myListeners.clear();
     myElements.clear();
     mySrc = null;
@@ -585,7 +611,7 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
           @Override
           public void run() {
             ApplicationManager.getApplication().assertIsDispatchThread();
-            if (!Disposer.isDisposed(DirDiffTableModel.this)) {
+            if (!myDisposed) {
               DiffElement newElement = diff.get();
               if (newElement == null && element.getTarget() != null) {
                 final int row = myElements.indexOf(element);
@@ -643,7 +669,7 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
           @Override
           public void run() {
             ApplicationManager.getApplication().assertIsDispatchThread();
-            if (!Disposer.isDisposed(DirDiffTableModel.this)) {
+            if (!myDisposed) {
               refreshElementAfterCopyFrom(element, diff.get());
               if (!errorMessage.isNull()) {
                 reportException(errorMessage.get());
@@ -723,7 +749,7 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
       Runnable onFinish = new Runnable() {
         @Override
         public void run() {
-          if (!Disposer.isDisposed(DirDiffTableModel.this)) {
+          if (!myDisposed) {
             if (!errorMessage.isNull()) {
               reportException(errorMessage.get());
             }
@@ -872,7 +898,7 @@ public class DirDiffTableModel extends AbstractTableModel implements DirDiffMode
 
     @Override
     public void run() {
-      if (myLoadingPanel.isLoading()) {
+      if (!myDisposed && myLoadingPanel.isLoading()) {
         TimeoutUtil.sleep(mySleep);
         ApplicationManager.getApplication().invokeLater(new Runnable() {
           @Override

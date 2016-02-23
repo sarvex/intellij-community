@@ -19,6 +19,7 @@ import com.intellij.openapi.CompositeDisposable;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.progress.BackgroundTaskQueue;
+import com.intellij.openapi.progress.PerformInBackgroundOption;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.MessageType;
@@ -27,10 +28,8 @@ import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vcs.FilePath;
-import com.intellij.openapi.vcs.FilePathImpl;
 import com.intellij.openapi.vcs.VcsException;
 import com.intellij.openapi.vcs.changes.AbstractRefreshablePanel;
-import com.intellij.openapi.vcs.changes.BackgroundFromStartOption;
 import com.intellij.openapi.vcs.changes.Change;
 import com.intellij.openapi.vcs.changes.ChangesUtil;
 import com.intellij.openapi.vcs.history.*;
@@ -40,6 +39,7 @@ import com.intellij.util.BeforeAfter;
 import com.intellij.util.containers.Convertor;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.VcsBackgroundTask;
+import com.intellij.vcsUtil.VcsUtil;
 import gnu.trove.TLongArrayList;
 import org.jetbrains.idea.svn.ConflictedSvnChange;
 import org.jetbrains.idea.svn.SvnRevisionNumber;
@@ -276,11 +276,12 @@ public class TreeConflictRefreshablePanel extends AbstractRefreshablePanel {
         final Paths paths = getPaths(description);
         ProgressManager.getInstance().run(
           new VcsBackgroundTask<TreeConflictDescription>(myVcs.getProject(), "Accepting theirs for: " + filePath(paths.myMainPath),
-                                                            BackgroundFromStartOption.getInstance(), Collections.singletonList(description),
-                                                            true) {
+                                                         PerformInBackgroundOption.ALWAYS_BACKGROUND,
+                                                         Collections.singletonList(description),
+                                                         true) {
             @Override
             protected void process(TreeConflictDescription d) throws VcsException {
-              new SvnTreeConflictResolver(myVcs, paths.myMainPath, myCommittedRevision, paths.myAdditionalPath).resolveSelectTheirsFull(d);
+              new SvnTreeConflictResolver(myVcs, paths.myMainPath, paths.myAdditionalPath).resolveSelectTheirsFull();
             }
 
             @Override
@@ -333,11 +334,12 @@ public class TreeConflictRefreshablePanel extends AbstractRefreshablePanel {
         final Paths paths = getPaths(description);
         ProgressManager.getInstance().run(
           new VcsBackgroundTask<TreeConflictDescription>(myVcs.getProject(), "Accepting yours for: " + filePath(paths.myMainPath),
-                                                            BackgroundFromStartOption.getInstance(), Collections.singletonList(description),
-                                                            true) {
+                                                         PerformInBackgroundOption.ALWAYS_BACKGROUND,
+                                                         Collections.singletonList(description),
+                                                         true) {
             @Override
             protected void process(TreeConflictDescription d) throws VcsException {
-              new SvnTreeConflictResolver(myVcs, paths.myMainPath, myCommittedRevision, paths.myAdditionalPath).resolveSelectMineFull(d);
+              new SvnTreeConflictResolver(myVcs, paths.myMainPath, paths.myAdditionalPath).resolveSelectMineFull();
             }
 
             @Override
@@ -476,8 +478,9 @@ public class TreeConflictRefreshablePanel extends AbstractRefreshablePanel {
       myVcs = vcs;
       myPeg = peg;
       try {
-        myPath = FilePathImpl.createNonLocal(
-          version.getRepositoryRoot().appendPath(FileUtil.toSystemIndependentName(version.getPath()), true).toString(), version.isDirectory());
+        myPath = VcsUtil.getFilePathOnNonLocal(
+          version.getRepositoryRoot().appendPath(FileUtil.toSystemIndependentName(version.getPath()), true).toString(),
+          version.isDirectory());
       }
       catch (SVNException e) {
         throw new VcsException(e);

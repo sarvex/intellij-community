@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,19 @@ package com.intellij.psi.codeStyle;
 
 import com.intellij.lang.Language;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.extensions.ExtensionException;
 import com.intellij.openapi.extensions.Extensions;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.fileTypes.FileTypes;
 import com.intellij.openapi.fileTypes.LanguageFileType;
+import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.util.Processor;
 import com.intellij.util.SystemProperties;
@@ -42,8 +46,9 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 public class CodeStyleSettings extends CommonCodeStyleSettings implements Cloneable, JDOMExternalizable {
+  public static final int MAX_RIGHT_MARGIN = 1000;
   
-  private static final Logger LOG = Logger.getInstance("#" + CodeStyleSettings.class.getName());
+  private static final Logger LOG = Logger.getInstance(CodeStyleSettings.class);
 
   private final ClassMap<CustomCodeStyleSettings> myCustomSettings = new ClassMap<CustomCodeStyleSettings>();
 
@@ -117,6 +122,7 @@ public class CodeStyleSettings extends CommonCodeStyleSettings implements Clonea
 
   public <T extends CustomCodeStyleSettings> T getCustomSettings(@NotNull Class<T> aClass) {
     synchronized (myCustomSettings) {
+      //noinspection unchecked
       return (T)myCustomSettings.get(aClass);
     }
   }
@@ -264,6 +270,12 @@ public class CodeStyleSettings extends CommonCodeStyleSettings implements Clonea
    */
   @Deprecated
   public int RIGHT_MARGIN = 120;
+  /**
+   * <b>Do not use this field directly since it doesn't reflect a setting for a specific language which may
+   * overwrite this one. Call {@link #isWrapOnTyping(Language)} method instead.</b>
+   *
+   * @see #WRAP_ON_TYPING
+   */
   public boolean WRAP_WHEN_TYPING_REACHES_RIGHT_MARGIN = false;
 
 
@@ -478,37 +490,34 @@ public class CodeStyleSettings extends CommonCodeStyleSettings implements Clonea
         IMPORT_LAYOUT_TABLE.addEntry(PackageEntry.ALL_OTHER_STATIC_IMPORTS_ENTRY);
       }
     }
-    for (final CustomCodeStyleSettings settings : getCustomSettingsValues()) {
+    for (CustomCodeStyleSettings settings : getCustomSettingsValues()) {
       settings.readExternal(element);
       settings.importLegacySettings();
     }
 
-    final List list = element.getChildren(ADDITIONAL_INDENT_OPTIONS);
+    List<Element> list = element.getChildren(ADDITIONAL_INDENT_OPTIONS);
     if (list != null) {
-      for(Object o:list) {
-        if (o instanceof Element) {
-          final Element additionalIndentElement = (Element)o;
-          final String fileTypeId = additionalIndentElement.getAttributeValue(FILETYPE);
-
-          if (fileTypeId != null && !fileTypeId.isEmpty()) {
-            FileType target = FileTypeManager.getInstance().getFileTypeByExtension(fileTypeId);
-            if (FileTypes.UNKNOWN == target || FileTypes.PLAIN_TEXT == target || target.getDefaultExtension().isEmpty()) {
-              target = new TempFileType(fileTypeId);
-            }
-
-            final IndentOptions options = getDefaultIndentOptions(target);
-            options.readExternal(additionalIndentElement);
-            registerAdditionalIndentOptions(target, options);
+      for (Element additionalIndentElement : list) {
+        String fileTypeId = additionalIndentElement.getAttributeValue(FILETYPE);
+        if (!StringUtil.isEmpty(fileTypeId)) {
+          FileType target = FileTypeManager.getInstance().getFileTypeByExtension(fileTypeId);
+          if (FileTypes.UNKNOWN == target || FileTypes.PLAIN_TEXT == target || target.getDefaultExtension().isEmpty()) {
+            target = new TempFileType(fileTypeId);
           }
+
+          IndentOptions options = getDefaultIndentOptions(target);
+          options.readExternal(additionalIndentElement);
+          registerAdditionalIndentOptions(target, options);
         }
       }
     }
 
     myCommonSettingsManager.readExternal(element);
 
-    if (USE_SAME_INDENTS) IGNORE_SAME_INDENTS_FOR_LANGUAGES = true;
+    if (USE_SAME_INDENTS) {
+      IGNORE_SAME_INDENTS_FOR_LANGUAGES = true;
+    }
   }
-
 
   @Override
   public void writeExternal(Element element) throws WriteExternalException {
@@ -516,12 +525,7 @@ public class CodeStyleSettings extends CommonCodeStyleSettings implements Clonea
     DefaultJDOMExternalizer.writeExternal(this, element, new DifferenceFilter<CodeStyleSettings>(this, parentSettings));
     List<CustomCodeStyleSettings> customSettings = new ArrayList<CustomCodeStyleSettings>(getCustomSettingsValues());
     
-    Collections.sort(customSettings, new Comparator<CustomCodeStyleSettings>(){
-      @Override
-      public int compare(final CustomCodeStyleSettings o1, final CustomCodeStyleSettings o2) {
-        return o1.getTagName().compareTo(o2.getTagName());
-      }
-    });
+    Collections.sort(customSettings, (o1, o2) -> o1.getTagName().compareTo(o2.getTagName()));
 
     for (final CustomCodeStyleSettings settings : customSettings) {
       final CustomCodeStyleSettings parentCustomSettings = parentSettings.getCustomSettings(settings.getClass());
@@ -532,12 +536,7 @@ public class CodeStyleSettings extends CommonCodeStyleSettings implements Clonea
     }
 
     final FileType[] fileTypes = myAdditionalIndentOptions.keySet().toArray(new FileType[myAdditionalIndentOptions.keySet().size()]);
-    Arrays.sort(fileTypes, new Comparator<FileType>() {
-      @Override
-      public int compare(final FileType o1, final FileType o2) {
-        return o1.getDefaultExtension().compareTo(o2.getDefaultExtension());
-      }
-    });
+    Arrays.sort(fileTypes, (o1, o2) -> o1.getDefaultExtension().compareTo(o2.getDefaultExtension()));
 
     for (FileType fileType : fileTypes) {
       final IndentOptions indentOptions = myAdditionalIndentOptions.get(fileType);
@@ -551,7 +550,6 @@ public class CodeStyleSettings extends CommonCodeStyleSettings implements Clonea
     
     myCommonSettingsManager.writeExternal(element);
   }
-
 
   private static IndentOptions getDefaultIndentOptions(FileType fileType) {
     final FileTypeIndentOptionsProvider[] providers = Extensions.getExtensions(FileTypeIndentOptionsProvider.EP_NAME);
@@ -593,6 +591,27 @@ public class CodeStyleSettings extends CommonCodeStyleSettings implements Clonea
     return OTHER_INDENT_OPTIONS;
   }
 
+  /**
+   * If the document has an associated PsiFile, returns options for this file. Otherwise attempts to find associated VirtualFile and
+   * return options for corresponding FileType. If none are found, other indent options are returned.
+   *
+   * @param project  The project in which PsiFile should be searched.
+   * @param document The document to search indent options for.
+   * @return Indent options from the indent options providers or file type indent options or <code>OTHER_INDENT_OPTIONS</code>.
+   * @see FileIndentOptionsProvider
+   * @see FileTypeIndentOptionsProvider
+   * @see LanguageCodeStyleSettingsProvider
+   */
+  @NotNull
+  public IndentOptions getIndentOptionsByDocument(@Nullable Project project, @NotNull Document document) {
+    PsiFile file = project != null ? PsiDocumentManager.getInstance(project).getPsiFile(document) : null;
+    if (file != null) return getIndentOptionsByFile(file);
+
+    VirtualFile vFile = FileDocumentManager.getInstance().getFile(document);
+    FileType fileType = vFile != null ? vFile.getFileType() : null;
+    return getIndentOptions(fileType);
+  }
+
   @NotNull
   public IndentOptions getIndentOptionsByFile(@Nullable PsiFile file) {
     return getIndentOptionsByFile(file, null);
@@ -619,29 +638,55 @@ public class CodeStyleSettings extends CommonCodeStyleSettings implements Clonea
   @NotNull
   public IndentOptions getIndentOptionsByFile(@Nullable PsiFile file, @Nullable TextRange formatRange, boolean ignoreDocOptions,
                                               @Nullable Processor<FileIndentOptionsProvider> providerProcessor) {
-    if (file != null && file.isValid() && file.isWritable()) {
+    if (file != null && file.isValid()) {
       boolean isFullReformat = isFileFullyCoveredByRange(file, formatRange);
       if (!ignoreDocOptions && !isFullReformat) {
-        IndentOptions docOptions = IndentOptions.retrieveFromAssociatedDocument(file);
-        if (docOptions != null) return docOptions;
+        IndentOptions options = IndentOptions.retrieveFromAssociatedDocument(file);
+        if (options != null) {
+          FileIndentOptionsProvider provider = options.getFileIndentOptionsProvider();
+          if (providerProcessor != null && provider != null) {
+            providerProcessor.process(provider);
+          }
+          return options;
+        }
       }
-      FileIndentOptionsProvider[] providers = Extensions.getExtensions(FileIndentOptionsProvider.EP_NAME);
-      for (FileIndentOptionsProvider provider : providers) {
+
+      boolean committedDocumentNeeded = false;
+      for (FileIndentOptionsProvider provider : Extensions.getExtensions(FileIndentOptionsProvider.EP_NAME)) {
         if (!isFullReformat || provider.useOnFullReformat()) {
+          committedDocumentNeeded |= provider instanceof ProviderForCommittedDocument;
           IndentOptions indentOptions = provider.getIndentOptions(this, file);
           if (indentOptions != null) {
             if (providerProcessor != null) {
               providerProcessor.process(provider);
             }
+            indentOptions.setFileIndentOptionsProvider(provider);
             logIndentOptions(file, provider, indentOptions);
             return indentOptions;
           }
         }
       }
-      return getIndentOptions(file.getFileType());
+
+      IndentOptions options = getIndentOptions(file.getFileType());
+      if (committedDocumentNeeded) {
+        markOptionsInaccurateIfDocumentUncommitted(options, file);
+      }
+      return options;
     }
     else
       return OTHER_INDENT_OPTIONS;
+  }
+
+  private static void markOptionsInaccurateIfDocumentUncommitted(@NotNull IndentOptions options, @NotNull PsiFile file) {
+    PsiDocumentManager manager = PsiDocumentManager.getInstance(file.getProject());
+    Document document = manager.getDocument(file);
+    if (document != null && !manager.isCommitted(document)) {
+      options.setRecalculateForCommittedDocument(true);
+    }
+  }
+
+  public static boolean isRecalculateForCommittedDocument(@NotNull IndentOptions options) {
+    return options.isRecalculateForCommittedDocument();
   }
 
   private static boolean isFileFullyCoveredByRange(@NotNull PsiFile file, @Nullable TextRange formatRange) {
@@ -948,4 +993,23 @@ public class CodeStyleSettings extends CommonCodeStyleSettings implements Clonea
   public void setDefaultRightMargin(int rightMargin) {
     RIGHT_MARGIN = rightMargin;
   }
+
+  /**
+   * Defines whether or not wrapping should occur when typing reaches right margin.
+   * @param language  The language to check the option for or null for a global option.
+   * @return True if wrapping on right margin is enabled.
+   */
+  public boolean isWrapOnTyping(@Nullable Language language) {
+    if (language != null) {
+      CommonCodeStyleSettings langSettings = getCommonSettings(language);
+      if (langSettings != null) {
+        if (langSettings.WRAP_ON_TYPING != WrapOnTyping.DEFAULT.intValue) {
+          return langSettings.WRAP_ON_TYPING == WrapOnTyping.WRAP.intValue;
+        }
+      }
+    }
+    //noinspection deprecation
+    return WRAP_WHEN_TYPING_REACHES_RIGHT_MARGIN;
+  }
+
 }

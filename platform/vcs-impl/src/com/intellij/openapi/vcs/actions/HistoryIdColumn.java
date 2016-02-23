@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2010 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.intellij.openapi.vcs.VcsBundle;
 import com.intellij.openapi.vcs.annotate.FileAnnotation;
 import com.intellij.openapi.vcs.annotate.TextAnnotationPresentation;
 import com.intellij.openapi.vcs.history.VcsRevisionNumber;
+import com.intellij.vcsUtil.VcsUtil;
 
 import java.awt.*;
 import java.util.Map;
@@ -29,14 +30,13 @@ import java.util.Map;
  * @author Konstantin Bulenkov
  */
 class HistoryIdColumn extends AnnotationFieldGutter {
-  private final Map<String, Integer> myHistoryIds;
+  private final Map<VcsRevisionNumber, Integer> myHistoryIds;
 
   HistoryIdColumn(FileAnnotation annotation,
-                  final Editor editor,
                   final TextAnnotationPresentation presentation,
                   Couple<Map<VcsRevisionNumber, Color>> colorScheme,
-                  Map<String, Integer> ids) {
-    super(annotation, editor, null, presentation, colorScheme);
+                  Map<VcsRevisionNumber, Integer> ids) {
+    super(annotation, null, presentation, colorScheme);
     myHistoryIds = ids;
   }
 
@@ -45,7 +45,7 @@ class HistoryIdColumn extends AnnotationFieldGutter {
     if (!isAvailable()) return "";
     final VcsRevisionNumber revisionNumber = myAnnotation.getLineRevisionNumber(line);
     if (revisionNumber != null) {
-      final Integer num = myHistoryIds.get(revisionNumber.asString());
+      final Integer num = myHistoryIds.get(revisionNumber);
       if (num != null) {
         final String size = String.valueOf(myHistoryIds.size());
         String value = num.toString();
@@ -56,6 +56,11 @@ class HistoryIdColumn extends AnnotationFieldGutter {
       }
     }
     return "";
+  }
+
+  @Override
+  public boolean isAvailable() {
+    return VcsUtil.isAspectAvailableByDefault(getID(), false);
   }
 
   @Override

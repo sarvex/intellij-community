@@ -87,7 +87,11 @@ public class PySdkListCellRenderer extends ListCellRendererWrapper<Object> {
         setText("[incomplete] " + name);
         setIcon(wrapIconWithWarningDecorator(icon));
       }
-      else if (sdk instanceof PyDetectedSdk){
+      else if (PythonSdkType.hasInvalidRemoteCredentials(sdk)) {
+        setText("[invalid] " + name);
+        setIcon(wrapIconWithWarningDecorator(icon));
+      }
+      else if (sdk instanceof PyDetectedSdk) {
         setText(name);
         setIcon(IconLoader.getTransparentIcon(icon));
       }
@@ -127,7 +131,6 @@ public class PySdkListCellRenderer extends ListCellRendererWrapper<Object> {
   private static LayeredIcon wrapIconWithWarningDecorator(Icon icon) {
     final LayeredIcon layered = new LayeredIcon(2);
     layered.setIcon(icon, 0);
-    // TODO: Create a separate invalid SDK overlay icon (DSGN-497)
     final Icon overlay = AllIcons.Actions.Cancel;
     layered.setIcon(overlay, 1);
     return layered;

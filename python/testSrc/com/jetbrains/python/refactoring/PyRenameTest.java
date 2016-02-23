@@ -15,13 +15,14 @@
  */
 package com.jetbrains.python.refactoring;
 
-import com.intellij.codeInsight.TargetElementUtilBase;
+import com.intellij.codeInsight.TargetElementUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.refactoring.BaseRefactoringProcessor;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.jetbrains.python.PythonTestUtil;
+import com.jetbrains.python.documentation.docstrings.DocStringFormat;
 import com.jetbrains.python.fixtures.PyTestCase;
 import com.jetbrains.python.psi.LanguageLevel;
 
@@ -39,8 +40,8 @@ public class PyRenameTest extends PyTestCase {
 
   public void testSearchInStrings() {  // PY-670
     myFixture.configureByFile(RENAME_DATA_PATH + getTestName(true) + ".py");
-    final PsiElement element = TargetElementUtilBase.findTargetElement(myFixture.getEditor(), TargetElementUtilBase.REFERENCED_ELEMENT_ACCEPTED |
-                                                                                        TargetElementUtilBase.ELEMENT_NAME_ACCEPTED);
+    final PsiElement element = TargetElementUtil.findTargetElement(myFixture.getEditor(), TargetElementUtil.REFERENCED_ELEMENT_ACCEPTED |
+                                                                                          TargetElementUtil.ELEMENT_NAME_ACCEPTED);
     assertNotNull(element);
     myFixture.renameElement(element, "bar", true, false);
     myFixture.checkResultByFile(RENAME_DATA_PATH + getTestName(true) + "_after.py");
@@ -198,6 +199,54 @@ public class PyRenameTest extends PyTestCase {
   // PY-11879
   public void testDocstringParams() {
     doTest("bar");
+  }
+
+  // PY-9795
+  public void testGoogleDocStringParam() {
+    renameWithDocStringFormat(DocStringFormat.GOOGLE, "bar");
+  }
+
+  // PY-9795
+  public void testGoogleDocStringAttribute() {
+    renameWithDocStringFormat(DocStringFormat.GOOGLE, "bar");
+  }
+
+  // PY-9795
+  public void testGoogleDocStringParamType() {
+    renameWithDocStringFormat(DocStringFormat.GOOGLE, "Bar");
+  }
+
+  // PY-9795
+  public void testGoogleDocStringReturnType() {
+    renameWithDocStringFormat(DocStringFormat.GOOGLE, "Bar");
+  }
+
+  // PY-16761
+  public void testGoogleDocStringPositionalVararg() {
+    renameWithDocStringFormat(DocStringFormat.GOOGLE, "bar");
+  }
+
+  // PY-16761
+  public void testGoogleDocStringKeywordVararg() {
+    renameWithDocStringFormat(DocStringFormat.GOOGLE, "bar");
+  }
+
+  // PY-16908
+  public void testNumpyDocStringCombinedParam() {
+    renameWithDocStringFormat(DocStringFormat.NUMPY, "bar");
+  }
+
+  //PY-2478
+  public void testFormatStringKeyword() {
+    doTest("renamed");
+  }
+
+  private void renameWithDocStringFormat(DocStringFormat format, final String newName) {
+    runWithDocStringFormat(format, new Runnable() {
+      public void run() {
+        doTest(newName);
+      }
+    });
   }
 
   private void doRenameConflictTest(String newName, String expectedConflict) {

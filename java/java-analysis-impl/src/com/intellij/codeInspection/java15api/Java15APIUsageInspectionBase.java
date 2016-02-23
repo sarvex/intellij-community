@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.intellij.codeInsight.AnnotationUtil;
 import com.intellij.codeInsight.daemon.GroupNames;
 import com.intellij.codeInsight.intention.QuickFixFactory;
 import com.intellij.codeInspection.*;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.ExtensionPoint;
 import com.intellij.openapi.extensions.ExtensionPointName;
 import com.intellij.openapi.extensions.Extensions;
@@ -31,6 +32,7 @@ import com.intellij.openapi.projectRoots.JavaSdkVersion;
 import com.intellij.openapi.projectRoots.JavaVersionService;
 import com.intellij.openapi.util.InvalidDataException;
 import com.intellij.openapi.util.WriteExternalException;
+import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
@@ -43,7 +45,6 @@ import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.hash.HashSet;
 import gnu.trove.THashSet;
 import org.jdom.Element;
-import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -52,6 +53,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.lang.ref.Reference;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -70,12 +72,16 @@ public class Java15APIUsageInspectionBase extends BaseJavaBatchLocalInspectionTo
   private static final Map<LanguageLevel, Reference<Set<String>>> ourForbiddenAPI = ContainerUtil.newEnumMap(LanguageLevel.class);
   private static final Set<String> ourIgnored16ClassesAPI = new THashSet<String>(10);
   private static final Map<LanguageLevel, String> ourPresentableShortMessage = ContainerUtil.newEnumMap(LanguageLevel.class);
+
+  private static final LanguageLevel ourHighestKnownLanguage = LanguageLevel.JDK_1_9;
+
   static {
     ourPresentableShortMessage.put(LanguageLevel.JDK_1_3, "1.4");
     ourPresentableShortMessage.put(LanguageLevel.JDK_1_4, "1.5");
     ourPresentableShortMessage.put(LanguageLevel.JDK_1_5, "1.6");
     ourPresentableShortMessage.put(LanguageLevel.JDK_1_6, "1.7");
     ourPresentableShortMessage.put(LanguageLevel.JDK_1_7, "1.8");
+    ourPresentableShortMessage.put(LanguageLevel.JDK_1_8, "1.9");
 
     loadForbiddenApi("ignore16List.txt", ourIgnored16ClassesAPI);
   }
@@ -107,16 +113,17 @@ public class Java15APIUsageInspectionBase extends BaseJavaBatchLocalInspectionTo
     return result;
   }
 
-  private static void loadForbiddenApi(@NonNls String fileName, Set<String> set) {
+  private static void loadForbiddenApi(String fileName, Set<String> set) {
+    URL resource = Java15APIUsageInspectionBase.class.getResource(fileName);
+    if (resource == null) {
+      Logger.getInstance(Java15APIUsageInspectionBase.class).warn("not found: " + fileName);
+      return;
+    }
+
     try {
-      Class<?> aClass = Java15APIUsageInspectionBase.class;
-      BufferedReader reader = new BufferedReader(new InputStreamReader(aClass.getResourceAsStream(fileName), CharsetToolkit.UTF8_CHARSET));
+      BufferedReader reader = new BufferedReader(new InputStreamReader(resource.openStream(), CharsetToolkit.UTF8_CHARSET));
       try {
-        do {
-          String line = reader.readLine();
-          if (line == null) break;
-          set.add(line);
-        } while(true);
+        set.addAll(FileUtil.loadLines(reader));
       }
       finally {
         reader.close();
@@ -149,11 +156,6 @@ public class Java15APIUsageInspectionBase extends BaseJavaBatchLocalInspectionTo
   @Override
   public HighlightDisplayLevel getDefaultLevel() {
     return HighlightDisplayLevel.ERROR;
-  }
-
-  @Override
-  public boolean isEnabledByDefault() {
-    return false;
   }
 
   @Override
@@ -203,7 +205,7 @@ public class Java15APIUsageInspectionBase extends BaseJavaBatchLocalInspectionTo
 
     @Override public void visitClass(PsiClass aClass) {
       // Don't go into classes (anonymous, locals).
-      if (!aClass.hasModifierProperty(PsiModifier.ABSTRACT)) {
+      if (!aClass.hasModifierProperty(PsiModifier.ABSTRACT) && !(aClass instanceof PsiTypeParameter)) {
         final Module module = ModuleUtilCore.findModuleForPsiElement(aClass);
         final LanguageLevel effectiveLanguageLevel = module != null ? getEffectiveLanguageLevel(module) : null;
         if (effectiveLanguageLevel != null && !effectiveLanguageLevel.isAtLeast(LanguageLevel.JDK_1_8)) {
@@ -266,7 +268,8 @@ public class Java15APIUsageInspectionBase extends BaseJavaBatchLocalInspectionTo
             final PsiReferenceParameterList parameterList = reference.getParameterList();
             if (parameterList != null && parameterList.getTypeParameterElements().length > 0) {
               for (String generifiedClass : ourGenerifiedClasses) {
-                if (InheritanceUtil.isInheritor((PsiClass)resolved, generifiedClass)) {
+                if (InheritanceUtil.isInheritor((PsiClass)resolved, generifiedClass) && 
+                    !isRawInheritance(generifiedClass, (PsiClass)resolved, new HashSet<PsiClass>())) {
                   String message = InspectionsBundle.message("inspection.1.7.problem.descriptor", getJdkName(languageLevel));
                   myHolder.registerProblem(reference, message);
                   break;
@@ -276,6 +279,22 @@ public class Java15APIUsageInspectionBase extends BaseJavaBatchLocalInspectionTo
           }
         }
       }
+    }
+
+    private boolean isRawInheritance(String generifiedClassQName, PsiClass currentClass, Set<PsiClass> visited) {
+      for (PsiClassType classType : currentClass.getSuperTypes()) {
+        if (classType.isRaw()) {
+          return true;
+        }
+        final PsiClassType.ClassResolveResult resolveResult = classType.resolveGenerics();
+        final PsiClass superClass = resolveResult.getElement();
+        if (visited.add(superClass) && InheritanceUtil.isInheritor(superClass, generifiedClassQName)) {
+          if (isRawInheritance(generifiedClassQName, superClass, visited)) {
+            return true;
+          }
+        }
+      }
+      return false;
     }
 
     private boolean isIgnored(PsiClass psiClass) {
@@ -330,6 +349,7 @@ public class Java15APIUsageInspectionBase extends BaseJavaBatchLocalInspectionTo
 
     private void registerError(PsiJavaCodeReferenceElement reference, LanguageLevel api) {
       if (reference != null && isInProject(reference)) {
+        //noinspection DialogTitleCapitalization
         myHolder.registerProblem(reference, InspectionsBundle.message("inspection.1.5.problem.descriptor", getShortName(api)));
       }
     }
@@ -373,7 +393,7 @@ public class Java15APIUsageInspectionBase extends BaseJavaBatchLocalInspectionTo
     if (forbiddenApi.contains(signature)) {
       return true;
     }
-    if (languageLevel.compareTo(LanguageLevel.HIGHEST) == 0) {
+    if (languageLevel.compareTo(ourHighestKnownLanguage) == 0) {
       return false;
     }
     LanguageLevel nextLanguageLevel = LanguageLevel.values()[languageLevel.ordinal() + 1];
@@ -382,7 +402,7 @@ public class Java15APIUsageInspectionBase extends BaseJavaBatchLocalInspectionTo
   }
 
   /**
-   * please leave public for {@link #com.intellij.codeInspection.JavaAPIUsagesInspectionTest#testCollectSinceApiUsages}
+   * please leave public for JavaAPIUsagesInspectionTest#testCollectSinceApiUsages
    */
   @Nullable
   public static String getSignature(@Nullable PsiMember member) {

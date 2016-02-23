@@ -63,25 +63,24 @@ public class PyMakeFunctionFromMethodQuickFix implements LocalQuickFix {
     if (containingClass == null) return;
 
     final List<UsageInfo> usages = PyRefactoringUtil.findUsages(problemFunction, false);
-    PyUtil.deleteParameter(problemFunction, 0);
+    final PyParameter[] parameters = problemFunction.getParameterList().getParameters();
+    if (parameters.length > 0) {
+      parameters[0].delete();
+    }
 
     PsiElement copy = problemFunction.copy();
-    final PyStatementList classStatementList = containingClass.getStatementList();
-    classStatementList.deleteChildRange(problemFunction, problemFunction);
-    if (classStatementList.getStatements().length < 1) {
-      classStatementList.add(PyElementGenerator.getInstance(project).createPassStatement());
-    }
-    final PsiFile file = containingClass.getContainingFile();
+    problemFunction.delete();
+    final PsiElement parent = containingClass.getParent();
     PyClass aClass = PsiTreeUtil.getTopmostParentOfType(containingClass, PyClass.class);
     if (aClass == null)
       aClass = containingClass;
-    copy = file.addBefore(copy, aClass);
+    copy = parent.addBefore(copy, aClass);
 
     for (UsageInfo usage : usages) {
       final PsiElement usageElement = usage.getElement();
       if (usageElement instanceof PyReferenceExpression) {
         final PsiFile usageFile = usageElement.getContainingFile();
-        updateUsage(copy, (PyReferenceExpression)usageElement, usageFile, !usageFile.equals(file));
+        updateUsage(copy, (PyReferenceExpression)usageElement, usageFile, !usageFile.equals(parent));
       }
     }
   }
@@ -107,9 +106,7 @@ public class PyMakeFunctionFromMethodQuickFix implements LocalQuickFix {
         updateAssignment(element, resolved);
       }
       else if (resolved instanceof PyClass) {     //call with first instance argument A.m(A())
-        final PsiElement dot = qualifier.getNextSibling();
-        if (dot != null) dot.delete();
-        qualifier.delete();
+        PyUtil.removeQualifier(element);
         updateArgumentList(element);
       }
     }
@@ -155,13 +152,11 @@ public class PyMakeFunctionFromMethodQuickFix implements LocalQuickFix {
   private static void updateArgumentList(@NotNull final PyReferenceExpression element) {
     final PyCallExpression callExpression = PsiTreeUtil.getParentOfType(element, PyCallExpression.class);
     if (callExpression == null) return;
-    PyArgumentList argumentList = callExpression.getArgumentList();
+    final PyArgumentList argumentList = callExpression.getArgumentList();
     if (argumentList == null) return;
     final PyExpression[] arguments = argumentList.getArguments();
     if (arguments.length > 0) {
-      final PyExpression argument = arguments[0];
-      PyUtil.eraseWhitespaceAndComma(argument.getParent().getNode(), argument, false);
-      argument.delete();
+      arguments[0].delete();
     }
   }
 }

@@ -16,11 +16,15 @@
 
 package com.intellij.codeInsight.generation.actions;
 
+import com.intellij.codeInsight.CodeInsightActionHandler;
 import com.intellij.codeInsight.actions.BaseCodeInsightAction;
+import com.intellij.lang.ContextAwareActionHandler;
 import com.intellij.lang.Language;
 import com.intellij.lang.LanguageCodeInsightActionHandler;
 import com.intellij.lang.LanguageExtension;
+import com.intellij.openapi.actionSystem.ActionPlaces;
 import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.actionSystem.Presentation;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
@@ -49,14 +53,18 @@ public abstract class PresentableActionHandlerBasedAction extends BaseCodeInsigh
   }
 
   @Override
-  protected void update(@NotNull Presentation presentation, @NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
+  protected void update(@NotNull Presentation presentation, @NotNull Project project,
+                        @NotNull Editor editor, @NotNull PsiFile file, @NotNull DataContext dataContext, @Nullable String actionPlace) {
     // avoid evaluating isValidFor several times unnecessary
     
-    LanguageCodeInsightActionHandler handler = getValidHandler(editor, file);
+    CodeInsightActionHandler handler = getValidHandler(editor, file);
     presentation.setEnabled(handler != null);
+    if (handler instanceof ContextAwareActionHandler && !ActionPlaces.isMainMenuOrActionSearch(actionPlace)) {
+      presentation.setVisible(((ContextAwareActionHandler)handler).isAvailableForQuickList(editor, file, dataContext));
+    }
 
-    if (handler instanceof PresentableLanguageCodeInsightActionHandler) {
-      ((PresentableLanguageCodeInsightActionHandler)handler).update(editor, file, presentation);
+    if (presentation.isVisible() && handler instanceof PresentableCodeInsightActionHandler) {
+      ((PresentableCodeInsightActionHandler)handler).update(editor, file, presentation);
     }
   }
 
@@ -66,13 +74,22 @@ public abstract class PresentableActionHandlerBasedAction extends BaseCodeInsigh
   }
 
   @Nullable
-  private LanguageCodeInsightActionHandler getValidHandler(@NotNull Editor editor, @NotNull PsiFile file) {
+  private CodeInsightActionHandler getValidHandler(@NotNull Editor editor, @NotNull PsiFile file) {
     Language language = PsiUtilCore.getLanguageAtOffset(file, editor.getCaretModel().getOffset());
-    final LanguageCodeInsightActionHandler codeInsightActionHandler = getLanguageExtension().forLanguage(language);
-    if (codeInsightActionHandler != null && codeInsightActionHandler.isValidFor(editor, file)) return codeInsightActionHandler;
+    final CodeInsightActionHandler codeInsightActionHandler = getLanguageExtension().forLanguage(language);
+    if (codeInsightActionHandler != null) {
+      if (codeInsightActionHandler instanceof LanguageCodeInsightActionHandler) {
+        if (((LanguageCodeInsightActionHandler)codeInsightActionHandler).isValidFor(editor, file)) {
+          return codeInsightActionHandler;
+        }
+      }
+      else {
+        return codeInsightActionHandler;
+      }
+    }
     return null;
   }
 
   @NotNull
-  protected abstract LanguageExtension<LanguageCodeInsightActionHandler> getLanguageExtension();
+  protected abstract LanguageExtension<? extends CodeInsightActionHandler> getLanguageExtension();
 }

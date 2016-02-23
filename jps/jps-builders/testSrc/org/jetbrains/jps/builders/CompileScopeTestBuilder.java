@@ -15,6 +15,8 @@
  */
 package org.jetbrains.jps.builders;
 
+import com.intellij.openapi.util.io.FileUtil;
+import gnu.trove.THashSet;
 import org.jetbrains.jps.builders.java.JavaModuleBuildTargetType;
 import org.jetbrains.jps.incremental.CompileScope;
 import org.jetbrains.jps.incremental.CompileScopeImpl;
@@ -35,6 +37,7 @@ public class CompileScopeTestBuilder {
   private final boolean myForceBuild;
   private final Set<BuildTargetType<?>> myTargetTypes = new HashSet<BuildTargetType<?>>();
   private final Set<BuildTarget<?>> myTargets = new HashSet<BuildTarget<?>>();
+  private LinkedHashMap<BuildTarget<?>, Set<File>> myFiles = new LinkedHashMap<BuildTarget<?>, Set<File>>();
 
   public static CompileScopeTestBuilder rebuild() {
     return new CompileScopeTestBuilder(true);
@@ -78,9 +81,19 @@ public class CompileScopeTestBuilder {
     return this;
   }
 
+  public CompileScopeTestBuilder file(BuildTarget<?> target, String path) {
+    Set<File> files = myFiles.get(target);
+    if (files == null) {
+      files = new THashSet<File>(FileUtil.FILE_HASHING_STRATEGY);
+      myFiles.put(target, files);
+    }
+    files.add(new File(path));
+    return this;
+  }
+
   public CompileScope build() {
     Collection<BuildTargetType<?>> typesToForceBuild = myForceBuild ? myTargetTypes : Collections.<BuildTargetType<?>>emptyList();
-    return new CompileScopeImpl(myTargetTypes, typesToForceBuild, myTargets, Collections.<BuildTarget<?>,Set<File>>emptyMap());
+    return new CompileScopeImpl(myTargetTypes, typesToForceBuild, myTargets, myFiles);
   }
 
   public CompileScopeTestBuilder all() {

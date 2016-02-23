@@ -15,7 +15,6 @@
  */
 package com.intellij.openapi.options.newEditor;
 
-import com.intellij.AbstractBundle;
 import com.intellij.CommonBundle;
 import com.intellij.internal.statistic.UsageTrigger;
 import com.intellij.internal.statistic.beans.ConvertUsagesUtil;
@@ -25,15 +24,22 @@ import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.actionSystem.ex.AnActionListener;
-import com.intellij.openapi.options.*;
+import com.intellij.openapi.options.BaseConfigurable;
+import com.intellij.openapi.options.Configurable;
+import com.intellij.openapi.options.ConfigurationException;
+import com.intellij.openapi.options.ShowSettingsUtil;
 import com.intellij.openapi.options.ex.ConfigurableCardPanel;
+import com.intellij.openapi.options.ex.ConfigurableExtensionPointUtil;
 import com.intellij.openapi.options.ex.ConfigurableVisitor;
-import com.intellij.openapi.options.ex.ConfigurableWrapper;
+import com.intellij.openapi.project.DumbModePermission;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.ActionCallback;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.RelativeFont;
 import com.intellij.ui.components.labels.LinkLabel;
+import com.intellij.util.containers.JBIterable;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.update.MergingUpdateQueue;
@@ -69,14 +75,19 @@ class ConfigurableEditor extends AbstractEditor implements AnActionListener, AWT
   private final AbstractAction myApplyAction = new AbstractAction(CommonBundle.getApplyButtonText()) {
     @Override
     public void actionPerformed(ActionEvent event) {
-      apply();
+      DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, new Runnable() {
+        @Override
+        public void run() {
+          apply();
+        }
+      });
     }
   };
   private final AbstractAction myResetAction = new AbstractAction(RESET_NAME) {
     @Override
     public void actionPerformed(ActionEvent event) {
       if (myConfigurable != null) {
-        myConfigurable.reset();
+        ConfigurableCardPanel.reset(myConfigurable);
         updateCurrent(myConfigurable, true);
       }
     }
@@ -96,10 +107,13 @@ class ConfigurableEditor extends AbstractEditor implements AnActionListener, AWT
     myErrorLabel.setBackground(ERROR_BACKGROUND);
     add(BorderLayout.SOUTH, RelativeFont.HUGE.install(myErrorLabel));
     add(BorderLayout.CENTER, myCardPanel);
+    Disposer.register(this, myCardPanel);
     ActionManager.getInstance().addAnActionListener(this, this);
     getDefaultToolkit().addAWTEventListener(this, AWTEvent.MOUSE_EVENT_MASK | AWTEvent.MOUSE_MOTION_EVENT_MASK | AWTEvent.KEY_EVENT_MASK);
-    myConfigurable = configurable;
-    myCardPanel.select(configurable, true);
+    if (configurable != null) {
+      myConfigurable = configurable;
+      myCardPanel.select(configurable, true);
+    }
     updateCurrent(configurable, false);
   }
 
@@ -126,7 +140,9 @@ class ConfigurableEditor extends AbstractEditor implements AnActionListener, AWT
 
   @Override
   boolean apply() {
-    return setError(apply(myConfigurable));
+    // do not apply changes of a single configurable if it is not modified
+    updateIfCurrent(myConfigurable);
+    return setError(apply(myApplyAction.isEnabled() ? myConfigurable : null));
   }
 
   void openLink(Configurable configurable) {
@@ -144,6 +160,15 @@ class ConfigurableEditor extends AbstractEditor implements AnActionListener, AWT
   @Override
   public final void afterActionPerformed(AnAction action, DataContext context, AnActionEvent event) {
     requestUpdate();
+  }
+
+  @Override
+  public JComponent getPreferredFocusedComponent() {
+    if (myConfigurable instanceof BaseConfigurable) {
+      JComponent preferred = ((BaseConfigurable)myConfigurable).getPreferredFocusedComponent();
+      if (preferred != null) return preferred;
+    }
+    return UIUtil.getPreferredFocusedComponent(getContent(myConfigurable));
   }
 
   @Override
@@ -186,6 +211,11 @@ class ConfigurableEditor extends AbstractEditor implements AnActionListener, AWT
     Window editor = UIUtil.getWindow(this);
     if (editor != null) {
       Window popup = UIUtil.getWindow(component);
+      // light-weight popup is located on the layered pane of the same window
+      if (popup == editor) {
+        return true;
+      }
+      // heavy-weight popup opens new window with the corresponding parent
       if (popup != null && editor == popup.getParent()) {
         if (popup instanceof JDialog) {
           JDialog dialog = (JDialog)popup;
@@ -215,6 +245,7 @@ class ConfigurableEditor extends AbstractEditor implements AnActionListener, AWT
   }
 
   final ActionCallback select(final Configurable configurable) {
+    assert !myDisposed : "Already disposed";
     ActionCallback callback = myCardPanel.select(configurable, false);
     callback.doWhenDone(new Runnable() {
       @Override
@@ -284,18 +315,10 @@ class ConfigurableEditor extends AbstractEditor implements AnActionListener, AWT
   }
 
   private static String getString(Configurable configurable, String key) {
-    try {
-      if (configurable instanceof ConfigurableWrapper) {
-        ConfigurableWrapper wrapper = (ConfigurableWrapper)configurable;
-        ConfigurableEP ep = wrapper.getExtensionPoint();
-        ResourceBundle bundle = AbstractBundle.getResourceBundle(ep.bundle, ep.getPluginDescriptor().getPluginClassLoader());
-        return CommonBundle.message(bundle, key);
-      }
-      return OptionsBundle.message(key);
-    }
-    catch (AssertionError error) {
-      return null;
-    }
+    JBIterable<Configurable> it = JBIterable.of(configurable).append(
+      JBIterable.of(configurable instanceof Configurable.Composite ? ((Configurable.Composite)configurable).getConfigurables() : null));
+    ResourceBundle bundle = ConfigurableExtensionPointUtil.getBundle(key, it, null);
+    return bundle != null ? bundle.getString(key) : null;
   }
 
   static ConfigurationException apply(Configurable configurable) {

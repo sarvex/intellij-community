@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,10 +36,11 @@ import com.intellij.psi.*;
 import com.intellij.psi.impl.PsiManagerEx;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.PsiShortNamesCache;
-import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.SkipSlowTestLocally;
+import com.intellij.util.ArrayUtil;
 import com.intellij.util.text.CharArrayUtil;
 import com.intellij.util.ui.UIUtil;
+import org.intellij.lang.annotations.Language;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
@@ -62,7 +63,7 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
       return new LocalInspectionTool[]{new UnusedImportLocalInspection(),};
     }
     List<InspectionToolWrapper> all = InspectionToolRegistrar.getInstance().createTools();
-    List<LocalInspectionTool> locals = new ArrayList<LocalInspectionTool>();
+    List<LocalInspectionTool> locals = new ArrayList<>();
     for (InspectionToolWrapper tool : all) {
       if (tool instanceof LocalInspectionToolWrapper) {
         LocalInspectionTool e = ((LocalInspectionToolWrapper)tool).getTool();
@@ -72,7 +73,8 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
     return locals.toArray(new LocalInspectionTool[locals.size()]);
   }
 
-  @NonNls private static final String text = "import java.util.*; class X { void f ( ) { "
+  @Language("JAVA")
+  @NonNls private static final String text = "import java.util.*; class X { void f ( ) { \n"
   + "List < String > ls = new ArrayList < String > ( 1 ) ; ls . toString ( ) ; \n"
   + "List < Integer > is = new ArrayList < Integer > ( 1 ) ; is . toString ( ) ; \n"
   + "List i = new ArrayList ( 1 ) ; i . toString ( ) ; \n"
@@ -91,7 +93,8 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
   + "Map < Number , String > l5 = new HashMap < Number , String > ( l4 ) ; l5 . toString ( ) ; \n"
   + "HashMap < Number , String > l6 = new HashMap < Number , String > ( ) ; l6 . toString ( ) ; \n"
   + "Map < List < Integer > , Map < String , List < String > > > l7 = new HashMap ( 1 ) ; l7 . toString ( ) ; \n"
-  + "java . util . Map < java . util . List < Integer > , java . util . Map < String , java . util . List < String > > > l77 = new java . util . HashMap ( 1 ) ; l77 . toString ( ) ; \n"
+  + "java . util . Map < java . util . List < Integer > , java . util . Map < String , java . util . List < String > > > l77 = \n" +
+                                             "new java . util . HashMap ( 1 ) ; l77 . toString ( ) ; \n"
   + " } } ";
 
   public void testAllTheseConcurrentThreadsDoNotCrashAnything() throws Exception {
@@ -129,7 +132,7 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
 
       UIUtil.dispatchAllInvocationEvents();
     }
-    System.out.println("Average among the N/3 median times: " + PlatformTestUtil.averageAmongMedians(time, 3) + "ms");
+    System.out.println("Average among the N/3 median times: " + ArrayUtil.averageAmongMedians(time, 3) + "ms");
 
     //System.out.println("JobLauncher.COUNT   = " + JobLauncher.COUNT);
     //System.out.println("JobLauncher.TINY    = " + JobLauncher.TINY_COUNT);
@@ -144,8 +147,20 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
 
   public void testRandomEditingPerformance() throws Exception {
     configureFromFileText("Stress.java", text);
-    List<HighlightInfo> list = doHighlighting();
-    int warnings = list.size();
+    List<HighlightInfo> oldWarnings = doHighlighting();
+    List<String> oldWarningTexts = new ArrayList<>();
+    int oldWarningSize = oldWarnings.size();
+    oldWarnings = new ArrayList<>(oldWarnings);
+    Comparator<HighlightInfo> infoComparator = (o1, o2) -> {
+      if (o1.equals(o2)) return 0;
+      if (o1.getActualStartOffset() != o2.getActualStartOffset()) return o1.getActualStartOffset() - o2.getActualStartOffset();
+      return (o1.getText() + o1.getDescription()).compareTo(o2.getText() + o2.getDescription());
+    };
+    Collections.sort(oldWarnings, infoComparator);
+    for (HighlightInfo info : oldWarnings) {
+      oldWarningTexts.add(info.getText() + info.getDescription());
+    }
+
     Random random = new Random();
 
     DaemonCodeAnalyzer.getInstance(getProject()).restart();
@@ -153,6 +168,7 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
     long[] time = new long[N];
 
     for (int i = 0; i < N; i++) {
+      PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
       long start = System.currentTimeMillis();
 
       System.out.println("i = " + i);
@@ -164,39 +180,27 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
       }
       myEditor.getCaretModel().moveToOffset(offset);
       type("/*--*/");
-      Collection<HighlightInfo> infos = doHighlighting();
-      if (warnings != infos.size()) {
-        list = new ArrayList<HighlightInfo>(list);
-        Collections.sort(list, new Comparator<HighlightInfo>() {
-          @Override
-          public int compare(HighlightInfo o1, HighlightInfo o2) {
-            if (o1.equals(o2)) return 0;
-            if (o1.getActualStartOffset() != o2.getActualStartOffset()) return o1.getActualStartOffset() - o2.getActualStartOffset();
-            return (o1.getText() + o1.getDescription()).compareTo(o2.getText() + o2.getDescription());
+      List<HighlightInfo> infos = doHighlighting();
+      if (oldWarningSize != infos.size()) {
+        infos = new ArrayList<>(infos);
+        Collections.sort(infos, infoComparator);
+
+        for (int k=0; k<Math.min(infos.size(), oldWarningSize);k++) {
+          HighlightInfo info = infos.get(k);
+          String text = info.getText() + info.getDescription();
+          String oldText = oldWarningTexts.get(k);
+          if (!text.equals(oldText)) {
+            System.err.println("Old ("+k+"): "+oldText+"; new: "+info);
+            break;
           }
-        });
-        infos = new ArrayList<HighlightInfo>(infos);
-        Collections.sort((ArrayList<HighlightInfo>)infos, new Comparator<HighlightInfo>() {
-          @Override
-          public int compare(HighlightInfo o1, HighlightInfo o2) {
-            if (o1.equals(o2)) return 0;
-            if (o1.getActualStartOffset() != o2.getActualStartOffset()) return o1.getActualStartOffset() - o2.getActualStartOffset();
-            return (o1.getText() + o1.getDescription()).compareTo(o2.getText() + o2.getDescription());
-          }
-        });
-        System.out.println(">--------------------");
-        for (HighlightInfo info : list) {
-          System.out.println(info);
         }
-        System.out.println("---------------------");
-        for (HighlightInfo info : infos) {
-          System.out.println(info);
-        }
-        System.out.println("<--------------------");
+        assertEquals(infos.toString(), oldWarningSize, infos.size());
       }
-      assertEquals(infos.toString(), warnings, infos.size());
       for (HighlightInfo info : infos) {
         assertNotSame(info + "", HighlightSeverity.ERROR, info.getSeverity());
+      }
+      for (int k=0; k<"/*--*/".length();k++) {
+        backspace();
       }
       UIUtil.dispatchAllInvocationEvents();
 
@@ -205,7 +209,7 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
     }
     FileEditorManagerEx.getInstanceEx(getProject()).closeAllFiles();
 
-    System.out.println("Average among the N/3 median times: " + PlatformTestUtil.averageAmongMedians(time, 3) + "ms");
+    System.out.println("Average among the N/3 median times: " + ArrayUtil.averageAmongMedians(time, 3) + "ms");
   }
 
   public void testRandomEditingForUnused() throws Exception {
@@ -217,7 +221,7 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
     final StringBuilder imports = new StringBuilder();
     final StringBuilder usages = new StringBuilder();
     int v = 0;
-    List<PsiClass> aclasses = new ArrayList<PsiClass>();
+    List<PsiClass> aclasses = new ArrayList<>();
     for (String name : names) {
       PsiClass[] classes = cache.getClassesByName(name, GlobalSearchScope.allScope(getProject()));
       if (classes.length == 0) continue;
@@ -235,11 +239,8 @@ public class HighlightStressTest extends LightDaemonAnalyzerTestCase {
       if (v>100) break;
     }
     final String text = imports + "\n class X {{\n" + usages + "}}";
-    WriteCommandAction.runWriteCommandAction(null, new Runnable() {
-      @Override
-      public void run() {
-        getEditor().getDocument().setText(text);
-      }
+    WriteCommandAction.runWriteCommandAction(null, () -> {
+      getEditor().getDocument().setText(text);
     });
 
     List<HighlightInfo> errors = DaemonAnalyzerTestCase.filter(doHighlighting(), HighlightSeverity.WARNING);

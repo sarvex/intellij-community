@@ -18,6 +18,9 @@ package com.intellij.execution.actions;
 
 import com.intellij.execution.*;
 import com.intellij.execution.configurations.ConfigurationType;
+import com.intellij.execution.impl.ExecutionManagerImpl;
+import com.intellij.execution.runners.ExecutionUtil;
+import com.intellij.execution.ui.RunContentDescriptor;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.DataManager;
 import com.intellij.openapi.actionSystem.*;
@@ -26,12 +29,20 @@ import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Condition;
+import com.intellij.openapi.util.registry.Registry;
+import com.intellij.openapi.wm.ex.WindowManagerEx;
+import com.intellij.openapi.wm.impl.IdeFrameImpl;
+import com.intellij.ui.IdeBorderFactory;
 import com.intellij.ui.SizedIcon;
+import com.intellij.ui.components.panels.NonOpaquePanel;
+import com.intellij.util.IconUtil;
 import com.intellij.util.ui.EmptyIcon;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
+import java.awt.*;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -44,32 +55,33 @@ public class RunConfigurationsComboBoxAction extends ComboBoxAction implements D
 
   @Override
   public void actionPerformed(AnActionEvent e) {
-    ComboBoxButton button = (ComboBoxButton)e.getPresentation().getClientProperty(CUSTOM_COMPONENT_PROPERTY);
-    if (button == null || !button.isShowing()) return;
-    button.showPopup();
+    if (e.getPresentation().getClientProperty(CUSTOM_COMPONENT_PROPERTY) == null) {
+      Project project = e.getProject();
+      IdeFrameImpl frame = project != null ? WindowManagerEx.getInstanceEx().getFrame(project) : null;
+      if (frame != null) {
+        e.getPresentation().putClientProperty(CUSTOM_COMPONENT_PROPERTY, frame.getComponent());
+      }
+    }
+    super.actionPerformed(e);
   }
 
   @Override
   public void update(AnActionEvent e) {
     Presentation presentation = e.getPresentation();
-    ComboBoxButton button = (ComboBoxButton)presentation.getClientProperty(CUSTOM_COMPONENT_PROPERTY);
     Project project = e.getData(CommonDataKeys.PROJECT);
     if (ActionPlaces.isMainMenuOrActionSearch(e.getPlace())) {
       presentation.setDescription(ExecutionBundle.message("choose.run.configuration.action.description"));
-      presentation.setEnabled(button != null);
-      return;
     }
-
     try {
       if (project == null || project.isDisposed() || !project.isInitialized()) {
-        updateButton(null, null, null, presentation);
+        updatePresentation(null, null, null, presentation);
         presentation.setEnabled(false);
       }
       else {
-        updateButton(ExecutionTargetManager.getActiveTarget(project),
-                     RunManagerEx.getInstanceEx(project).getSelectedConfiguration(),
-                     project,
-                     presentation);
+        updatePresentation(ExecutionTargetManager.getActiveTarget(project),
+                           RunManagerEx.getInstanceEx(project).getSelectedConfiguration(),
+                           project,
+                           presentation);
         presentation.setEnabled(true);
       }
     }
@@ -78,10 +90,10 @@ public class RunConfigurationsComboBoxAction extends ComboBoxAction implements D
     }
   }
 
-  private static void updateButton(@Nullable ExecutionTarget target,
-                                   final @Nullable RunnerAndConfigurationSettings settings,
-                                   final @Nullable Project project,
-                                   final @NotNull Presentation presentation) {
+  private static void updatePresentation(@Nullable ExecutionTarget target,
+                                         @Nullable RunnerAndConfigurationSettings settings,
+                                         @Nullable Project project,
+                                         @NotNull Presentation presentation) {
     if (project != null && target != null && settings != null) {
       String name = settings.getName();
       if (target != DefaultExecutionTarget.INSTANCE) {
@@ -104,17 +116,39 @@ public class RunConfigurationsComboBoxAction extends ComboBoxAction implements D
                                            final RunnerAndConfigurationSettings settings,
                                            final Project project) {
     try {
-      presentation.setIcon(RunManagerEx.getInstanceEx(project).getConfigurationIcon(settings));
+      Icon icon = RunManagerEx.getInstanceEx(project).getConfigurationIcon(settings);
+      ExecutionManagerImpl executionManager = ExecutionManagerImpl.getInstance(project);
+      List<RunContentDescriptor> runningDescriptors = executionManager.getRunningDescriptors(new Condition<RunnerAndConfigurationSettings>() {
+          @Override
+          public boolean value(RunnerAndConfigurationSettings s) {
+            return s == settings;
+          }
+        });
+      if (runningDescriptors.size() == 1) {
+        icon = ExecutionUtil.getLiveIndicator(icon);
+      }
+      if (runningDescriptors.size() > 1) {
+        icon = IconUtil.addText(icon, String.valueOf(runningDescriptors.size()));
+      }
+      presentation.setIcon(icon);
     }
     catch (IndexNotReadyException ignored) {
     }
   }
 
   @Override
+  protected boolean shouldShowDisabledActions() {
+    return true;
+  }
+
+  @Override
   public JComponent createCustomComponent(final Presentation presentation) {
-    ComboBoxButton button = new ComboBoxButton(presentation);
+    ComboBoxButton button = createComboBoxButton(presentation);
     button.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 2));
-    return button;
+    NonOpaquePanel panel = new NonOpaquePanel(new BorderLayout());
+    panel.setBorder(IdeBorderFactory.createEmptyBorder(0, 0, 0, 2));
+    panel.add(button);
+    return panel;
   }
 
 
@@ -236,10 +270,15 @@ public class RunConfigurationsComboBoxAction extends ComboBoxAction implements D
     @Override
     public void actionPerformed(AnActionEvent e) {
       ExecutionTargetManager.setActiveTarget(myProject, myTarget);
-      updateButton(ExecutionTargetManager.getActiveTarget(myProject),
-                   RunManagerEx.getInstanceEx(myProject).getSelectedConfiguration(),
-                   myProject,
-                   e.getPresentation());
+      updatePresentation(ExecutionTargetManager.getActiveTarget(myProject),
+                         RunManagerEx.getInstanceEx(myProject).getSelectedConfiguration(),
+                         myProject,
+                         e.getPresentation());
+    }
+
+    @Override
+    public boolean isDumbAware() {
+      return Registry.is("dumb.aware.run.configurations");
     }
   }
 
@@ -270,7 +309,7 @@ public class RunConfigurationsComboBoxAction extends ComboBoxAction implements D
     @Override
     public void actionPerformed(final AnActionEvent e) {
       RunManager.getInstance(myProject).setSelectedConfiguration(myConfiguration);
-      updateButton(ExecutionTargetManager.getActiveTarget(myProject), myConfiguration, myProject, e.getPresentation());
+      updatePresentation(ExecutionTargetManager.getActiveTarget(myProject), myConfiguration, myProject, e.getPresentation());
     }
 
     @Override

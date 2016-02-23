@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,6 @@ import com.intellij.psi.search.LocalSearchScope;
 import com.intellij.psi.search.searches.ReferencesSearch;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
-import com.intellij.refactoring.introduceParameter.Util;
 import com.intellij.refactoring.util.RefactoringUtil;
 import com.intellij.refactoring.util.VariableData;
 import com.intellij.refactoring.util.duplicates.DuplicatesFinder;
@@ -69,8 +68,8 @@ public class ExtractMethodSignatureSuggester {
     }
   };
 
-  private Project myProject;
-  private PsiElementFactory myElementFactory;
+  private final Project myProject;
+  private final PsiElementFactory myElementFactory;
 
   private PsiMethod myExtractedMethod;
   private PsiMethodCallExpression myMethodCall;
@@ -90,11 +89,12 @@ public class ExtractMethodSignatureSuggester {
     myVariableData = variableDatum;
   }
 
-  public List<Match> getDuplicates(final PsiMethod method, final PsiMethodCallExpression methodCall) {
-    final List<Match> duplicates = findDuplicatesSignature(method);
+  public List<Match> getDuplicates(final PsiMethod method, final PsiMethodCallExpression methodCall, ParametersFolder folder) {
+    final List<Match> duplicates = findDuplicatesSignature(method, folder);
     if (duplicates != null && !duplicates.isEmpty()) {
       if (ApplicationManager.getApplication().isUnitTestMode() || 
           new PreviewDialog(method, myExtractedMethod, methodCall, myMethodCall, duplicates.size()).showAndGet()) {
+        PsiDocumentManager.getInstance(myProject).commitAllDocuments();
         WriteCommandAction.runWriteCommandAction(myProject, new Runnable() {
           @Override
           public void run() {
@@ -128,7 +128,7 @@ public class ExtractMethodSignatureSuggester {
   }
 
   @Nullable
-  public List<Match> findDuplicatesSignature(final PsiMethod method) {
+  public List<Match> findDuplicatesSignature(final PsiMethod method, ParametersFolder folder) {
     final List<PsiExpression> copies = new ArrayList<PsiExpression>();
     final InputVariables variables = detectTopLevelExpressionsToReplaceWithParameters(copies);
     if (variables == null) {
@@ -149,7 +149,7 @@ public class ExtractMethodSignatureSuggester {
     List<Match> duplicates = finder.findDuplicates(method.getContainingClass());
 
     if (duplicates != null && !duplicates.isEmpty()) {
-      restoreRenamedParams(copies);
+      restoreRenamedParams(copies, folder);
       if (!myMethodCall.isValid()) {
         return null;
       }
@@ -256,17 +256,18 @@ public class ExtractMethodSignatureSuggester {
     return true;
   }
 
-  private void restoreRenamedParams(List<PsiExpression> copies) {
-    final Map<String, PsiVariable> renameMap = new HashMap<String, PsiVariable>();
+  private void restoreRenamedParams(List<PsiExpression> copies, ParametersFolder folder) {
+    final Map<String, String> renameMap = new HashMap<String, String>();
     for (VariableData data : myVariableData) {
-      if (!data.name.equals(data.variable.getName())) {
-        renameMap.put(data.name, data.variable);
+      final String replacement = folder.getGeneratedCallArgument(data);
+      if (!data.name.equals(replacement)) {
+        renameMap.put(data.name, replacement);
       }
     }
 
     if (!renameMap.isEmpty()) {
       for (PsiExpression currentExpression : copies) {
-        final Map<PsiReferenceExpression, PsiVariable> params = new HashMap<PsiReferenceExpression, PsiVariable>();
+        final Map<PsiReferenceExpression, String> params = new HashMap<PsiReferenceExpression, String>();
         currentExpression.accept(new JavaRecursiveElementWalkingVisitor() {
           @Override
           public void visitReferenceExpression(PsiReferenceExpression expression) {
@@ -274,7 +275,7 @@ public class ExtractMethodSignatureSuggester {
             final PsiElement resolve = expression.resolve();
             if (resolve instanceof PsiParameter && myExtractedMethod.equals(((PsiParameter)resolve).getDeclarationScope())) {
               final String name = ((PsiParameter)resolve).getName();
-              final PsiVariable variable = renameMap.get(name);
+              final String variable = renameMap.get(name);
               if (renameMap.containsKey(name)) {
                 params.put(expression, variable);
               }
@@ -282,8 +283,8 @@ public class ExtractMethodSignatureSuggester {
           }
         });
         for (PsiReferenceExpression expression : params.keySet()) {
-          final PsiVariable var = params.get(expression);
-          expression.replace(myElementFactory.createExpressionFromText(var.getName(), expression));
+          final String var = params.get(expression);
+          expression.replace(myElementFactory.createExpressionFromText(var, expression));
         }
       }
     }
@@ -345,7 +346,8 @@ public class ExtractMethodSignatureSuggester {
         copies.add(myElementFactory.createExpressionFromText(expr.getText(), body));
 
         final SuggestedNameInfo info = JavaCodeStyleManager.getInstance(myProject).suggestVariableName(VariableKind.PARAMETER, null, expr, null);
-        name = uniqueNameGenerator.generateUniqueName(info.names[0]);
+        final String paramName = info.names.length > 0 ? info.names[0] : "p";
+        name = uniqueNameGenerator.generateUniqueName(paramName);
 
         final PsiParameter parameter = (PsiParameter)myExtractedMethod.getParameterList().add(myElementFactory.createParameter(name, type));
         inputVariables.add(parameter);
@@ -381,6 +383,7 @@ public class ExtractMethodSignatureSuggester {
       myDuplicatesNumber = duplicatesNumber;
       setTitle("Extract Parameters to Replace Duplicates");
       setOKButtonText("Accept Signature Change");
+      setCancelButtonText("Keep Original Signature");
       init();
     }
 

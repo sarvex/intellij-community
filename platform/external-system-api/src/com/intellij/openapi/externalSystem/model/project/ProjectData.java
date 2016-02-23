@@ -3,6 +3,7 @@ package com.intellij.openapi.externalSystem.model.project;
 import com.intellij.openapi.externalSystem.model.ProjectSystemId;
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Not thread-safe.
@@ -17,6 +18,9 @@ public class ProjectData extends AbstractNamedData implements ExternalConfigPath
   @NotNull private final String myLinkedExternalProjectPath;
 
   @NotNull private String myIdeProjectFileDirectoryPath;
+  @Nullable private String myDescription;
+  private String myGroup;
+  private String myVersion;
 
   @Deprecated
   public ProjectData(@NotNull ProjectSystemId owner,
@@ -86,5 +90,30 @@ public class ProjectData extends AbstractNamedData implements ExternalConfigPath
   @Override
   public String getId() {
     return "";
+  }
+
+  public String getGroup() {
+    return myGroup;
+  }
+
+  public void setGroup(String group) {
+    myGroup = group;
+  }
+
+  public String getVersion() {
+    return myVersion;
+  }
+
+  public void setVersion(String version) {
+    myVersion = version;
+  }
+
+  @Nullable
+  public String getDescription() {
+    return myDescription;
+  }
+
+  public void setDescription(@Nullable String description) {
+    myDescription = description;
   }
 }

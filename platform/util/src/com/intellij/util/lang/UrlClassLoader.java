@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,12 @@ import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.win32.IdeaWin32;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
-import org.jetbrains.annotations.NonNls;
+import com.intellij.util.containers.WeakStringInterner;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import sun.misc.Resource;
 
 import java.io.File;
 import java.io.IOException;
@@ -43,30 +43,37 @@ import java.util.List;
  * Should be constructed using {@link #build()} method.
  */
 public class UrlClassLoader extends ClassLoader {
-  // Feature enabling flag for saving / restoring file system information for local class directories, see Builder#usePersistentClasspathIndexForLocalClassDirectories
-  private static final boolean INDEX_PERSISTENCE_ENABLED = Boolean.parseBoolean(System.getProperty("idea.classpath.index.enabled", "true"));
-  @NonNls static final String CLASS_EXTENSION = ".class";
+  public static final String CLASS_EXTENSION = ".class";
 
+  public static final boolean PARALLEL_CAPABLE;
   static {
-    // Since Java 7 classloading is parallel on parallel capable classloader (http://docs.oracle.com/javase/7/docs/technotes/guides/lang/cl-mt.html)
-    // Parallel classloading avoids deadlocks like https://youtrack.jetbrains.com/issue/IDEA-131621
-    // Unless explicitly disabled, request parallel loading capability via reflection due to current platform's Java 6 baseline
-    // todo[r.sh] drop condition in IDEA 15
-    // todo[r.sh] drop reflection after migrating to Java 7+
-    boolean parallelLoader = Boolean.parseBoolean(System.getProperty("idea.parallel.class.loader", "true"));
-    if (parallelLoader) {
+    boolean parallelCapable = false;
+    if (SystemInfo.isJavaVersionAtLeast("1.7") && !SystemInfo.isIbmJvm) {
       try {
+        // todo Patches.USE_REFLECTION_TO_ACCESS_JDK7
         Method registerAsParallelCapable = ClassLoader.class.getDeclaredMethod("registerAsParallelCapable");
         registerAsParallelCapable.setAccessible(true);
         registerAsParallelCapable.invoke(null);
+        parallelCapable = true;
       }
       catch (Exception ignored) { }
     }
+    PARALLEL_CAPABLE = parallelCapable;
   }
+
+  private static final boolean ourClassPathIndexEnabled = Boolean.parseBoolean(System.getProperty("idea.classpath.index.enabled", "true"));
 
   @NotNull
   protected ClassPath getClassPath() {
     return myClassPath;
+  }
+
+  /**
+   * @see com.intellij.TestAll#getClassRoots()
+   */
+  @SuppressWarnings("unused")
+  public List<URL> getBaseUrls() {
+    return myClassPath.getBaseUrls();
   }
 
   public static final class Builder {
@@ -96,9 +103,10 @@ public class UrlClassLoader extends ClassLoader {
     // FileLoader's root. Currently the flag is used for faster unit test / developed Idea running, because Idea's make (as of 14.1) ensures deletion of
     // such information upon appearing new file for output root.
     // N.b. Idea make does not ensure deletion of cached information upon deletion of some file under local root but false positives are not a
-    // logical error since code is prepared for that and disk access is performed upon class / resource loading
+    // logical error since code is prepared for that and disk access is performed upon class / resource loading.
+    // See also Builder#usePersistentClasspathIndexForLocalClassDirectories.
     public Builder usePersistentClasspathIndexForLocalClassDirectories() {
-      myUsePersistentClasspathIndex = INDEX_PERSISTENCE_ENABLED;
+      myUsePersistentClasspathIndex = ourClassPathIndexEnabled;
       return this;
     }
 
@@ -134,32 +142,13 @@ public class UrlClassLoader extends ClassLoader {
 
   private final List<URL> myURLs;
   private final ClassPath myClassPath;
+  private final WeakStringInterner myClassNameInterner;
   private final boolean myAllowBootstrapResources;
 
   /** @deprecated use {@link #build()}, left for compatibility with java.system.class.loader setting */
   public UrlClassLoader(@NotNull ClassLoader parent) {
     this(build().urls(((URLClassLoader)parent).getURLs()).parent(parent.getParent()).allowLock().useCache()
            .usePersistentClasspathIndexForLocalClassDirectories());
-  }
-
-  /** @deprecated use {@link #build()} (to remove in IDEA 15) */
-  public UrlClassLoader(List<URL> urls, @Nullable ClassLoader parent) {
-    this(build().urls(urls).parent(parent));
-  }
-
-  /** @deprecated use {@link #build()} (to remove in IDEA 15) */
-  public UrlClassLoader(URL[] urls, @Nullable ClassLoader parent) {
-    this(build().urls(urls).parent(parent));
-  }
-
-  /** @deprecated use {@link #build()} (to remove in IDEA 15) */
-  public UrlClassLoader(List<URL> urls, @Nullable ClassLoader parent, boolean lockJars, boolean useCache) {
-    this(build().urls(urls).parent(parent).allowLock(lockJars).useCache(useCache));
-  }
-
-  /** @deprecated use {@link #build()} (to remove in IDEA 15) */
-  public UrlClassLoader(List<URL> urls, @Nullable ClassLoader parent, boolean lockJars, boolean useCache, boolean allowUnescaped, boolean preload) {
-    this(build().urls(urls).parent(parent).allowLock(lockJars).useCache(useCache).allowUnescaped(allowUnescaped).preload(preload));
   }
 
   protected UrlClassLoader(@NotNull Builder builder) {
@@ -172,6 +161,7 @@ public class UrlClassLoader extends ClassLoader {
     });
     myClassPath = createClassPath(builder);
     myAllowBootstrapResources = builder.myAllowBootstrapResources;
+    myClassNameInterner = PARALLEL_CAPABLE ? new WeakStringInterner() : null;
   }
 
   @NotNull
@@ -243,7 +233,14 @@ public class UrlClassLoader extends ClassLoader {
       Package pkg = getPackage(pkgName);
       if (pkg == null) {
         try {
-          definePackage(pkgName, null, null, null, null, null, null, null);
+          definePackage(pkgName,
+                        res.getValue(Resource.Attribute.SPEC_TITLE),
+                        res.getValue(Resource.Attribute.SPEC_VERSION),
+                        res.getValue(Resource.Attribute.SPEC_VENDOR),
+                        res.getValue(Resource.Attribute.IMPL_TITLE),
+                        res.getValue(Resource.Attribute.IMPL_VERSION),
+                        res.getValue(Resource.Attribute.IMPL_VENDOR),
+                        null);
         }
         catch (IllegalArgumentException e) {
           // do nothing, package already defined by some other thread
@@ -273,7 +270,7 @@ public class UrlClassLoader extends ClassLoader {
   @Nullable
   private Resource _getResource(final String name) {
     String n = name;
-    if (n.startsWith("/")) n = n.substring(1);
+    n = StringUtil.trimStart(n, "/");
     return getClassPath().getResource(n, true);
   }
 
@@ -333,6 +330,10 @@ public class UrlClassLoader extends ClassLoader {
     else if (SystemInfo.isMac) return "mac/";
     else if (SystemInfo.isLinux) return "linux/";
     else return "";
+  }
+
+  protected Object getClassLoadingLock(String className) {
+    return myClassNameInterner != null ? myClassNameInterner.intern(new String(className)) : this;
   }
 
   /**

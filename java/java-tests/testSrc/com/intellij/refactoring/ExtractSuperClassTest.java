@@ -16,6 +16,7 @@
 package com.intellij.refactoring;
 
 import com.intellij.JavaTestUtil;
+import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.roots.LanguageLevelProjectExtension;
 import com.intellij.openapi.vfs.LocalFileSystem;
@@ -25,10 +26,10 @@ import com.intellij.psi.*;
 import com.intellij.psi.impl.source.PostprocessReformattingAspect;
 import com.intellij.psi.search.ProjectScope;
 import com.intellij.refactoring.extractSuperclass.ExtractSuperClassProcessor;
+import com.intellij.refactoring.extractSuperclass.ExtractSuperClassUtil;
 import com.intellij.refactoring.memberPullUp.PullUpConflictsUtil;
 import com.intellij.refactoring.memberPullUp.PullUpProcessor;
 import com.intellij.refactoring.util.DocCommentPolicy;
-import com.intellij.refactoring.util.classMembers.InterfaceContainmentVerifier;
 import com.intellij.refactoring.util.classMembers.MemberInfo;
 import com.intellij.testFramework.IdeaTestUtil;
 import com.intellij.testFramework.PsiTestUtil;
@@ -37,6 +38,8 @@ import com.intellij.util.containers.MultiMap;
 import org.jetbrains.annotations.NonNls;
 
 import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 
 /**
@@ -53,6 +56,10 @@ public class ExtractSuperClassTest extends RefactoringTestCase {
   }
 
    public void testMethodTypeParameter() throws Exception {
+    doTest("Test", "TestSubclass", new RefactoringTestUtil.MemberDescriptor("m", PsiMethod.class));
+  }
+
+  public void testMultipleTypeParameters() throws Exception {
     doTest("Test", "TestSubclass", new RefactoringTestUtil.MemberDescriptor("m", PsiMethod.class));
   }
 
@@ -128,6 +135,38 @@ public class ExtractSuperClassTest extends RefactoringTestCase {
     doTest("p1.A", "AA", new RefactoringTestUtil.MemberDescriptor("m1", PsiMethod.class));
   }
 
+  public void testAnonymClass() throws Exception {
+    String rootBefore = getRoot() + "/before";
+    PsiTestUtil.removeAllRoots(myModule, IdeaTestUtil.getMockJdk14());
+    final VirtualFile rootDir = PsiTestUtil.createTestProjectStructure(myProject, myModule, rootBefore, myFilesToDelete);
+    PsiClass psiClass = myJavaFacade.findClass("Test", ProjectScope.getAllScope(myProject));
+    assertNotNull(psiClass);
+    final PsiField[] fields = psiClass.getFields();
+    assertTrue(fields.length == 1);
+    final PsiExpression initializer = fields[0].getInitializer();
+    assertNotNull(initializer);
+    assertInstanceOf(initializer, PsiNewExpression.class);
+    final PsiAnonymousClass anonymousClass = ((PsiNewExpression)initializer).getAnonymousClass();
+    assertNotNull(anonymousClass);
+    final ArrayList<MemberInfo> infos = new ArrayList<>();
+    MemberInfo.extractClassMembers(anonymousClass, infos, member -> true, false);
+    for (MemberInfo info : infos) {
+      info.setChecked(true);
+    }
+    new WriteCommandAction.Simple(myProject) {
+      @Override
+      protected void run() throws Throwable {
+        ExtractSuperClassUtil
+          .extractSuperClass(myProject, psiClass.getContainingFile().getContainingDirectory(), "TestSubclass", anonymousClass,
+                             infos.toArray(new MemberInfo[infos.size()]), new DocCommentPolicy(DocCommentPolicy.ASIS));
+      }
+    }.execute();
+    String rootAfter = getRoot() + "/after";
+    VirtualFile rootDir2 = LocalFileSystem.getInstance().findFileByPath(rootAfter.replace(File.separatorChar, '/'));
+    myProject.getComponent(PostprocessReformattingAspect.class).doPostponedFormatting();
+    IdeaTestUtil.assertDirectoriesEqual(rootDir2, rootDir);
+  }
+
   @Override
   protected void setUp() throws Exception {
     super.setUp();
@@ -161,6 +200,15 @@ public class ExtractSuperClassTest extends RefactoringTestCase {
     PsiClass psiClass = myJavaFacade.findClass(className, ProjectScope.getAllScope(myProject));
     assertNotNull(psiClass);
     final MemberInfo[] members = RefactoringTestUtil.findMembers(psiClass, membersToFind);
+    doTest(members, newClassName, targetPackageName, rootDir, psiClass, conflicts);
+  }
+
+  private void doTest(MemberInfo[] members,
+                      @NonNls String newClassName,
+                      String targetPackageName,
+                      VirtualFile rootDir,
+                      PsiClass psiClass,
+                      String[] conflicts) throws IOException {
     PsiDirectory targetDirectory;
     if (targetPackageName == null) {
       targetDirectory = psiClass.getContainingFile().getContainingDirectory();
@@ -174,7 +222,7 @@ public class ExtractSuperClassTest extends RefactoringTestCase {
                                                                           newClassName,
                                                                           psiClass, members,
                                                                           false,
-                                                                          new DocCommentPolicy<PsiComment>(DocCommentPolicy.ASIS));
+                                                                          new DocCommentPolicy<>(DocCommentPolicy.ASIS));
     final PsiPackage targetPackage;
     if (targetDirectory != null) {
       targetPackage = JavaDirectoryService.getInstance().getPackage(targetDirectory);
@@ -184,18 +232,14 @@ public class ExtractSuperClassTest extends RefactoringTestCase {
     }
     final PsiClass superClass = psiClass.getExtendsListTypes().length > 0 ? psiClass.getSuperClass() : null;
     final MultiMap<PsiElement, String> conflictsMap =
-      PullUpConflictsUtil.checkConflicts(members, psiClass, superClass, targetPackage, targetDirectory, new InterfaceContainmentVerifier() {
-        @Override
-        public boolean checkedInterfacesContain(PsiMethod psiMethod) {
-          return PullUpProcessor.checkedInterfacesContain(Arrays.asList(members), psiMethod);
-        }
-      }, false);
+      PullUpConflictsUtil.checkConflicts(members, psiClass, superClass, targetPackage, targetDirectory,
+                                         psiMethod -> PullUpProcessor.checkedInterfacesContain(Arrays.asList(members), psiMethod), false);
     if (conflicts != null) {
       if (conflictsMap.isEmpty()) {
         fail("Conflicts were not detected");
       }
-      final HashSet<String> expectedConflicts = new HashSet<String>(Arrays.asList(conflicts));
-      final HashSet<String> actualConflicts = new HashSet<String>(conflictsMap.values());
+      final HashSet<String> expectedConflicts = new HashSet<>(Arrays.asList(conflicts));
+      final HashSet<String> actualConflicts = new HashSet<>(conflictsMap.values());
       assertEquals(expectedConflicts.size(), actualConflicts.size());
       for (String actualConflict : actualConflicts) {
         if (!expectedConflicts.contains(actualConflict)) {

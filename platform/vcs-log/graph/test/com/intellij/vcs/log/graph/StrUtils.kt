@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,15 @@
  */
 package com.intellij.vcs.log.graph
 
-import com.intellij.vcs.log.graph.api.LinearGraph
-import com.intellij.vcs.log.graph.api.elements.GraphNode
-import com.intellij.vcs.log.graph.parser.EdgeNodeCharConverter.*
-import com.intellij.vcs.log.graph.api.elements.GraphEdge
-import com.intellij.vcs.log.graph.parser.CommitParser
-import com.intellij.vcs.log.graph.api.printer.PrintElementGenerator
-import com.intellij.vcs.log.graph.api.elements.GraphElement
 import com.intellij.vcs.log.graph.api.EdgeFilter
+import com.intellij.vcs.log.graph.api.LinearGraph
+import com.intellij.vcs.log.graph.api.elements.GraphEdge
+import com.intellij.vcs.log.graph.api.elements.GraphElement
+import com.intellij.vcs.log.graph.api.elements.GraphNode
+import com.intellij.vcs.log.graph.api.printer.PrintElementGenerator
 import com.intellij.vcs.log.graph.impl.print.elements.PrintElementWithGraphElement
+import com.intellij.vcs.log.graph.parser.CommitParser
+import com.intellij.vcs.log.graph.parser.EdgeNodeCharConverter.toChar
 
 fun LinearGraph.asString(sorted: Boolean = false): String {
   val s = StringBuilder()
@@ -34,18 +34,18 @@ fun LinearGraph.asString(sorted: Boolean = false): String {
 
     var adjEdges = getAdjacentEdges(nodeIndex, EdgeFilter.ALL)
     if (sorted) {
-      adjEdges = adjEdges.sortBy(GraphStrUtils.GRAPH_ELEMENT_COMPARATOR)
+      adjEdges = adjEdges.sortedWith(GraphStrUtils.GRAPH_ELEMENT_COMPARATOR)
     }
     adjEdges.map { it.asString() }.joinTo(s, separator = " ")
   }
   return s.toString();
 }
 
-fun GraphNode.asString(): String = "${getNodeIndex()}_${toChar(getType())}"
+fun GraphNode.asString(): String = "${nodeIndex}_${toChar(type)}"
 
 fun Int?.asString() = if (this == null) "n" else toString()
 
-fun GraphEdge.asString(): String = "${getUpNodeIndex().asString()}:${getDownNodeIndex().asString()}:${getTargetId().asString()}_${toChar(getType())}"
+fun GraphEdge.asString(): String = "${upNodeIndex.asString()}:${downNodeIndex.asString()}:${targetId.asString()}_${toChar(type)}"
 
 fun GraphElement.asString(): String = when (this) {
   is GraphNode -> asString()
@@ -54,22 +54,22 @@ fun GraphElement.asString(): String = when (this) {
 }
 
 fun PrintElementWithGraphElement.asString(): String {
-  val element = getGraphElement().asString()
+  val element = graphElement.asString()
 
-  val row = getRowIndex()
-  val color = getColorId()
-  val pos = getPositionInCurrentRow()
-  val sel = if (isSelected()) "Select" else "Unselect"
+  val row = rowIndex
+  val color = colorId
+  val pos = positionInCurrentRow
+  val sel = if (isSelected) "Select" else "Unselect"
   return when (this) {
-    is SimplePrintElement -> {
-      val t = getType()
-      "Simple:${t}|-$row:${pos}|-$color:${sel}($element)"
+    is NodePrintElement -> {
+      "Node|-$row:${pos}|-$color:${sel}($element)"
     }
     is EdgePrintElement -> {
-      val t = getType()
-      val ls = getLineStyle()
-      val posO = getPositionInOtherRow()
-      "Edge:$t:${ls}|-$row:$pos:${posO}|-$color:$sel($element)"
+      val t = type
+      val ls = lineStyle
+      val posO = positionInOtherRow
+      val arrow = if (hasArrow()) "_ARROW" else ""
+      "Edge:$t${arrow}:${ls}|-$row:$pos:${posO}|-$color:$sel($element)"
     }
 
     else -> {
@@ -83,12 +83,12 @@ fun PrintElementGenerator.asString(size: Int): String {
 
   for (row in 0..size - 1) {
     if (row > 0) s.append("\n")
-    val elements = getPrintElements(row).sortBy {
-      val pos = it.getPositionInCurrentRow()
-      if (it is SimplePrintElement) {
-        1024 * pos + it.getType().ordinal()
+    val elements = getPrintElements(row).sortedBy {
+      val pos = it.positionInCurrentRow
+      if (it is NodePrintElement) {
+        1024 * pos
       } else if (it is EdgePrintElement) {
-        1024 * pos + (it.getType().ordinal() + 1) * 64 + it.getPositionInOtherRow()
+        1024 * pos + (it.type.ordinal + 1) * 64 + it.positionInOtherRow
       } else 0
     }
     elements.map { it.asString() }.joinTo(s, separator = "\n  ")

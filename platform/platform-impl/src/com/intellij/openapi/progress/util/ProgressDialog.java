@@ -17,6 +17,7 @@ package com.intellij.openapi.progress.util;
 
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.DialogWrapperPeer;
@@ -44,7 +45,7 @@ import java.io.File;
 
 
 class ProgressDialog implements Disposable {
-  private ProgressWindow myProgressWindow;
+  private final ProgressWindow myProgressWindow;
   private long myLastTimeDrawn = -1;
   private volatile boolean myShouldShowBackground;
   private final Alarm myUpdateAlarm = new Alarm(this);
@@ -57,31 +58,32 @@ class ProgressDialog implements Disposable {
       double fraction = myProgressWindow.getFraction();
       String text2 = myProgressWindow.getText2();
 
-      myTextLabel.setText(text != null && !text.isEmpty() ? text : " ");
-
       if (myProgressBar.isShowing()) {
         final int perc = (int)(fraction * 100);
         myProgressBar.setIndeterminate(perc == 0 || myProgressWindow.isIndeterminate());
         myProgressBar.setValue(perc);
       }
 
-      myText2Label.setText(getTitle2Text(text2, myText2Label.getWidth()));
+      myTextLabel.setText(fitTextToLabel(text, myTextLabel));
+      myText2Label.setText(fitTextToLabel(text2, myText2Label));
 
       myTitlePanel.setText(myProgressWindow.getTitle() != null && !myProgressWindow.getTitle().isEmpty() ? myProgressWindow.getTitle() : " ");
 
       myLastTimeDrawn = System.currentTimeMillis();
-      myRepaintedFlag = true;
+      synchronized (ProgressDialog.this) {
+        myRepaintedFlag = true;
+      }
     }
   };
 
-  private String getTitle2Text(String fullText, int labelWidth) {
+  @NotNull
+  private static String fitTextToLabel(@Nullable String fullText, @NotNull JLabel label) {
     if (fullText == null || fullText.isEmpty()) return " ";
-    while (myText2Label.getFontMetrics(myText2Label.getFont()).stringWidth(fullText) > labelWidth) {
+    while (label.getFontMetrics(label.getFont()).stringWidth(fullText) > label.getWidth()) {
       int sep = fullText.indexOf(File.separatorChar, 4);
       if (sep < 0) return fullText;
       fullText = "..." + fullText.substring(sep);
     }
-
     return fullText;
   }
 
@@ -91,7 +93,6 @@ class ProgressDialog implements Disposable {
       update();
     }
   };
-
   JPanel myPanel;
 
   private JLabel myTextLabel;
@@ -101,7 +102,7 @@ class ProgressDialog implements Disposable {
   private JButton myBackgroundButton;
 
   private JProgressBar myProgressBar;
-  private boolean myRepaintedFlag = true;
+  private boolean myRepaintedFlag = true; // guarded by this
   private TitlePanel myTitlePanel;
   private JPanel myInnerPanel;
   DialogWrapper myPopup;
@@ -135,14 +136,14 @@ class ProgressDialog implements Disposable {
 
     myCancelButton.addActionListener(new ActionListener() {
       @Override
-      public void actionPerformed(ActionEvent e) {
+      public void actionPerformed(@NotNull ActionEvent e) {
         doCancelAction();
       }
     });
 
     myCancelButton.registerKeyboardAction(new ActionListener() {
       @Override
-      public void actionPerformed(ActionEvent e) {
+      public void actionPerformed(@NotNull ActionEvent e) {
         if (myCancelButton.isEnabled()) {
           doCancelAction();
         }
@@ -159,7 +160,7 @@ class ProgressDialog implements Disposable {
     myTitlePanel.setActive(true);
     myTitlePanel.addMouseListener(new MouseAdapter() {
       @Override
-      public void mousePressed(MouseEvent e) {
+      public void mousePressed(@NotNull MouseEvent e) {
         final Point titleOffset = RelativePoint.getNorthWestOf(myTitlePanel).getScreenPoint();
         myLastClicked = new RelativePoint(e).getScreenPoint();
         myLastClicked.x -= titleOffset.x;
@@ -169,7 +170,7 @@ class ProgressDialog implements Disposable {
 
     myTitlePanel.addMouseMotionListener(new MouseMotionAdapter() {
       @Override
-      public void mouseDragged(MouseEvent e) {
+      public void mouseDragged(@NotNull MouseEvent e) {
         if (myLastClicked == null) {
           return;
         }
@@ -188,10 +189,8 @@ class ProgressDialog implements Disposable {
   public void dispose() {
     UIUtil.disposeProgress(myProgressBar);
     UIUtil.dispose(myTitlePanel);
-    final ActionListener[] listeners = myCancelButton.getActionListeners();
-    for (ActionListener listener : listeners) {
-      myCancelButton.removeActionListener(listener);
-    }
+    UIUtil.dispose(myBackgroundButton);
+    UIUtil.dispose(myCancelButton);
   }
 
   JPanel getPanel() {
@@ -220,13 +219,17 @@ class ProgressDialog implements Disposable {
   }
 
   void cancel() {
+    enableCancelButtonIfNeeded(false);
+  }
+
+  void enableCancelButtonIfNeeded(final boolean enable) {
     if (myProgressWindow.myShouldShowCancel) {
-      SwingUtilities.invokeLater(new Runnable() {
+      ApplicationManager.getApplication().invokeLater(new Runnable() {
         @Override
         public void run() {
-          myCancelButton.setEnabled(false);
+          myCancelButton.setEnabled(enable);
         }
-      });
+      }, ModalityState.any());
     }
   }
 
@@ -242,7 +245,7 @@ class ProgressDialog implements Disposable {
     myBackgroundButton.addActionListener(
       new ActionListener() {
         @Override
-        public void actionPerformed(ActionEvent e) {
+        public void actionPerformed(@NotNull ActionEvent e) {
           if (myShouldShowBackground) {
             myProgressWindow.background();
           }
@@ -261,14 +264,16 @@ class ProgressDialog implements Disposable {
       }
       else {
         // later to avoid concurrent dispose/addRequest
-        SwingUtilities.invokeLater(new Runnable() {
-          @Override
-          public void run() {
-            if (!myUpdateAlarm.isDisposed() && myUpdateAlarm.getActiveRequestCount() == 0) {
-              myUpdateAlarm.addRequest(myUpdateRequest, 500, myProgressWindow.getModalityState());
+        if (!myUpdateAlarm.isDisposed() && myUpdateAlarm.getActiveRequestCount() == 0) {
+          SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+              if (!myUpdateAlarm.isDisposed() && myUpdateAlarm.getActiveRequestCount() == 0) {
+                myUpdateAlarm.addRequest(myUpdateRequest, 500, myProgressWindow.getModalityState());
+              }
             }
-          }
-        });
+          });
+        }
       }
     }
   }
@@ -326,7 +331,7 @@ class ProgressDialog implements Disposable {
             }
           }
 
-          myProgressWindow.getFocusManager().requestFocus(myCancelButton, true);
+          myProgressWindow.getFocusManager().requestFocus(myCancelButton, true).doWhenDone(myRepaintRunnable);
         }
       }
     });

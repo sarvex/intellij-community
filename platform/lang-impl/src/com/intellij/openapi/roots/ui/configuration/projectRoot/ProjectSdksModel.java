@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,7 @@ import com.intellij.openapi.actionSystem.DefaultActionGroup;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.options.ConfigurationException;
-import com.intellij.openapi.project.DumbAwareAction;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.project.ProjectBundle;
+import com.intellij.openapi.project.*;
 import com.intellij.openapi.projectRoots.*;
 import com.intellij.openapi.projectRoots.impl.ProjectJdkImpl;
 import com.intellij.openapi.projectRoots.impl.SdkConfigurationUtil;
@@ -39,7 +37,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 
 /**
  * @author anna
@@ -129,13 +129,25 @@ public class ProjectSdksModel implements SdkModel {
     if (!canApply(errorString, configurable, addedOnly)) {
       throw new ConfigurationException(errorString[0]);
     }
-    final Sdk[] allFromTable = ProjectJdkTable.getInstance().getAllJdks();
-    final ArrayList<Sdk> itemsInTable = new ArrayList<Sdk>();
-    // Delete removed and fill itemsInTable
+
+    DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, new Runnable() {
+      @Override
+      public void run() {
+        doApply();
+      }
+    });
+    myModified = false;
+  }
+
+  private void doApply() {
     ApplicationManager.getApplication().runWriteAction(new Runnable() {
       @Override
       public void run() {
+        final ArrayList<Sdk> itemsInTable = new ArrayList<Sdk>();
         final ProjectJdkTable jdkTable = ProjectJdkTable.getInstance();
+        final Sdk[] allFromTable = jdkTable.getAllJdks();
+
+        // Delete removed and fill itemsInTable
         for (final Sdk tableItem : allFromTable) {
           if (myProjectSdks.containsKey(tableItem)) {
             itemsInTable.add(tableItem);
@@ -144,13 +156,8 @@ public class ProjectSdksModel implements SdkModel {
             jdkTable.removeJdk(tableItem);
           }
         }
-      }
-    });
-    ApplicationManager.getApplication().runWriteAction(new Runnable() {
-      @Override
-      public void run() {
+        
         // Now all removed items are deleted from table, itemsInTable contains all items in table
-        final ProjectJdkTable jdkTable = ProjectJdkTable.getInstance();
         for (Sdk originalJdk : itemsInTable) {
           final Sdk modifiedJdk = myProjectSdks.get(originalJdk);
           LOG.assertTrue(modifiedJdk != null);
@@ -168,7 +175,6 @@ public class ProjectSdksModel implements SdkModel {
         }
       }
     });
-    myModified = false;
   }
 
   private boolean canApply(String[] errorString, @Nullable MasterDetailsComponent rootConfigurable, boolean addedOnly) throws ConfigurationException {
@@ -234,13 +240,13 @@ public class ProjectSdksModel implements SdkModel {
     }
   }
 
-  public void createAddActions(DefaultActionGroup group, final JComponent parent, final Consumer<Sdk> updateTree) {
+  public void createAddActions(@NotNull DefaultActionGroup group, @NotNull JComponent parent, @NotNull Consumer<Sdk> updateTree) {
     createAddActions(group, parent, updateTree, null);
   }
 
-  public void createAddActions(DefaultActionGroup group,
-                               final JComponent parent,
-                               final Consumer<Sdk> updateTree,
+  public void createAddActions(@NotNull DefaultActionGroup group,
+                               @NotNull final JComponent parent,
+                               @NotNull final Consumer<Sdk> updateTree,
                                @Nullable Condition<SdkTypeId> filter) {
     final SdkType[] types = SdkType.getAllTypes();
     for (final SdkType type : types) {
@@ -255,7 +261,7 @@ public class ProjectSdksModel implements SdkModel {
     }
   }
 
-  public void doAdd(JComponent parent, final SdkType type, final Consumer<Sdk> callback) {
+  public void doAdd(@NotNull JComponent parent, @NotNull final SdkType type, @NotNull final Consumer<Sdk> callback) {
     myModified = true;
     if (type.supportsCustomCreateUI()) {
       type.showCustomCreateUI(this, parent, new Consumer<Sdk>() {

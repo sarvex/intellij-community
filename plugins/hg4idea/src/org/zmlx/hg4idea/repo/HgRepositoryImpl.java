@@ -18,13 +18,16 @@ package org.zmlx.hg4idea.repo;
 
 import com.intellij.dvcs.repo.RepositoryImpl;
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.AbstractVcs;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.vcs.log.Hash;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -34,20 +37,13 @@ import org.zmlx.hg4idea.command.HgBranchesCommand;
 import org.zmlx.hg4idea.execution.HgCommandResult;
 import org.zmlx.hg4idea.util.HgUtil;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Map;
-import java.util.Set;
-
-
-/**
- * @author Nadya Zabrodina
- */
+import java.util.*;
 
 public class HgRepositoryImpl extends RepositoryImpl implements HgRepository {
 
   private static final Logger LOG = Logger.getInstance(HgRepositoryImpl.class);
 
+  @NotNull private HgVcs myVcs;
   @NotNull private final HgRepositoryReader myReader;
   @NotNull private final VirtualFile myHgDir;
   @NotNull private volatile HgRepoInfo myInfo;
@@ -61,6 +57,7 @@ public class HgRepositoryImpl extends RepositoryImpl implements HgRepository {
   private HgRepositoryImpl(@NotNull VirtualFile rootDir, @NotNull HgVcs vcs,
                            @NotNull Disposable parentDisposable) {
     super(vcs.getProject(), rootDir, parentDisposable);
+    myVcs = vcs;
     myHgDir = rootDir.findChild(HgUtil.DOT_HG);
     assert myHgDir != null : ".hg directory wasn't found under " + rootDir.getPresentableUrl();
     myReader = new HgRepositoryReader(vcs, VfsUtilCore.virtualToIoFile(myHgDir));
@@ -91,7 +88,6 @@ public class HgRepositoryImpl extends RepositoryImpl implements HgRepository {
     return myHgDir;
   }
 
-
   @NotNull
   @Override
   public State getState() {
@@ -111,10 +107,10 @@ public class HgRepositoryImpl extends RepositoryImpl implements HgRepository {
     return branchOrBookMarkName;
   }
 
-  @Nullable
+  @NotNull
   @Override
   public AbstractVcs getVcs() {
-    return HgVcs.getInstance(getProject());
+    return myVcs;
   }
 
   @Override
@@ -136,7 +132,7 @@ public class HgRepositoryImpl extends RepositoryImpl implements HgRepository {
 
   @Override
   @NotNull
-  public Map<String, Set<Hash>> getBranches() {
+  public Map<String, LinkedHashSet<Hash>> getBranches() {
     return myInfo.getBranches();
   }
 
@@ -186,6 +182,30 @@ public class HgRepositoryImpl extends RepositoryImpl implements HgRepository {
     return myInfo.getSubrepos();
   }
 
+  @NotNull
+  @Override
+  public List<HgNameWithHashInfo> getMQAppliedPatches() {
+    return myInfo.getMQApplied();
+  }
+
+  @NotNull
+  @Override
+  public List<String> getAllPatchNames() {
+    return myInfo.getMqPatchNames();
+  }
+
+  @NotNull
+  @Override
+  public List<String> getUnappliedPatchNames() {
+    final List<String> appliedPatches = HgUtil.getNamesWithoutHashes(getMQAppliedPatches());
+    return ContainerUtil.filter(getAllPatchNames(), new Condition<String>() {
+      @Override
+      public boolean value(String s) {
+        return !appliedPatches.contains(s);
+      }
+    });
+  }
+
   @Override
   public boolean isFresh() {
     return myIsFresh;
@@ -196,7 +216,7 @@ public class HgRepositoryImpl extends RepositoryImpl implements HgRepository {
     HgRepoInfo currentInfo = readRepoInfo();
     // update only if something changed!!!   if update every time - new log will be refreshed every time, too.
     // Then blinking and do not work properly;
-    Project project = getProject();
+    final Project project = getProject();
     if (!project.isDisposed() && !currentInfo.equals(myInfo)) {
       myInfo = currentInfo;
       HgCommandResult branchCommandResult = new HgBranchesCommand(project, getRoot()).collectBranches();
@@ -207,16 +227,21 @@ public class HgRepositoryImpl extends RepositoryImpl implements HgRepository {
       else {
         myOpenedBranches = HgBranchesCommand.collectNames(branchCommandResult);
       }
-      if (!project.isDisposed()) {
-        project.getMessageBus().syncPublisher(HgVcs.STATUS_TOPIC).update(project, getRoot());
-      }
+
+      ApplicationManager.getApplication().executeOnPooledThread(new Runnable() {
+        public void run() {
+          if (!project.isDisposed()) {
+            project.getMessageBus().syncPublisher(HgVcs.STATUS_TOPIC).update(project, getRoot());
+          }
+        }
+      });
     }
   }
 
   @NotNull
   @Override
   public String toLogString() {
-    return String.format("HgRepository " + getRoot() + " : " + myInfo);
+    return "HgRepository " + getRoot() + " : " + myInfo;
   }
 
   @NotNull
@@ -227,7 +252,7 @@ public class HgRepositoryImpl extends RepositoryImpl implements HgRepository {
       new HgRepoInfo(myReader.readCurrentBranch(), myReader.readCurrentRevision(), myReader.readCurrentTipRevision(), myReader.readState(),
                      myReader.readBranches(),
                      myReader.readBookmarks(), myReader.readCurrentBookmark(), myReader.readTags(), myReader.readLocalTags(),
-                     myReader.readSubrepos());
+                     myReader.readSubrepos(), myReader.readMQAppliedPatches(), myReader.readMqPatchNames());
   }
 
   public void updateConfig() {

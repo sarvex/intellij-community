@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,14 +35,16 @@ import java.lang.reflect.Modifier;
  * - new methods "forFieldXXX" added that search by field type instead of field name, which is useful in scrambled classes
  */
 public class AtomicFieldUpdater<T,V> {
-  private static final Unsafe unsafe = getUnsafe();
-
-  @NotNull
-  public static Unsafe getUnsafe() {
-    Unsafe unsafe = ReflectionUtil.getField(Unsafe.class, null, Unsafe.class, "theUnsafe");
+  private static final Unsafe unsafe;
+  static {
+    unsafe = ReflectionUtil.getStaticFieldValue(Unsafe.class, Unsafe.class, "theUnsafe");
     if (unsafe == null) {
       throw new RuntimeException("Could not find 'theUnsafe' field in the " + Unsafe.class);
     }
+  }
+
+  @NotNull
+  public static Unsafe getUnsafe() {
     return unsafe;
   }
 

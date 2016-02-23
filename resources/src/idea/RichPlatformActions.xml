@@ -1,4 +1,4 @@
-<component xmlns:xi="http://www.w3.org/2001/XInclude">
+<idea-plugin xmlns:xi="http://www.w3.org/2001/XInclude">
   <actions>
     <group id="LookupActions">
       <!-- these must be declared before standard EnterAction and TabAction -->
@@ -23,10 +23,10 @@
     <action id="EditorLookupDown" class="com.intellij.codeInsight.lookup.impl.LookupActionHandler$DownAction"/>
   </actions>
 
-  <xi:include href="/idea/PlatformActions.xml" xpointer="xpointer(/component/*)"/>
-  <xi:include href="/idea/VcsActions.xml" xpointer="xpointer(/component/*)"/>
-  <xi:include href="/idea/LangActions.xml" xpointer="xpointer(/component/*)"/>
-  <xi:include href="/idea/ExternalSystemActions.xml" xpointer="xpointer(/component/*)"/>
+  <xi:include href="/idea/PlatformActions.xml" xpointer="xpointer(/idea-plugin/*)"/>
+  <xi:include href="/idea/VcsActions.xml" xpointer="xpointer(/idea-plugin/*)"/>
+  <xi:include href="/idea/LangActions.xml" xpointer="xpointer(/idea-plugin/*)"/>
+  <xi:include href="/idea/ExternalSystemActions.xml" xpointer="xpointer(/idea-plugin/*)"/>
 
   <actions>
     <action id="RerunFailedTests" class="com.intellij.execution.testframework.actions.RerunFailedTestsAction"
@@ -110,6 +110,8 @@
       <add-to-group group-id="MainMenu" anchor="before" relative-to-action="RunMenu"/>
     </group>
 
+    <action id="DebugBuildProcess" class="com.intellij.compiler.actions.DebugBuildProcessToggleAction"/>
+
     <group id="CompilerErrorViewPopupMenu">
       <action id="ExcludeFromValidation" class="com.intellij.compiler.options.ExcludeFromValidationAction"/>
     </group>
@@ -158,7 +160,7 @@
 
     <!-- Help -->
     <action id="WhatsNewAction" class="com.intellij.ide.actions.WhatsNewAction">
-      <add-to-group group-id="HelpMenu" anchor="after" relative-to-action="OnlineDocAction"/>
+      <add-to-group group-id="HelpMenu" anchor="after" relative-to-action="ShowTips"/>
     </action>
 
     <!-- Toolbar -->
@@ -167,9 +169,6 @@
       <reference ref="CompileDirty"/>
 
       <add-to-group group-id="ToolbarRunGroup" relative-to-action="RunConfiguration" anchor="before"/>
-    </group>
-
-    <group id="DebuggerActions">
     </group>
 
     <action id="AnalyzeStacktraceOnError" class="com.intellij.unscramble.AnalyzeStacktraceOnErrorAction" text="Analyze _Stacktrace"/>
@@ -341,11 +340,9 @@
     </group>
 
     <group id="TestStatisticsTablePopupMenu">
-      <reference ref="RunContextGroup"/>
-      <separator/>
-      <reference ref="EditSource"/>
-      <reference ref="ViewSource"/>
-      <separator/>
+      <reference ref="TestTreePopupMenu"/>
+      <action id="Testing.SelectInTree" class="com.intellij.execution.testframework.actions.SelectInTreeAction"
+              text="Select in Tree" description="Navigate from tests statistics to tests tree"/>
     </group>
 
     <!--  TODO: fix
@@ -409,4 +406,4 @@
     </group>
 
   </actions>
-</component>
+</idea-plugin>

@@ -16,6 +16,7 @@
 package com.intellij.openapi.ui.impl;
 
 import com.intellij.ide.DataManager;
+import com.intellij.ide.RemoteDesktopDetector;
 import com.intellij.ide.impl.TypeSafeDataProviderAdapter;
 import com.intellij.ide.ui.UISettings;
 import com.intellij.openapi.Disposable;
@@ -327,7 +328,7 @@ public class GlassPaneDialogWrapperPeer extends DialogWrapperPeer implements Foc
 
     myDialog.setVisible(true);
 
-    return new ActionCallback.Done();
+    return ActionCallback.DONE;
   }
 
   @Override
@@ -544,7 +545,7 @@ public class GlassPaneDialogWrapperPeer extends DialogWrapperPeer implements Foc
 
     @Override
     public void paint(final Graphics g) {
-      UIUtil.applyRenderingHints(g);
+      UISettings.setupAntialiasing(g);
       super.paint(g);
     }
 
@@ -592,7 +593,7 @@ public class GlassPaneDialogWrapperPeer extends DialogWrapperPeer implements Foc
     }
 
     private void createShadow() {
-      if (!UISettings.isRemoteDesktopConnected() && !JBUI.isHiDPI()) {
+      if (!RemoteDesktopDetector.isRemoteSession() && !JBUI.isHiDPI()) {
         shadow = ShadowBorderPainter.createShadow(this, getWidth(), getHeight());
       }
     }
@@ -732,6 +733,14 @@ public class GlassPaneDialogWrapperPeer extends DialogWrapperPeer implements Foc
     @Override
     public void setDefaultButton(final JButton defaultButton) {
       myDialog.setDefaultButton(defaultButton);
+    }
+
+    @Override
+    public void setContentPane(Container contentPane) {
+      super.setContentPane(contentPane);
+      if (contentPane != null) {
+        contentPane.addMouseMotionListener(new MouseMotionAdapter() {}); // listen to mouse motion events for a11y
+      }
     }
   }
 

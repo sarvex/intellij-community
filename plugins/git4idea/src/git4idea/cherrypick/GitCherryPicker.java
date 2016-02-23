@@ -36,6 +36,8 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Consumer;
 import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.containers.MultiMap;
+import com.intellij.vcs.log.Hash;
 import com.intellij.vcs.log.VcsFullCommitDetails;
 import com.intellij.vcs.log.VcsLog;
 import git4idea.GitLocalBranch;
@@ -48,7 +50,7 @@ import git4idea.commands.GitUntrackedFilesOverwrittenByOperationDetector;
 import git4idea.config.GitVcsSettings;
 import git4idea.merge.GitConflictResolver;
 import git4idea.repo.GitRepository;
-import git4idea.util.UntrackedFilesNotifier;
+import git4idea.util.GitUntrackedFilesHelper;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -65,6 +67,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.intellij.dvcs.DvcsUtil.getShortRepositoryName;
 import static com.intellij.openapi.util.text.StringUtil.pluralize;
 import static git4idea.commands.GitSimpleEventDetector.Event.CHERRY_PICK_CONFLICT;
 import static git4idea.commands.GitSimpleEventDetector.Event.LOCAL_CHANGES_OVERWRITTEN_BY_CHERRY_PICK;
@@ -78,7 +81,6 @@ public class GitCherryPicker extends VcsCherryPicker {
   private static final String CHERRY_PICK_HEAD_FILE = "CHERRY_PICK_HEAD";
 
   private static final Logger LOG = Logger.getInstance(GitCherryPicker.class);
-  private static final String NAME = "Cherry-Pick";
 
   @NotNull private final Project myProject;
   @NotNull private final Git myGit;
@@ -95,6 +97,7 @@ public class GitCherryPicker extends VcsCherryPicker {
   public void cherryPick(@NotNull List<VcsFullCommitDetails> commits) {
     Map<GitRepository, List<VcsFullCommitDetails>> commitsInRoots =
       DvcsUtil.<GitRepository>groupCommitsByRoots(myPlatformFacade.getRepositoryManager(myProject), commits);
+    LOG.info("Cherry-picking commits: " + toString(commitsInRoots));
     List<GitCommitWrapper> successfulCommits = ContainerUtil.newArrayList();
     List<GitCommitWrapper> alreadyPicked = ContainerUtil.newArrayList();
     AccessToken token = DvcsUtil.workingTreeChangeStarted(myProject);
@@ -112,6 +115,22 @@ public class GitCherryPicker extends VcsCherryPicker {
     finally {
       DvcsUtil.workingTreeChangeFinished(myProject, token);
     }
+  }
+
+  @NotNull
+  private static String toString(@NotNull final Map<GitRepository, List<VcsFullCommitDetails>> commitsInRoots) {
+    return StringUtil.join(commitsInRoots.keySet(), new Function<GitRepository, String>() {
+      @Override
+      public String fun(@NotNull GitRepository repository) {
+        String commits = StringUtil.join(commitsInRoots.get(repository), new Function<VcsFullCommitDetails, String>() {
+          @Override
+          public String fun(VcsFullCommitDetails details) {
+            return details.getId().asString();
+          }
+        }, ", ");
+        return getShortRepositoryName(repository) + ": [" + commits + "]";
+      }
+    }, "; ");
   }
 
   // return true to continue with other roots, false to break execution
@@ -164,8 +183,8 @@ public class GitCherryPicker extends VcsCherryPicker {
                              "Please move, remove or add them before you can cherry-pick. <a href='view'>View them</a>";
         description += getSuccessfulCommitDetailsIfAny(successfulCommits);
 
-        UntrackedFilesNotifier.notifyUntrackedFilesOverwrittenBy(myProject, repository.getRoot(),
-                                                                 untrackedFilesDetector.getRelativeFilePaths(), "cherry-pick", description);
+        GitUntrackedFilesHelper.notifyUntrackedFilesOverwrittenBy(myProject, repository.getRoot(),
+                                                                  untrackedFilesDetector.getRelativeFilePaths(), "cherry-pick", description);
         return false;
       }
       else if (localChangesOverwrittenDetector.hasHappened()) {
@@ -521,7 +540,7 @@ public class GitCherryPicker extends VcsCherryPicker {
   @NotNull
   @Override
   public String getActionTitle() {
-    return isAutoCommit() ? NAME : NAME + "...";
+    return "Cherry-Pick";
   }
 
   private boolean isAutoCommit() {
@@ -529,20 +548,23 @@ public class GitCherryPicker extends VcsCherryPicker {
   }
 
   @Override
-  public boolean isEnabled(@NotNull VcsLog log, @NotNull List<VcsFullCommitDetails> details) {
-    if (details.isEmpty()) {
+  public boolean isEnabled(@NotNull VcsLog log, @NotNull Map<VirtualFile, List<Hash>> commits) {
+    if (commits.isEmpty()) {
       return false;
     }
-    for (VcsFullCommitDetails commit : details) {
-      GitRepository repository = myPlatformFacade.getRepositoryManager(myProject).getRepositoryForRoot(commit.getRoot());
+
+    for (VirtualFile root : commits.keySet()) {
+      GitRepository repository = myPlatformFacade.getRepositoryManager(myProject).getRepositoryForRoot(root);
       if (repository == null) {
         return false;
       }
-      GitLocalBranch currentBranch = repository.getCurrentBranch();
-      Collection<String> containingBranches = log.getContainingBranches(commit.getId());
-      if (currentBranch != null && containingBranches != null && containingBranches.contains(currentBranch.getName())) {
-        // already is contained in the current branch
-        return false;
+      for (Hash commit : commits.get(root)) {
+        GitLocalBranch currentBranch = repository.getCurrentBranch();
+        Collection<String> containingBranches = log.getContainingBranches(commit, root);
+        if (currentBranch != null && containingBranches != null && containingBranches.contains(currentBranch.getName())) {
+          // already is contained in the current branch
+          return false;
+        }
       }
     }
     return true;
@@ -624,18 +646,18 @@ public class GitCherryPicker extends VcsCherryPicker {
     }
 
     @Override
-    public String getMultipleFileMergeDescription(Collection<VirtualFile> files) {
+    public String getMultipleFileMergeDescription(@NotNull Collection<VirtualFile> files) {
       return "<html>Conflicts during cherry-picking commit <code>" + myCommitHash + "</code> made by " + myCommitAuthor + "<br/>" +
              "<code>\"" + myCommitMessage + "\"</code></html>";
     }
 
     @Override
-    public String getLeftPanelTitle(VirtualFile file) {
+    public String getLeftPanelTitle(@NotNull VirtualFile file) {
       return "Local changes";
     }
 
     @Override
-    public String getRightPanelTitle(VirtualFile file, VcsRevisionNumber lastRevisionNumber) {
+    public String getRightPanelTitle(@NotNull VirtualFile file, VcsRevisionNumber revisionNumber) {
       return "<html>Changes from cherry-pick <code>" + myCommitHash + "</code>";
     }
   }

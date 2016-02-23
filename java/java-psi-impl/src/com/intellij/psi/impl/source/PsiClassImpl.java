@@ -38,8 +38,7 @@ import com.intellij.psi.search.SearchScope;
 import com.intellij.psi.stubs.IStubElementType;
 import com.intellij.psi.stubs.PsiFileStub;
 import com.intellij.psi.stubs.StubElement;
-import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.psi.util.PsiUtil;
+import com.intellij.psi.util.*;
 import com.intellij.util.IncorrectOperationException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -120,11 +119,15 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
 
   @Override
   public PsiElement getOriginalElement() {
-    final JavaPsiImplementationHelper helper = JavaPsiImplementationHelper.getInstance(getProject());
-    if (helper != null) {
-      return helper.getOriginalClass(this);
-    }
-    return this;
+    return CachedValuesManager.getCachedValue(this, new CachedValueProvider<PsiClass>() {
+      @Nullable
+      @Override
+      public Result<PsiClass> compute() {
+        final JavaPsiImplementationHelper helper = JavaPsiImplementationHelper.getInstance(getProject());
+        final PsiClass result = helper != null ? helper.getOriginalClass(PsiClassImpl.this) : PsiClassImpl.this;
+        return Result.create(result, PsiModificationTracker.JAVA_STRUCTURE_MODIFICATION_COUNT);
+      }
+    });
   }
 
   @Override
@@ -574,8 +577,12 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
     }
 
     final StubElement parentStub = stub.getParentStub();
-
-    final StubBasedPsiElementBase<?> context = (StubBasedPsiElementBase)parentStub.getPsi();
+    PsiElement psi = parentStub.getPsi();
+    if (!(psi instanceof StubBasedPsiElementBase)) {
+      LOG.error(stub + " parent is " + parentStub);
+      return null;
+    }
+    final StubBasedPsiElementBase<?> context = (StubBasedPsiElementBase)psi;
     @SuppressWarnings("unchecked")
     PsiClass[] classesInScope = (PsiClass[])parentStub.getChildrenByType(Constants.CLASS_BIT_SET, PsiClass.ARRAY_FACTORY);
 
@@ -592,7 +599,7 @@ public class PsiClassImpl extends JavaStubPsiElement<PsiClassStub<?>> implements
     }
     else {
       if (classesInScope.length != 1) {
-        LOG.assertTrue(classesInScope.length == 1, "Parent stub: "+parentStub.getStubType() +"; children: "+parentStub.getChildrenStubs()+"; \ntext:"+context.getText());
+        LOG.error("Parent stub: " + parentStub.getStubType() + "; children: " + parentStub.getChildrenStubs() + "; \ntext:" + context.getText());
       }
       LOG.assertTrue(classesInScope[0] == aClass);
     }

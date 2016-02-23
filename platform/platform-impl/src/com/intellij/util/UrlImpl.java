@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 package com.intellij.util;
 
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.openapi.vfs.StandardFileSystems;
 import com.intellij.util.io.URLUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -33,7 +32,7 @@ public final class UrlImpl implements Url {
   private String externalForm;
   private UrlImpl withoutParameters;
 
-  public UrlImpl(@Nullable String path) {
+  public UrlImpl(@NotNull String path) {
     this(null, null, path, null);
   }
 
@@ -43,8 +42,8 @@ public final class UrlImpl implements Url {
 
   public UrlImpl(@Nullable String scheme, @Nullable String authority, @Nullable String path, @Nullable String parameters) {
     this.scheme = scheme;
-    this.authority = StringUtil.nullize(authority);
-    this.path = StringUtil.isEmpty(path) ? "/" : path;
+    this.authority = authority;
+    this.path = StringUtil.notNullize(path);
     this.parameters = StringUtil.nullize(parameters);
   }
 
@@ -71,7 +70,7 @@ public final class UrlImpl implements Url {
 
   @Override
   public boolean isInLocalFileSystem() {
-    return StandardFileSystems.FILE_PROTOCOL.equals(scheme);
+    return URLUtil.FILE_PROTOCOL.equals(scheme);
   }
 
   @Nullable
@@ -85,11 +84,11 @@ public final class UrlImpl implements Url {
     StringBuilder builder = new StringBuilder();
     if (scheme != null) {
       builder.append(scheme);
-      if (authority != null || isInLocalFileSystem()) {
-        builder.append(URLUtil.SCHEME_SEPARATOR);
+      if (authority == null) {
+        builder.append(':');
       }
       else {
-        builder.append(':');
+        builder.append(URLUtil.SCHEME_SEPARATOR);
       }
 
       if (authority != null) {
@@ -111,8 +110,8 @@ public final class UrlImpl implements Url {
     }
 
     // relative path - special url, encoding is not required
-    // authority is null in case of URI or file URL
-    if ((path.charAt(0) != '/' || authority == null) && !isInLocalFileSystem()) {
+    // authority is null in case of URI
+    if ((authority == null || (!path.isEmpty() && path.charAt(0) != '/')) && !isInLocalFileSystem()) {
       return toDecodedForm();
     }
 

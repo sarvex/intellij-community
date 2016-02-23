@@ -72,7 +72,7 @@ class EditVarConstraintsDialog extends DialogWrapper {
   private JCheckBox partOfSearchResults;
   private JCheckBox notExprType;
   private EditorTextField regexprForExprType;
-  private final SearchModel model;
+  private final Configuration myConfiguration;
   private JCheckBox exprTypeWithinHierarchy;
 
   private final List<Variable> variables;
@@ -91,14 +91,19 @@ class EditVarConstraintsDialog extends DialogWrapper {
   private JPanel occurencePanel;
   private JPanel textConstraintsPanel;
   private JLabel myRegExHelpLabel;
+  private JButton myZeroZeroButton;
+  private JButton myOneOneButton;
+  private JButton myZeroInfinityButton;
+  private JButton myOneInfinityButton;
+  private JButton myZeroOneButton;
 
   private static Project myProject;
 
-  EditVarConstraintsDialog(final Project project, SearchModel _model, List<Variable> _variables, final FileType fileType) {
+  EditVarConstraintsDialog(final Project project, Configuration configuration, List<Variable> _variables, final FileType fileType) {
     super(project, false);
 
     variables = _variables;
-    model = _model;
+    myConfiguration = configuration;
 
     setTitle(SSRBundle.message("editvarcontraints.edit.variables"));
 
@@ -107,6 +112,44 @@ class EditVarConstraintsDialog extends DialogWrapper {
       @Override
       public void documentChanged(DocumentEvent e) {
         applyWithinTypeHierarchy.setEnabled(e.getDocument().getTextLength() > 0 && fileType == StdFileTypes.JAVA);
+      }
+    });
+    myZeroZeroButton.addActionListener(new ActionListener() {
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        minoccurs.setText("0");
+        maxoccurs.setText("0");
+        maxoccursUnlimited.setSelected(false);
+      }
+    });
+    myZeroOneButton.addActionListener(new ActionListener() {
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        minoccurs.setText("0");
+        maxoccurs.setText("1");
+        maxoccursUnlimited.setSelected(false);
+      }
+    });
+    myOneOneButton.addActionListener(new ActionListener() {
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        minoccurs.setText("1");
+        maxoccurs.setText("1");
+        maxoccursUnlimited.setSelected(false);
+      }
+    });
+    myZeroInfinityButton.addActionListener(new ActionListener() {
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        minoccurs.setText("0");
+        maxoccursUnlimited.setSelected(true);
+      }
+    });
+    myOneInfinityButton.addActionListener(new ActionListener() {
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        minoccurs.setText("1");
+        maxoccursUnlimited.setSelected(true);
       }
     });
     read.addChangeListener(new MyChangeListener(notRead, false));
@@ -228,7 +271,7 @@ class EditVarConstraintsDialog extends DialogWrapper {
 
     customScriptCode.getButton().addActionListener(new ActionListener() {
       public void actionPerformed(@NotNull final ActionEvent e) {
-        final List<String> variableNames = ContainerUtil.newArrayList(model.getConfig().getMatchOptions().getVariableConstraintNames());
+        final List<String> variableNames = ContainerUtil.newArrayList(myConfiguration.getMatchOptions().getVariableConstraintNames());
         variableNames.remove(current.getName());
         variableNames.remove(CompiledPattern.ALL_CLASS_UNMATCHED_CONTENT_VAR_ARTIFICIAL_NAME);
         final EditScriptDialog dialog = new EditScriptDialog(project, customScriptCode.getChildComponent().getText(), variableNames);
@@ -271,15 +314,14 @@ class EditVarConstraintsDialog extends DialogWrapper {
   }
 
   void copyValuesFromUI(Variable var) {
-    String varName = var.getName();
-    Configuration configuration = model.getConfig();
+    final String varName = var.getName();
 
     if (isReplacementVariable(varName)) {
-      saveScriptInfo(getOrAddReplacementVariableDefinition(varName, configuration));
+      saveScriptInfo(getOrAddReplacementVariableDefinition(varName, myConfiguration));
       return;
     }
 
-    MatchVariableConstraint varInfo = UIUtil.getOrAddVariableConstraint(varName, configuration);
+    final MatchVariableConstraint varInfo = UIUtil.getOrAddVariableConstraint(varName, myConfiguration);
 
     varInfo.setInvertReadAccess(notRead.isSelected());
     varInfo.setReadAccess(read.isSelected());
@@ -288,12 +330,10 @@ class EditVarConstraintsDialog extends DialogWrapper {
     varInfo.setRegExp(regexp.getDocument().getText());
     varInfo.setInvertRegExp(notRegexp.isSelected());
 
-    int minCount = Integer.parseInt( minoccurs.getText() );
+    final int minCount = Integer.parseInt(minoccurs.getText());
     varInfo.setMinCount(minCount);
 
-    int maxCount;
-    if (maxoccursUnlimited.isSelected()) maxCount = Integer.MAX_VALUE;
-    else maxCount = Integer.parseInt( maxoccurs.getText() );
+    final int maxCount = maxoccursUnlimited.isSelected() ? Integer.MAX_VALUE : Integer.parseInt(maxoccurs.getText());
 
     varInfo.setMaxCount(maxCount);
     varInfo.setWithinHierarchy(applyWithinTypeHierarchy.isSelected());
@@ -301,7 +341,7 @@ class EditVarConstraintsDialog extends DialogWrapper {
 
     final boolean target = partOfSearchResults.isSelected();
     if (target) {
-      final MatchOptions matchOptions = configuration.getMatchOptions();
+      final MatchOptions matchOptions = myConfiguration.getMatchOptions();
       for (String name : matchOptions.getVariableConstraintNames()) {
         if (!name.equals(varName)) {
           matchOptions.getVariableConstraint(name).setPartOfSearchResults(false);
@@ -342,13 +382,11 @@ class EditVarConstraintsDialog extends DialogWrapper {
   }
 
   private void copyValuesToUI(Variable var) {
-    Configuration configuration = model.getConfig();
-    String varName = var.getName();
+    final String varName = var.getName();
 
     if (isReplacementVariable(varName)) {
-      ReplacementVariableDefinition definition = ((ReplaceConfiguration)configuration).getOptions().getVariableDefinition(
-        stripReplacementVarDecoration(varName)
-      );
+      final ReplacementVariableDefinition definition =
+        ((ReplaceConfiguration)myConfiguration).getOptions().getVariableDefinition(stripReplacementVarDecoration(varName));
 
       restoreScriptCode(definition);
       setSearchConstraintsVisible(false);
@@ -357,7 +395,7 @@ class EditVarConstraintsDialog extends DialogWrapper {
       setSearchConstraintsVisible(true);
     }
 
-    final MatchOptions matchOptions = configuration.getMatchOptions();
+    final MatchOptions matchOptions = myConfiguration.getMatchOptions();
     final MatchVariableConstraint varInfo = matchOptions.getVariableConstraint(varName);
 
     if (varInfo == null) {
@@ -450,13 +488,14 @@ class EditVarConstraintsDialog extends DialogWrapper {
   }
 
   private static boolean validateRegExp(EditorTextField field) {
+    final String s = field.getDocument().getText();
     try {
-      final String s = field.getDocument().getText();
       if (s.length() > 0) {
         Pattern.compile(s);
       }
     } catch(PatternSyntaxException ex) {
-      Messages.showErrorDialog(SSRBundle.message("invalid.regular.expression"), SSRBundle.message("invalid.regular.expression"));
+      Messages.showErrorDialog(SSRBundle.message("invalid.regular.expression", ex.getMessage()),
+                               SSRBundle.message("invalid.regular.expression.title"));
       field.requestFocus();
       return false;
     }
@@ -480,8 +519,7 @@ class EditVarConstraintsDialog extends DialogWrapper {
 
   private static boolean validateIntOccurence(JTextField field) {
     try {
-      int a = Integer.parseInt(field.getText());
-      if (a==-1) throw new NumberFormatException();
+      if (Integer.parseInt(field.getText()) < 0) throw new NumberFormatException();
     } catch(NumberFormatException ex) {
       Messages.showErrorDialog(SSRBundle.message("invalid.occurence.count"), SSRBundle.message("invalid.occurence.count"));
       field.requestFocus();
@@ -582,7 +620,7 @@ class EditVarConstraintsDialog extends DialogWrapper {
     settings.setRightMarginShown(false);
     settings.setLineMarkerAreaShown(false);
     settings.setIndentGuidesShown(false);
-    ((EditorEx)editor).setHighlighter(HighlighterFactory.createHighlighter(fileType, DefaultColorSchemesManager.getInstance().getAllSchemes()[0], project));
+    ((EditorEx)editor).setHighlighter(HighlighterFactory.createHighlighter(fileType, DefaultColorSchemesManager.getInstance().getFirstScheme(), project));
 
     return editor;
   }

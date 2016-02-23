@@ -15,13 +15,12 @@
  */
 package com.jetbrains.python.refactoring;
 
-import com.intellij.codeInsight.TargetElementUtilBase;
+import com.intellij.codeInsight.TargetElementUtil;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.codeStyle.CodeStyleSettings;
-import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
 import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
 import com.jetbrains.python.PythonLanguage;
 import com.jetbrains.python.fixtures.PyTestCase;
@@ -46,8 +45,8 @@ public class PyInlineLocalTest extends PyTestCase {
 
   private boolean performRefactoring(@Nullable String expectedError) {
     try {
-      final PsiElement element = TargetElementUtilBase.findTargetElement(myFixture.getEditor(),
-                                                                         TargetElementUtilBase.getInstance().getReferenceSearchFlags());
+      final PsiElement element = TargetElementUtil.findTargetElement(myFixture.getEditor(),
+                                                                     TargetElementUtil.getInstance().getReferenceSearchFlags());
       final PyInlineLocalHandler handler = PyInlineLocalHandler.getInstance();
       handler.inlineElement(myFixture.getProject(), myFixture.getEditor(), element);
       if (expectedError != null) fail("expected error: '" + expectedError + "', got none");
@@ -111,7 +110,7 @@ public class PyInlineLocalTest extends PyTestCase {
 
   // PY-12409
   public void testResultExceedsRightMargin() {
-    final CodeStyleSettings settings = CodeStyleSettingsManager.getSettings(myFixture.getProject());
+    final CodeStyleSettings settings = getCodeStyleSettings();
     final CommonCodeStyleSettings commonSettings = settings.getCommonSettings(PythonLanguage.getInstance());
 
     final int oldRightMargin = settings.getRightMargin(PythonLanguage.getInstance());
@@ -143,6 +142,11 @@ public class PyInlineLocalTest extends PyTestCase {
     checkOperatorPrecedence("x = 10 and 2", "booleanAnd");
     checkOperatorPrecedence("x = 10 or 2", "booleanOr");
     checkOperatorPrecedence("x = 10 if True else 2", "conditional");
+  }
+
+  // PY-15390
+  public void testMatMulPrecedence() throws Exception {
+    checkOperatorPrecedence("x = y @ z", "matrixMultiplication");
   }
 
   private void checkOperatorPrecedence(@NotNull final String firstLine, @NotNull String resultPrefix) throws Exception {

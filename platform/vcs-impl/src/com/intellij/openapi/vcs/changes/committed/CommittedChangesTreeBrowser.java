@@ -1,3 +1,18 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.openapi.vcs.changes.committed;
 
 import com.intellij.ide.CopyProvider;
@@ -10,12 +25,16 @@ import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
+import com.intellij.openapi.keymap.Keymap;
 import com.intellij.openapi.keymap.KeymapManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Splitter;
 import com.intellij.openapi.ui.SplitterProportionsData;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.openapi.vcs.FilePath;
+import com.intellij.openapi.vcs.VcsActions;
 import com.intellij.openapi.vcs.VcsDataKeys;
 import com.intellij.openapi.vcs.changes.Change;
 import com.intellij.openapi.vcs.changes.ChangesUtil;
@@ -27,6 +46,7 @@ import com.intellij.ui.*;
 import com.intellij.ui.treeStructure.Tree;
 import com.intellij.ui.treeStructure.actions.CollapseAllAction;
 import com.intellij.ui.treeStructure.actions.ExpandAllAction;
+import com.intellij.util.containers.LinkedMultiMap;
 import com.intellij.util.messages.MessageBusConnection;
 import com.intellij.util.messages.Topic;
 import com.intellij.util.ui.StatusText;
@@ -60,7 +80,7 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
   private final RepositoryChangesBrowser myDetailsView;
   private List<CommittedChangeList> myChangeLists;
   private List<CommittedChangeList> mySelectedChangeLists;
-  private ChangeListGroupingStrategy myGroupingStrategy = new DateChangeListGroupingStrategy();
+  @NotNull private ChangeListGroupingStrategy myGroupingStrategy = new DateChangeListGroupingStrategy();
   private final CompositeChangeListFilteringStrategy myFilteringStrategy = new CompositeChangeListFilteringStrategy();
   private final JPanel myLeftPanel;
   private final FilterChangeListener myFilterChangeListener = new FilterChangeListener();
@@ -90,7 +110,7 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
     myChangesTree.setShowsRootHandles(true);
     myChangesTree.setCellRenderer(new CommittedChangeListRenderer(project, myDecorators));
     TreeUtil.expandAll(myChangesTree);
-    myChangesTree.getExpandableItemsHandler().setEnabled(false);
+    myChangesTree.setExpandableItemsEnabled(false);
 
     myDetailsView = new RepositoryChangesBrowser(project, Collections.<CommittedChangeList>emptyList());
     myDetailsView.getViewer().setScrollPaneBorder(RIGHT_BORDER);
@@ -110,9 +130,9 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
 
     updateBySelectionChange();
 
-    ActionManager.getInstance().getAction("CommittedChanges.Details").registerCustomShortcutSet(
-      new CustomShortcutSet(KeymapManager.getInstance().getActiveKeymap().getShortcuts(IdeActions.ACTION_QUICK_JAVADOC)),
-      this);
+    Keymap keymap = KeymapManager.getInstance().getActiveKeymap();
+    CustomShortcutSet quickdocShortcuts = new CustomShortcutSet(keymap.getShortcuts(IdeActions.ACTION_QUICK_JAVADOC));
+    EmptyAction.registerWithShortcutSet("CommittedChanges.Details", quickdocShortcuts, this);
 
     myCopyProvider = new TreeCopyProvider(myChangesTree);
     myTreeExpander = new DefaultTreeExpander(myChangesTree);
@@ -120,7 +140,7 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
 
     myHelpId = ourHelpId;
 
-    myDetailsView.getDiffAction().registerCustomShortcutSet(CommonShortcuts.getDiff(), myChangesTree);
+    myDetailsView.getDiffAction().registerCustomShortcutSet(myDetailsView.getDiffAction().getShortcutSet(), myChangesTree);
 
     myConnection = myProject.getMessageBus().connect();
     myConnection.subscribe(ITEMS_RELOADED, new CommittedChangesReloadListener() {
@@ -178,7 +198,7 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
     DefaultMutableTreeNode lastGroupNode = null;
     String lastGroupName = null;
     for(CommittedChangeList list: filteredChangeLists) {
-      String groupName = myGroupingStrategy.getGroupName(list);
+      String groupName = StringUtil.notNullize(myGroupingStrategy.getGroupName(list));
       if (!Comparing.equal(groupName, lastGroupName)) {
         lastGroupName = groupName;
         lastGroupNode = new DefaultMutableTreeNode(lastGroupName);
@@ -230,9 +250,14 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
     myChangesTree.setSelectionPaths(paths);
   }
 
-  public void setGroupingStrategy(ChangeListGroupingStrategy strategy) {
+  public void setGroupingStrategy(@NotNull ChangeListGroupingStrategy strategy) {
     myGroupingStrategy = strategy;
     updateModel();
+  }
+
+  @NotNull
+  public ChangeListGroupingStrategy getGroupingStrategy() {
+    return myGroupingStrategy;
   }
 
   private void updateBySelectionChange() {
@@ -255,19 +280,13 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
 
   @NotNull
   public static List<Change> collectChanges(final List<? extends CommittedChangeList> selectedChangeLists, final boolean withMovedTrees) {
-    List<Change> result = new ArrayList<Change>();
-    Collections.sort(selectedChangeLists, new Comparator<CommittedChangeList>() {
-      public int compare(final CommittedChangeList o1, final CommittedChangeList o2) {
-        return o1.getCommitDate().compareTo(o2.getCommitDate());
-      }
-    });
-    for(CommittedChangeList cl: selectedChangeLists) {
-      final Collection<Change> changes = withMovedTrees ? cl.getChangesWithMovedTrees() : cl.getChanges();
-      for(Change c: changes) {
-        addOrReplaceChange(result, c);
-      }
+    Collections.sort(selectedChangeLists, CommittedChangeListByDateComparator.ASCENDING);
+
+    List<Change> changes = new ArrayList<Change>();
+    for (CommittedChangeList cl : selectedChangeLists) {
+      changes.addAll(withMovedTrees ? cl.getChangesWithMovedTrees() : cl.getChanges());
     }
-    return result;
+    return zipChanges(changes);
   }
 
   /**
@@ -276,32 +295,65 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
    */
   @NotNull
   public static List<Change> zipChanges(@NotNull List<Change> changes) {
-    final List<Change> result = new ArrayList<Change>();
-    for (Change change : changes) {
-      addOrReplaceChange(result, change);
-    }
-    return result;
-  }
+    // TODO: further improvements needed
+    // We may want to process collisions more consistent
 
-  private static void addOrReplaceChange(final List<Change> changes, final Change c) {
-    final ContentRevision beforeRev = c.getBeforeRevision();
-    // todo!!! further improvements needed
-    if (beforeRev != null) {
-      final String beforeName = beforeRev.getFile().getName();
-      final String beforeAbsolutePath = beforeRev.getFile().getIOFile().getAbsolutePath();
-      for(Change oldChange: changes) {
-        ContentRevision rev = oldChange.getAfterRevision();
-        // first compare name, which is many times faster - to remove 99% not matching
-        if (rev != null && (rev.getFile().getName().equals(beforeName)) && rev.getFile().getIOFile().getAbsolutePath().equals(beforeAbsolutePath)) {
-          changes.remove(oldChange);
-          if (oldChange.getBeforeRevision() != null || c.getAfterRevision() != null) {
-            changes.add(new Change(oldChange.getBeforeRevision(), c.getAfterRevision()));
-          }
-          return;
-        }
+    // Possible solution: avoid creating duplicate entries for the same FilePath. No changes in the output should have same beforePath or afterPath.
+    // We may take earliest and latest revisions for each file.
+    //
+    // The main problem would be to keep existing movements in non-conflicting cases (where input changes are taken from linear sequence of commits)
+    // case1: "a -> b; b -> c" - file renamed twice in the same revision (as source and as target)
+    // case2: "a -> b" "b -> c" - file renamed twice in consequent commits
+    // case3: "a -> b; b -> a" - files swapped vs "a -> b" "b -> a" - file rename canceled
+    // case4: "delete a" "b -> a" "modify a"
+    // ...
+    // but return "good enough" result for input with conflicting changes
+    // case1: "new a", "new a"
+    // case2: "a -> b", "new b"
+    // ...
+    //
+    // getting "actually good" results is impossible without knowledge of commits topology.
+
+
+    // key - after path (nullable)
+    LinkedMultiMap<FilePath, Change> map = new LinkedMultiMap<FilePath, Change>();
+
+    for (Change change : changes) {
+      ContentRevision bRev = change.getBeforeRevision();
+      ContentRevision aRev = change.getAfterRevision();
+      FilePath bPath = bRev != null ? bRev.getFile() : null;
+      FilePath aPath = aRev != null ? aRev.getFile() : null;
+
+      if (bRev == null) {
+        map.putValue(aPath, change);
+        continue;
+      }
+
+      Collection<Change> bucket = map.get(bPath);
+      if (bucket.isEmpty()) {
+        map.putValue(aPath, change);
+        continue;
+      }
+
+      Change oldChange = bucket.iterator().next();
+      bucket.remove(oldChange);
+
+      ContentRevision oldRevision = oldChange.getBeforeRevision();
+      if (oldRevision != null || aRev != null) {
+        map.putValue(aPath, new Change(oldRevision, aRev));
       }
     }
-    changes.add(c);
+
+    // put deletions into appropriate place in list
+    Collection<Change> deleted = map.remove(null);
+    if (deleted != null) {
+      for (Change change : deleted) {
+        //noinspection ConstantConditions
+        map.putValue(change.getBeforeRevision().getFile(), change);
+      }
+    }
+
+    return new ArrayList<Change>(map.values());
   }
 
   private List<CommittedChangeList> getSelectedChangeLists() {
@@ -314,7 +366,7 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
     for (AnAction action : auxiliaryActions) {
       menuGroup.add(action);
     }
-    menuGroup.add(ActionManager.getInstance().getAction(IdeActions.ACTION_COPY));
+    menuGroup.add(ActionManager.getInstance().getAction(VcsActions.ACTION_COPY_REVISION_NUMBER));
     PopupHandler.installPopupHandler(myChangesTree, menuGroup, ActionPlaces.UNKNOWN, ActionManager.getInstance());
   }
 
@@ -360,7 +412,7 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
       myChangesTree);
     toolbarGroup.add(expandAllAction);
     toolbarGroup.add(collapseAllAction);
-    toolbarGroup.add(ActionManager.getInstance().getAction(IdeActions.ACTION_COPY));
+    toolbarGroup.add(ActionManager.getInstance().getAction(VcsActions.ACTION_COPY_REVISION_NUMBER));
     toolbarGroup.add(new ContextHelpAction(myHelpId));
     if (tailGroup != null) {
       toolbarGroup.add(tailGroup);
@@ -377,7 +429,7 @@ public class CommittedChangesTreeBrowser extends JPanel implements TypeSafeDataP
       sink.put(VcsDataKeys.CHANGES, changes.toArray(new Change[changes.size()]));
     } else if (key.equals(VcsDataKeys.HAVE_SELECTED_CHANGES)) {
       final int count = myChangesTree.getSelectionCount();
-      sink.put(VcsDataKeys.HAVE_SELECTED_CHANGES, count > 0 ? Boolean.TRUE : Boolean.FALSE);
+      sink.put(VcsDataKeys.HAVE_SELECTED_CHANGES, count > 0);
     }
     else if (key.equals(VcsDataKeys.CHANGES_WITH_MOVED_CHILDREN)) {
       final Collection<Change> changes = collectChanges(getSelectedChangeLists(), true);

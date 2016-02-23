@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.intellij.openapi.wm.impl;
 
+import com.intellij.Patches;
 import com.intellij.ide.AppLifecycleListener;
 import com.intellij.ide.DataManager;
 import com.intellij.ide.GeneralSettings;
@@ -39,6 +40,7 @@ import com.intellij.openapi.wm.impl.welcomeScreen.WelcomeFrame;
 import com.intellij.ui.ScreenUtil;
 import com.intellij.util.EventDispatcher;
 import com.intellij.util.messages.MessageBus;
+import com.intellij.util.ui.JBInsets;
 import com.intellij.util.ui.UIUtil;
 import com.sun.jna.platform.WindowUtils;
 import org.jdom.Element;
@@ -63,7 +65,7 @@ import java.util.Set;
 @State(
   name = "WindowManager",
   defaultStateAsResource = true,
-  storages = @Storage(file = StoragePathMacros.APP_CONFIG + "/window.manager.xml", roamingType = RoamingType.DISABLED)
+  storages = @Storage(value = "window.manager.xml", roamingType = RoamingType.DISABLED)
 )
 public final class WindowManagerImpl extends WindowManagerEx implements NamedComponent, PersistentStateComponent<Element> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.wm.impl.WindowManagerImpl");
@@ -87,7 +89,6 @@ public final class WindowManagerImpl extends WindowManagerEx implements NamedCom
     }
   }
 
-  private static final boolean ORACLE_BUG_8007219 = SystemInfo.isMac && SystemInfo.isJavaVersionAtLeast("1.7");
   private static final int ORACLE_BUG_8007219_THRESHOLD = 5;
 
   private Boolean myAlphaModeSupported = null;
@@ -408,7 +409,6 @@ public final class WindowManagerImpl extends WindowManagerEx implements NamedCom
   }
 
   @Override
-  @Nullable
   public final StatusBar getStatusBar(final Project project) {
     if (!myProject2Frame.containsKey(project)) {
       return null;
@@ -517,10 +517,10 @@ public final class WindowManagerImpl extends WindowManagerEx implements NamedCom
     myProject2Frame.put(null, frame);
 
     if (myFrameBounds == null || !ScreenUtil.isVisible(myFrameBounds)) { //avoid situations when IdeFrame is out of all screens
-      final Rectangle rect = ScreenUtil.getMainScreenBounds();
-      int yParts = rect.height / 6;
-      int xParts = rect.width / 5;
-      myFrameBounds = new Rectangle(xParts, yParts, xParts * 3, yParts * 4);
+      myFrameBounds = ScreenUtil.getMainScreenBounds();
+      int xOff = myFrameBounds.width / 8;
+      int yOff = myFrameBounds.height / 8;
+      JBInsets.removeFrom(myFrameBounds, new Insets(yOff, xOff, yOff, xOff));
     }
 
     fixForOracleBug8007219(frame);
@@ -532,7 +532,7 @@ public final class WindowManagerImpl extends WindowManagerEx implements NamedCom
   }
 
   private void fixForOracleBug8007219(IdeFrameImpl frame) {
-    if ((myFrameExtendedState & Frame.MAXIMIZED_BOTH) > 0 && ORACLE_BUG_8007219) {
+    if ((myFrameExtendedState & Frame.MAXIMIZED_BOTH) > 0 && Patches.JDK_BUG_ID_8007219) {
       final Rectangle screenBounds = ScreenUtil.getMainScreenBounds();
       final Insets screenInsets = ScreenUtil.getScreenInsets(frame.getGraphicsConfiguration());
 

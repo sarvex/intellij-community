@@ -20,7 +20,6 @@ package org.jetbrains.idea.svn;
 import com.intellij.ide.FrameStateListener;
 import com.intellij.ide.FrameStateManager;
 import com.intellij.idea.RareLogger;
-import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
@@ -61,7 +60,6 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.svn.actions.CleanupWorker;
-import org.jetbrains.idea.svn.actions.ShowPropertiesDiffWithLocalAction;
 import org.jetbrains.idea.svn.actions.SvnMergeProvider;
 import org.jetbrains.idea.svn.annotate.SvnAnnotationProvider;
 import org.jetbrains.idea.svn.api.*;
@@ -130,7 +128,6 @@ public class SvnVcs extends AbstractVcs<CommittedChangeList> {
 
   private ChangeProvider myChangeProvider;
   private MergeProvider myMergeProvider;
-  private final WorkingCopiesContent myWorkingCopiesContent;
 
   private final SvnChangelistListener myChangeListListener;
 
@@ -195,8 +192,6 @@ public class SvnVcs extends AbstractVcs<CommittedChangeList> {
 
     myFrameStateListener = project.isDefault() ? null : new MyFrameStateListener(ChangeListManager.getInstance(project),
                                                                                  VcsDirtyScopeManager.getInstance(project));
-    myWorkingCopiesContent = new WorkingCopiesContent(this);
-
     myChecker = new SvnExecutableChecker(this);
 
     Application app = ApplicationManager.getApplication();
@@ -218,8 +213,6 @@ public class SvnVcs extends AbstractVcs<CommittedChangeList> {
     else {
       invokeRefreshSvnRoots();
     }
-
-    myWorkingCopiesContent.activate();
   }
 
   /**
@@ -435,7 +428,6 @@ public class SvnVcs extends AbstractVcs<CommittedChangeList> {
 
     mySvnBranchPointsCalculator.deactivate();
     mySvnBranchPointsCalculator = null;
-    myWorkingCopiesContent.deactivate();
     myLoadedBranchesStorage.deactivate();
   }
 
@@ -618,10 +610,8 @@ public class SvnVcs extends AbstractVcs<CommittedChangeList> {
   }
 
   @Nullable
-  public Info getInfo(@NotNull SVNURL url,
-                         SVNRevision pegRevision,
-                         SVNRevision revision) throws SvnBindException {
-    return getFactory().createInfoClient().doInfo(url, pegRevision, revision);
+  public Info getInfo(@NotNull SVNURL url, SVNRevision pegRevision, SVNRevision revision) throws SvnBindException {
+    return getFactory().createInfoClient().doInfo(SvnTarget.fromURL(url, pegRevision), revision);
   }
 
   @Nullable
@@ -812,11 +802,6 @@ public class SvnVcs extends AbstractVcs<CommittedChangeList> {
       myMergeProvider = new SvnMergeProvider(myProject);
     }
     return myMergeProvider;
-  }
-
-  @Override
-  public List<AnAction> getAdditionalActionsForLocalChange() {
-    return Arrays.<AnAction>asList(new ShowPropertiesDiffWithLocalAction());
   }
 
   private static String keyForVf(final VirtualFile vf) {

@@ -24,6 +24,8 @@ import com.intellij.openapi.help.HelpManager;
 import com.intellij.openapi.options.BaseConfigurable;
 import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.options.ConfigurationException;
+import com.intellij.openapi.project.DumbModePermission;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
@@ -47,7 +49,7 @@ public class SingleConfigurableEditor extends DialogWrapper {
   private JComponent myCenterPanel;
   private final String myDimensionKey;
   private final boolean myShowApplyButton;
-  private boolean myChangesWereApplied;
+  private boolean mySaveAllOnClose;
 
   public SingleConfigurableEditor(@Nullable Project project,
                                   Configurable configurable,
@@ -120,6 +122,16 @@ public class SingleConfigurableEditor extends DialogWrapper {
     this(parent, configurable, ShowSettingsUtilImpl.createDimensionKey(configurable));
   }
 
+  @Override
+  public void show() {
+    DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, new Runnable() {
+      @Override
+      public void run() {
+        SingleConfigurableEditor.super.show();
+      }
+    });
+  }
+
   public Configurable getConfigurable() {
     return myConfigurable;
   }
@@ -166,18 +178,16 @@ public class SingleConfigurableEditor extends DialogWrapper {
 
   @Override
   public void doCancelAction() {
-    if (myChangesWereApplied) {
-      ApplicationManager.getApplication().saveAll();
-    }
     super.doCancelAction();
   }
 
   @Override
   protected void doOKAction() {
     try {
-      if (myConfigurable.isModified()) myConfigurable.apply();
-
-      ApplicationManager.getApplication().saveAll();
+      if (myConfigurable.isModified()) {
+        myConfigurable.apply();
+        mySaveAllOnClose = true;
+      }
     }
     catch (ConfigurationException e) {
       if (e.getMessage() != null) {
@@ -190,6 +200,7 @@ public class SingleConfigurableEditor extends DialogWrapper {
       }
       return;
     }
+
     super.doOKAction();
   }
 
@@ -237,7 +248,7 @@ public class SingleConfigurableEditor extends DialogWrapper {
         myPerformAction = true;
         if (myConfigurable.isModified()) {
           myConfigurable.apply();
-          myChangesWereApplied = true;
+          mySaveAllOnClose = true;
           setCancelButtonText(CommonBundle.getCloseButtonText());
         }
       }
@@ -275,5 +286,9 @@ public class SingleConfigurableEditor extends DialogWrapper {
     super.dispose();
     myConfigurable.disposeUIResources();
     myConfigurable = null;
+
+    if (mySaveAllOnClose) {
+      ApplicationManager.getApplication().saveAll();
+    }
   }
 }

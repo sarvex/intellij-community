@@ -24,7 +24,7 @@ import com.intellij.psi.TokenType;
 import com.intellij.psi.impl.DebugUtil;
 import com.intellij.psi.impl.source.tree.ASTStructure;
 import com.intellij.psi.tree.*;
-import com.intellij.testFramework.LightPlatformLangTestCase;
+import com.intellij.testFramework.LightPlatformTestCase;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.util.ThreeState;
 import com.intellij.util.diff.DiffTree;
@@ -36,7 +36,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
 
-public class PsiBuilderQuickTest extends LightPlatformLangTestCase {
+public class PsiBuilderQuickTest extends LightPlatformTestCase {
   private static final IFileElementType ROOT = new IFileElementType("ROOT", Language.ANY);
 
   private static final IElementType LETTER = new IElementType("LETTER", Language.ANY);
@@ -483,6 +483,27 @@ public class PsiBuilderQuickTest extends LightPlatformLangTestCase {
            "      PsiWhiteSpace(' ')\n");
   }
 
+  public void testEmptyCollapsedNode() {
+    doTest("a<<b",
+           new Parser() {
+             @Override
+             public void parse(PsiBuilder builder) {
+               builder.advanceLexer();
+               builder.mark().collapse(COLLAPSED);
+               while (builder.getTokenType() != null) {
+                 builder.advanceLexer();
+               }
+             }
+           },
+           "Element(ROOT)\n" +
+           "  PsiElement(LETTER)('a')\n" +
+           "  PsiElement(COLLAPSED)('')\n" +
+           "  PsiElement(OTHER)('<')\n" +
+           "  PsiElement(OTHER)('<')\n" +
+           "  PsiElement(LETTER)('b')\n"
+    );
+  }
+
   private interface Parser {
     void parse(PsiBuilder builder);
   }
@@ -539,8 +560,8 @@ public class PsiBuilderQuickTest extends LightPlatformLangTestCase {
         public void nodeInserted(@NotNull ASTNode oldParent, @NotNull LighterASTNode newNode, int pos) {
           fail("inserted(" + oldParent + "," + newNode.getTokenType() + ")");
         }
-      }
-    );
+      },
+      root.getText());
   }
 
   private static void doFailTest(@NonNls final String text, final Parser parser, @NonNls final String expected) {

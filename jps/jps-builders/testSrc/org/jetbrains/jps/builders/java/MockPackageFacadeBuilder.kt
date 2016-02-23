@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,21 +19,23 @@ import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.io.FileUtilRt
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.util.containers.MultiMap
+import com.intellij.util.io.EnumeratorStringDescriptor
+import gnu.trove.THashSet
 import org.jetbrains.jps.ModuleChunk
 import org.jetbrains.jps.builders.DirtyFilesHolder
-import org.jetbrains.jps.incremental.*
+import org.jetbrains.jps.builders.storage.StorageProvider
+import org.jetbrains.jps.incremental.BuilderCategory
+import org.jetbrains.jps.incremental.CompileContext
+import org.jetbrains.jps.incremental.ModuleBuildTarget
+import org.jetbrains.jps.incremental.ModuleLevelBuilder
+import org.jetbrains.jps.incremental.storage.AbstractStateStorage
+import org.jetbrains.jps.incremental.storage.PathStringDescriptor
 import org.jetbrains.org.objectweb.asm.ClassReader
 import org.jetbrains.org.objectweb.asm.ClassWriter
 import org.jetbrains.org.objectweb.asm.Opcodes
-
 import java.io.File
 import java.util.*
 import java.util.regex.Pattern
-import gnu.trove.THashSet
-import org.jetbrains.jps.builders.storage.StorageProvider
-import org.jetbrains.jps.incremental.storage.AbstractStateStorage
-import org.jetbrains.jps.incremental.storage.PathStringDescriptor
-import com.intellij.util.io.EnumeratorStringDescriptor
 
 /**
  * Mock builder which produces class file from several source files to test that our build infrastructure handle such cases properly.
@@ -58,18 +60,18 @@ class MockPackageFacadeGenerator : ModuleLevelBuilder(BuilderCategory.SOURCE_PRO
     }
 
     val allFilesToCompile = ArrayList(filesToCompile.values())
-    if (allFilesToCompile.isEmpty() && chunk.getTargets().all { dirtyFilesHolder.getRemovedFiles(it).all { !isCompilable(File(it)) } }) return ModuleLevelBuilder.ExitCode.NOTHING_DONE
+    if (allFilesToCompile.isEmpty() && chunk.targets.all { dirtyFilesHolder.getRemovedFiles(it).all { !isCompilable(File(it)) } }) return ModuleLevelBuilder.ExitCode.NOTHING_DONE
 
     if (JavaBuilderUtil.isCompileJavaIncrementally(context)) {
-      val logger = context.getLoggingManager().getProjectBuilderLogger()
-      if (logger.isEnabled()) {
-        if (!filesToCompile.isEmpty()) {
+      val logger = context.loggingManager.projectBuilderLogger
+      if (logger.isEnabled) {
+        if (!filesToCompile.isEmpty) {
           logger.logCompiledFiles(allFilesToCompile, "MockPackageFacadeGenerator", "Compiling files:")
         }
       }
     }
 
-    val mappings = context.getProjectDescriptor().dataManager.getMappings()
+    val mappings = context.projectDescriptor.dataManager.mappings
     val callback = JavaBuilderUtil.getDependenciesRegistrar(context)
 
     fun generateClass(packageName: String, className: String, target: ModuleBuildTarget, sources: Collection<String>,
@@ -81,17 +83,17 @@ class MockPackageFacadeGenerator : ModuleLevelBuilder(BuilderCategory.SOURCE_PRO
         writer.generate()
       }
       writer.visitEnd()
-      val outputFile = File(target.getOutputDir(), "$fullClassName.class")
+      val outputFile = File(target.outputDir, "$fullClassName.class")
       val classBytes = writer.toByteArray()
       FileUtil.writeToFile(outputFile, classBytes)
       outputConsumer.registerOutputFile(target, outputFile, sources)
       callback.associate(fullClassName.replace('/', '.'), allSources, ClassReader(classBytes))
     }
 
-    for (target in chunk.getTargets()) {
-      val packagesStorage = context.getProjectDescriptor().dataManager.getStorage(target, PACKAGE_CACHE_STORAGE_PROVIDER)
+    for (target in chunk.targets) {
+      val packagesStorage = context.projectDescriptor.dataManager.getStorage(target, PACKAGE_CACHE_STORAGE_PROVIDER)
       for (file in filesToCompile[target]) {
-        val sources = listOf(file.getAbsolutePath())
+        val sources = listOf(file.absolutePath)
         generateClass(getPackageName(file), FileUtil.getNameWithoutExtension(file), target, sources, sources)
       }
 
@@ -99,31 +101,32 @@ class MockPackageFacadeGenerator : ModuleLevelBuilder(BuilderCategory.SOURCE_PRO
       filesToCompile[target].forEach {
         val currentName = getPackageName(it)
         if (currentName !in packagesToGenerate) packagesToGenerate[currentName] = ArrayList()
-        packagesToGenerate[currentName].add(it)
-        val oldName = packagesStorage.getState(it.getAbsolutePath())
+        packagesToGenerate[currentName]!!.add(it)
+        val oldName = packagesStorage.getState(it.absolutePath)
         if (oldName != null && oldName != currentName && oldName !in packagesToGenerate) {
           packagesToGenerate[oldName] = ArrayList()
         }
       }
-      val packagesFromDeletedFiles = dirtyFilesHolder.getRemovedFiles(target).filter { isCompilable(File(it)) }.mapNotNull { packagesStorage.getState(it) }
+      val packagesFromDeletedFiles = dirtyFilesHolder.getRemovedFiles(target).filter { isCompilable(File(it)) }.map { packagesStorage.getState(it) }.filterNotNull()
       packagesFromDeletedFiles.forEach {
         if (it !in packagesToGenerate) {
           packagesToGenerate[it] = ArrayList()
         }
       }
 
-      val getParentFile: (File) -> File = { it.getParentFile() }
+      val getParentFile: (File) -> File = { it.parentFile }
       val dirsToCheck = filesToCompile[target].mapTo(THashSet(FileUtil.FILE_HASHING_STRATEGY), getParentFile)
-      packagesFromDeletedFiles.flatMap { mappings.getClassSources(mappings.getName(StringUtil.getQualifiedName(it, "PackageFacade"))) }
-                              .map(getParentFile).filterNotNullTo(dirsToCheck)
+      packagesFromDeletedFiles.flatMap {
+        mappings.getClassSources(mappings.getName(StringUtil.getQualifiedName(it, "PackageFacade"))) ?: emptyList()
+      }.map(getParentFile).filterNotNullTo(dirsToCheck)
 
       for ((packageName, dirtyFiles) in packagesToGenerate) {
         val files = dirsToCheck.map { it.listFiles() }.filterNotNull().flatMap { it.toList() }.filter { isCompilable(it) && packageName == getPackageName(it) }
         if (files.isEmpty()) continue
 
-        val classNames = files.map { FileUtilRt.getNameWithoutExtension(it.getName()) }.sort()
-        val dirtySource = dirtyFiles.map { it.getAbsolutePath() }
-        val allSources = files.map { it.getAbsolutePath() }
+        val classNames = files.map { FileUtilRt.getNameWithoutExtension(it.name) }.sorted()
+        val dirtySource = dirtyFiles.map { it.absolutePath }
+        val allSources = files.map { it.absolutePath }
 
         generateClass(packageName, "PackageFacade", target, dirtySource, allSources) {
           for (fileName in classNames) {
@@ -149,7 +152,7 @@ class MockPackageFacadeGenerator : ModuleLevelBuilder(BuilderCategory.SOURCE_PRO
     return "Mock Package Facade Generator"
   }
 
-  class object {
+  companion object {
     private val PACKAGE_CACHE_STORAGE_PROVIDER = object : StorageProvider<AbstractStateStorage<String, String>>() {
       override fun createStorage(targetDataDir: File): AbstractStateStorage<String, String> {
         val storageFile = File(targetDataDir, "mockPackageFacade/packages")
@@ -168,7 +171,7 @@ class MockPackageFacadeGenerator : ModuleLevelBuilder(BuilderCategory.SOURCE_PRO
     }
 
     private fun isCompilable(file: File): Boolean {
-      return FileUtilRt.extensionEquals(file.getName(), "p")
+      return FileUtilRt.extensionEquals(file.name, "p")
     }
   }
 }

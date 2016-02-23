@@ -33,9 +33,7 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.module.*;
 import com.intellij.openapi.options.ConfigurationException;
-import com.intellij.openapi.project.DumbAware;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.project.ProjectBundle;
+import com.intellij.openapi.project.*;
 import com.intellij.openapi.roots.*;
 import com.intellij.openapi.roots.impl.ClonableOrderEntry;
 import com.intellij.openapi.roots.impl.ProjectRootManagerImpl;
@@ -54,7 +52,6 @@ import com.intellij.openapi.util.ActionCallback;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.NullableComputable;
 import com.intellij.openapi.util.io.FileUtil;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -115,10 +112,17 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
 
   private final FacetEditorFacadeImpl myFacetEditorFacade = new FacetEditorFacadeImpl(this, TREE_UPDATER);
 
+  private final List<RemoveConfigurableHandler<?>> myRemoveHandlers;
 
   public ModuleStructureConfigurable(Project project, ModuleManager manager) {
     super(project);
     myModuleManager = manager;
+    myRemoveHandlers = new ArrayList<RemoveConfigurableHandler<?>>();
+    myRemoveHandlers.add(new ModuleRemoveHandler());
+    myRemoveHandlers.add(new FacetInModuleRemoveHandler());
+    for (ModuleStructureExtension extension : ModuleStructureExtension.EP_NAME.getExtensions()) {
+      myRemoveHandlers.addAll(extension.getRemoveHandlers());
+    }
   }
 
   @Override
@@ -148,7 +152,7 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
   @NotNull
   protected ArrayList<AnAction> createActions(final boolean fromPopup) {
     final ArrayList<AnAction> result = super.createActions(fromPopup);
-    if (fromPopup || !Registry.is("ide.new.project.settings")) {
+    if (fromPopup) {
       result.add(Separator.getInstance());
       result.add(new MyGroupAction());
       addCollapseExpandActions(result);
@@ -230,27 +234,28 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
       }
       final String[] groupPath = myPlainMode ? null : myContext.myModulesConfigurator.getModuleModel().getModuleGroupPath(module);
       if (groupPath == null || groupPath.length == 0){
-        addNode(moduleNode, myRoot);
-      } else {
+        myRoot.add(moduleNode);
+      }
+      else {
         final MyNode moduleGroupNode = ModuleGroupUtil
           .buildModuleGroupPath(new ModuleGroup(groupPath), myRoot, moduleGroup2NodeMap,
                                 new Consumer<ModuleGroupUtil.ParentChildRelation<MyNode>>() {
                                   @Override
                                   public void consume(final ModuleGroupUtil.ParentChildRelation<MyNode> parentChildRelation) {
-                                    addNode(parentChildRelation.getChild(), parentChildRelation.getParent());
+                                    parentChildRelation.getParent().add(parentChildRelation.getChild());
                                   }
                                 },
                                 new Function<ModuleGroup, MyNode>() {
                                   @Override
                                   public MyNode fun(final ModuleGroup moduleGroup) {
-                                    final NamedConfigurable moduleGroupConfigurable =
-                                      createModuleGroupConfigurable(moduleGroup);
+                                    final NamedConfigurable moduleGroupConfigurable = createModuleGroupConfigurable(moduleGroup);
                                     return new MyNode(moduleGroupConfigurable, true);
                                   }
                                 });
-        addNode(moduleNode, moduleGroupNode);
+        moduleGroupNode.add(moduleNode);
       }
     }
+    sortDescendants(myRoot);
     if (myProject.isDefault()) {  //do not add modules node in case of template project
       myRoot.removeAllChildren();
     }
@@ -292,7 +297,7 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
                                  ? null
                                  : group != null ? group.getGroupPath() : null;
       if (groupPath == null || groupPath.length == 0){
-        addNode(moduleNode, myRoot);
+        myRoot.add(moduleNode);
       } else {
         final MyNode moduleGroupNode = ModuleGroupUtil
           .updateModuleGroupPath(new ModuleGroup(groupPath), myRoot, new Function<ModuleGroup, MyNode>() {
@@ -304,7 +309,7 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
           }, new Consumer<ModuleGroupUtil.ParentChildRelation<MyNode>>() {
             @Override
             public void consume(final ModuleGroupUtil.ParentChildRelation<MyNode> parentChildRelation) {
-              addNode(parentChildRelation.getChild(), parentChildRelation.getParent());
+              parentChildRelation.getParent().add(parentChildRelation.getChild());
             }
           }, new Function<ModuleGroup, MyNode>() {
             @Override
@@ -313,14 +318,13 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
               return new MyNode(moduleGroupConfigurable, true);
             }
           });
-        addNode(moduleNode, moduleGroupNode);
+        moduleGroupNode.add(moduleNode);
       }
       Module module = (Module)moduleNode.getConfigurable().getEditableObject();
       myFacetEditorFacade.addFacetsNodes(module, moduleNode);
       addNodesFromExtensions(module, moduleNode);
     }
-    TreeUtil.sort(myRoot, getNodeComparator());
-    ((DefaultTreeModel)myTree.getModel()).reload(myRoot);
+    sortDescendants(myRoot);
     return true;
   }
 
@@ -372,9 +376,8 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
 
   @Override
   public void apply() throws ConfigurationException {
-    final Set<MyNode> roots = new HashSet<MyNode>();
-    roots.add(myRoot);
-    checkApply(roots, ProjectBundle.message("rename.message.prefix.module"), ProjectBundle.message("rename.module.title"));
+    checkForEmptyAndDuplicatedNames(ProjectBundle.message("rename.message.prefix.module"),
+                                    ProjectBundle.message("rename.module.title"), ModuleConfigurable.class);
 
     // let's apply extensions first, since they can write to/commit modifiable models
     for (final ModuleStructureExtension extension : ModuleStructureExtension.EP_NAME.getExtensions()) {
@@ -642,30 +645,6 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
                                              PlatformIcons.CLOSED_MODULE_GROUP_ICON);
   }
 
-  @Override
-  protected boolean canBeRemoved(final Object[] editableObjects) {
-    if (super.canBeRemoved(editableObjects)) {
-      return true;
-    }
-    for (final ModuleStructureExtension extension : ModuleStructureExtension.EP_NAME.getExtensions()) {
-      if (extension.canBeRemoved(editableObjects)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  @Override
-  protected boolean removeObject(final Object editableObject) {
-    for (final ModuleStructureExtension extension : ModuleStructureExtension.EP_NAME.getExtensions()) {
-      if (extension.removeObject(editableObject)) {
-        return true;
-      }
-    }
-    return super.removeObject(editableObject);
-  }
-
   private boolean canBeCopiedByExtension(final NamedConfigurable configurable) {
     for (final ModuleStructureExtension extension : ModuleStructureExtension.EP_NAME.getExtensions()) {
       if (extension.canBeCopied(configurable)) {
@@ -678,6 +657,46 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
   private void copyByExtension(final NamedConfigurable configurable) {
     for (final ModuleStructureExtension extension : ModuleStructureExtension.EP_NAME.getExtensions()) {
       extension.copy(configurable, TREE_UPDATER);
+    }
+  }
+
+  private class FacetInModuleRemoveHandler extends RemoveConfigurableHandler<Facet> {
+    public FacetInModuleRemoveHandler() {
+      super(FacetConfigurable.class);
+    }
+
+    @Override
+    public boolean remove(@NotNull Collection<Facet> facets) {
+      for (Facet facet : facets) {
+        List<Facet> removed = myContext.myModulesConfigurator.getFacetsConfigurator().removeFacet(facet);
+        FacetStructureConfigurable.getInstance(myProject).removeFacetNodes(removed);
+      }
+      return true;
+    }
+  }
+
+  private class ModuleRemoveHandler extends RemoveConfigurableHandler<Module> {
+    public ModuleRemoveHandler() {
+      super(ModuleConfigurable.class);
+    }
+
+    @Override
+    public boolean remove(@NotNull Collection<Module> modules) {
+      ModulesConfigurator modulesConfigurator = myContext.myModulesConfigurator;
+      List<Module> deleted = modulesConfigurator.deleteModules(modules);
+      if (deleted.isEmpty()) {
+        return false;
+      }
+      for (Module module : deleted) {
+        List<Facet> removed = modulesConfigurator.getFacetsConfigurator().removeAllFacets(module);
+        FacetStructureConfigurable.getInstance(myProject).removeFacetNodes(removed);
+        myContext.getDaemonAnalyzer().removeElement(new ModuleProjectStructureElement(myContext, module));
+
+        for (final ModuleStructureExtension extension : ModuleStructureExtension.EP_NAME.getExtensions()) {
+          extension.moduleRemoved(module);
+        }
+      }
+      return true;
     }
   }
 
@@ -829,27 +848,8 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
   }
 
   @Override
-  protected List<Facet> removeFacet(final Facet facet) {
-    List<Facet> removed = super.removeFacet(facet);
-    FacetStructureConfigurable.getInstance(myProject).removeFacetNodes(removed);
-    return removed;
-  }
-
-  @Override
-  protected boolean removeModule(final Module module) {
-    ModulesConfigurator modulesConfigurator = myContext.myModulesConfigurator;
-    if (!modulesConfigurator.deleteModule(module)) {
-      //wait for confirmation
-      return false;
-    }
-    List<Facet> removed = modulesConfigurator.getFacetsConfigurator().removeAllFacets(module);
-    FacetStructureConfigurable.getInstance(myProject).removeFacetNodes(removed);
-    myContext.getDaemonAnalyzer().removeElement(new ModuleProjectStructureElement(myContext, module));
-
-    for (final ModuleStructureExtension extension : ModuleStructureExtension.EP_NAME.getExtensions()) {
-      extension.moduleRemoved(module);
-    }
-    return true;
+  protected List<RemoveConfigurableHandler<?>> getRemoveHandlers() {
+    return myRemoveHandlers;
   }
 
   @Override
@@ -953,10 +953,15 @@ public class ModuleStructureConfigurable extends BaseStructureConfigurable imple
           };
           builder.setName(component.getNameValue());
           builder.setModuleFilePath(path + "/" + builder.getName() + ModuleFileType.DOT_DEFAULT_EXTENSION);
-          final Module module = myContext.myModulesConfigurator.addModule(builder);
-          if (module != null) {
-            addModuleNode(module);
-          }
+          DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, new Runnable() {
+            @Override
+            public void run() {
+              final Module module = myContext.myModulesConfigurator.addModule(builder);
+              if (module != null) {
+                addModuleNode(module);
+              }
+            }
+          });
         }
         catch (Exception e1) {
           LOG.error(e1);

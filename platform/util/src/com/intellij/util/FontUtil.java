@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.intellij.util;
 
+import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.awt.*;
@@ -22,7 +23,21 @@ import java.awt.*;
 public class FontUtil {
   @NotNull
   public static String rightArrow(@NotNull Font font) {
-    char rightArrow = '\u2192';
-    return font.canDisplay(rightArrow) ? String.valueOf(rightArrow) : "->";
+    return canDisplay(font, '\u2192', "->");
+  }
+
+  @NotNull
+  public static String upArrow(@NotNull Font font, @NotNull String defaultValue) {
+    return canDisplay(font, '\u2191', defaultValue);
+  }
+
+  @NotNull
+  public static String canDisplay(@NotNull Font font, char value, @NotNull String defaultValue) {
+    return font.canDisplay(value) ? String.valueOf(value) : defaultValue;
+  }
+
+  @NotNull
+  public static String spaceAndThinSpace() {
+    return " " + canDisplay(UIUtil.getLabelFont(), '\u2009', " ");
   }
 }

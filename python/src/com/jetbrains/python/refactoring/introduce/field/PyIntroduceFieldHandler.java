@@ -37,6 +37,7 @@ import com.intellij.util.Function;
 import com.intellij.util.FunctionUtil;
 import com.jetbrains.python.PyNames;
 import com.jetbrains.python.codeInsight.controlflow.ScopeOwner;
+import com.jetbrains.python.codeInsight.dataflow.scope.ScopeUtil;
 import com.jetbrains.python.inspections.quickfix.AddFieldQuickFix;
 import com.jetbrains.python.psi.*;
 import com.jetbrains.python.psi.impl.PyFunctionBuilder;
@@ -88,7 +89,7 @@ public class PyIntroduceFieldHandler extends IntroduceHandler {
     }
     if (element1 != null) {
       final PyClass clazz = PyUtil.getContainingClassOrSelf(element1);
-      if (clazz != null && PythonUnitTestUtil.isTestCaseClass(clazz)) return true;
+      if (clazz != null && PythonUnitTestUtil.isTestCaseClass(clazz, null)) return true;
     }
     return false;
   }
@@ -171,9 +172,9 @@ public class PyIntroduceFieldHandler extends IntroduceHandler {
   private static boolean inConstructor(@NotNull PsiElement expression) {
     final PsiElement expr = expression instanceof PyClass ? expression : expression.getParent();
     PyClass clazz = PyUtil.getContainingClassOrSelf(expr);
-    PsiElement current = PyUtil.getConcealingParent(expression);
+    final ScopeOwner current = ScopeUtil.getScopeOwner(expression);
     if (clazz != null && current != null && current instanceof PyFunction) {
-      PyFunction init = clazz.findMethodByName(PyNames.INIT, false);
+      PyFunction init = clazz.findMethodByName(PyNames.INIT, false, null);
       if (current == init) {
         return true;
       }
@@ -183,11 +184,11 @@ public class PyIntroduceFieldHandler extends IntroduceHandler {
 
   @Nullable
   private static PsiElement addFieldToSetUp(PyClass clazz, final Function<String, PyStatement> callback) {
-    final PyFunction init = clazz.findMethodByName(PythonUnitTestUtil.TESTCASE_SETUP_NAME, false);
+    final PyFunction init = clazz.findMethodByName(PythonUnitTestUtil.TESTCASE_SETUP_NAME, false, null);
     if (init != null) {
       return AddFieldQuickFix.appendToMethod(init, callback);
     }
-    final PyFunctionBuilder builder = new PyFunctionBuilder(PythonUnitTestUtil.TESTCASE_SETUP_NAME);
+    final PyFunctionBuilder builder = new PyFunctionBuilder(PythonUnitTestUtil.TESTCASE_SETUP_NAME, clazz);
     builder.parameter(PyNames.CANONICAL_SELF);
     PyFunction setUp = builder.buildFunction(clazz.getProject(), LanguageLevel.getDefault());
     final PyStatementList statements = clazz.getStatementList();

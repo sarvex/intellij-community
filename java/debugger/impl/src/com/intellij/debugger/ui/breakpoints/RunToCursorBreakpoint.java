@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,24 +17,27 @@ package com.intellij.debugger.ui.breakpoints;
 
 import com.intellij.debugger.SourcePosition;
 import com.intellij.debugger.engine.DebugProcessImpl;
-import com.intellij.openapi.editor.Document;
-import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
+import com.intellij.xdebugger.XDebuggerUtil;
+import com.intellij.xdebugger.XSourcePosition;
+import com.intellij.xdebugger.breakpoints.XLineBreakpointType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.java.debugger.breakpoints.properties.JavaLineBreakpointProperties;
 
 /**
  * @author Eugene Zhuravlev
  *         Date: Sep 13, 2006
  */
-public class RunToCursorBreakpoint extends LineBreakpoint {
+public class RunToCursorBreakpoint extends LineBreakpoint<JavaLineBreakpointProperties> {
   private final boolean myRestoreBreakpoints;
   @NotNull
   protected final SourcePosition myCustomPosition;
   private String mySuspendPolicy;
+  private final JavaLineBreakpointProperties myProperties = new JavaLineBreakpointProperties();
 
   protected RunToCursorBreakpoint(@NotNull Project project, @NotNull SourcePosition pos, boolean restoreBreakpoints) {
     super(project, null);
@@ -43,6 +46,7 @@ public class RunToCursorBreakpoint extends LineBreakpoint {
     myRestoreBreakpoints = restoreBreakpoints;
   }
 
+  @NotNull
   @Override
   public SourcePosition getSourcePosition() {
     return myCustomPosition;
@@ -88,10 +92,6 @@ public class RunToCursorBreakpoint extends LineBreakpoint {
     return false;
   }
 
-  public boolean isInstanceFiltersEnabled() {
-    return false;
-  }
-
   @Override
   protected boolean isConditionEnabled() {
     return false;
@@ -111,22 +111,39 @@ public class RunToCursorBreakpoint extends LineBreakpoint {
     return true;
   }
 
+  @NotNull
+  @Override
+  protected JavaLineBreakpointProperties getProperties() {
+    return myProperties;
+  }
+
+  @Override
+  protected void fireBreakpointChanged() {
+  }
+
   @Override
   protected boolean isMuted(@NotNull final DebugProcessImpl debugProcess) {
     return false;  // always enabled
   }
 
   @Nullable
-  protected static RunToCursorBreakpoint create(@NotNull Project project, @NotNull Document document, int lineIndex, boolean restoreBreakpoints) {
-    VirtualFile virtualFile = FileDocumentManager.getInstance().getFile(document);
-    if (virtualFile == null) {
-      return null;
+  @Override
+  protected JavaLineBreakpointType getXBreakpointType() {
+    SourcePosition position = getSourcePosition();
+    VirtualFile file = position.getFile().getVirtualFile();
+    int line = position.getLine();
+    for (XLineBreakpointType<?> type : XDebuggerUtil.getInstance().getLineBreakpointTypes()) {
+      if (type instanceof JavaLineBreakpointType && type.canPutAt(file, line, getProject())) {
+        return ((JavaLineBreakpointType)type);
+      }
     }
+    return null;
+  }
 
-    PsiFile psiFile = PsiManager.getInstance(project).findFile(virtualFile);
-    SourcePosition pos = SourcePosition.createFromLine(psiFile, lineIndex);
-
-    return new RunToCursorBreakpoint(project, pos, restoreBreakpoints);
+  @Nullable
+  protected static RunToCursorBreakpoint create(@NotNull Project project, @NotNull XSourcePosition position, boolean restoreBreakpoints) {
+    PsiFile psiFile = PsiManager.getInstance(project).findFile(position.getFile());
+    return new RunToCursorBreakpoint(project, SourcePosition.createFromOffset(psiFile, position.getOffset()), restoreBreakpoints);
   }
 
   @Override

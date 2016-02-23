@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-/*
- * @author max
- */
 package com.intellij.psi.impl.java.stubs.impl;
 
 import com.intellij.psi.PsiMethod;
 import com.intellij.psi.impl.cache.TypeInfo;
-import com.intellij.psi.impl.compiled.StubBuildingVisitor;
 import com.intellij.psi.impl.java.stubs.JavaStubElementTypes;
 import com.intellij.psi.impl.java.stubs.PsiMethodStub;
 import com.intellij.psi.impl.java.stubs.PsiParameterListStub;
@@ -29,58 +24,28 @@ import com.intellij.psi.impl.java.stubs.PsiParameterStub;
 import com.intellij.psi.stubs.StubBase;
 import com.intellij.psi.stubs.StubElement;
 import com.intellij.util.BitUtil;
-import com.intellij.util.cls.ClsFormatException;
-import com.intellij.util.io.StringRef;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 
+/**
+ * @author max
+ */
 public class PsiMethodStubImpl extends StubBase<PsiMethod> implements PsiMethodStub {
   private final TypeInfo myReturnType;
   private final byte myFlags;
-  private final StringRef myName;
-  private StringRef myDefaultValueText;
+  private final String myName;
+  private String myDefaultValueText;
 
   private static final int CONSTRUCTOR = 0x01;
   private static final int VARARGS = 0x02;
   private static final int ANNOTATION = 0x04;
   private static final int DEPRECATED = 0x08;
   private static final int DEPRECATED_ANNOTATION = 0x10;
-  private static final int PARSED_VIA_GENERIC_SIGNATURE = 0x20;
+  private static final int HAS_DOC_COMMENT = 0x20;
 
-  public PsiMethodStubImpl(StubElement parent,
-                           StringRef name,
-                           byte flags,
-                           String signature,
-                           @NotNull List<String> args,
-                           @Nullable List<String> throwables,
-                           String desc,
-                           int modifiersMask) {
-    super(parent, isAnnotationMethod(flags) ? JavaStubElementTypes.ANNOTATION_METHOD : JavaStubElementTypes.METHOD);
-    myName = name;
-    myDefaultValueText = null;
-
-    new PsiModifierListStubImpl(this, modifiersMask);
-
-    String returnType = null;
-    boolean parsedViaGenericSignature = false;
-    if (signature != null) {
-      try {
-        returnType = StubBuildingVisitor.parseMethodViaGenericSignature(signature, this, args, throwables);
-        parsedViaGenericSignature = true;
-      }
-      catch (ClsFormatException ignored) { }
-    }
-    if (returnType == null) {
-      returnType = StubBuildingVisitor.parseMethodViaDescription(desc, this, args);
-    }
-
-    myReturnType = TypeInfo.fromString(returnType);
-    myFlags = (byte)(flags | (parsedViaGenericSignature ? PARSED_VIA_GENERIC_SIGNATURE : 0));
-  }
-
-  public PsiMethodStubImpl(StubElement parent, StringRef name, @NotNull TypeInfo returnType, byte flags, StringRef defaultValueText) {
+  public PsiMethodStubImpl(StubElement parent, String name, @NotNull TypeInfo returnType, byte flags, @Nullable String defaultValueText) {
     super(parent, isAnnotationMethod(flags) ? JavaStubElementTypes.ANNOTATION_METHOD : JavaStubElementTypes.METHOD);
     myReturnType = returnType;
     myFlags = flags;
@@ -90,17 +55,14 @@ public class PsiMethodStubImpl extends StubBase<PsiMethod> implements PsiMethodS
 
   @Override
   public boolean isConstructor() {
-    return (myFlags & CONSTRUCTOR) != 0;
+    return BitUtil.isSet(myFlags, CONSTRUCTOR);
   }
 
   @Override
   public boolean isVarArgs() {
-    return (myFlags & VARARGS) != 0;
+    return BitUtil.isSet(myFlags, VARARGS);
   }
 
-  public boolean isParsedViaGenericSignature() {
-    return BitUtil.isSet(myFlags, PARSED_VIA_GENERIC_SIGNATURE);
-  }
   @Override
   public boolean isAnnotationMethod() {
     return isAnnotationMethod(myFlags);
@@ -112,7 +74,7 @@ public class PsiMethodStubImpl extends StubBase<PsiMethod> implements PsiMethodS
 
   @Override
   public String getDefaultValueText() {
-    return StringRef.toString(myDefaultValueText);
+    return myDefaultValueText;
   }
 
   @Override
@@ -129,6 +91,11 @@ public class PsiMethodStubImpl extends StubBase<PsiMethod> implements PsiMethodS
   @Override
   public boolean hasDeprecatedAnnotation() {
     return (myFlags & DEPRECATED_ANNOTATION) != 0;
+  }
+
+  @Override
+  public boolean hasDocComment() {
+    return (myFlags & HAS_DOC_COMMENT) != 0;
   }
 
   @Override
@@ -151,7 +118,7 @@ public class PsiMethodStubImpl extends StubBase<PsiMethod> implements PsiMethodS
 
   @Override
   public String getName() {
-    return StringRef.toString(myName);
+    return myName;
   }
 
   public byte getFlags() {
@@ -159,24 +126,26 @@ public class PsiMethodStubImpl extends StubBase<PsiMethod> implements PsiMethodS
   }
 
   public void setDefaultValueText(final String defaultValueText) {
-    myDefaultValueText = StringRef.fromString(defaultValueText);
+    myDefaultValueText = defaultValueText;
   }
 
   public static byte packFlags(boolean isConstructor,
                                boolean isAnnotationMethod,
                                boolean isVarargs,
                                boolean isDeprecated,
-                               boolean hasDeprecatedAnnotation) {
+                               boolean hasDeprecatedAnnotation,
+                               boolean hasDocComment) {
     byte flags = 0;
     if (isConstructor) flags |= CONSTRUCTOR;
     if (isAnnotationMethod) flags |= ANNOTATION;
     if (isVarargs) flags |= VARARGS;
     if (isDeprecated) flags |= DEPRECATED;
     if (hasDeprecatedAnnotation) flags |= DEPRECATED_ANNOTATION;
+    if (hasDocComment) flags |= HAS_DOC_COMMENT;
     return flags;
   }
 
-  @SuppressWarnings({"HardCodedStringLiteral"})
+  @Override
   public String toString() {
     StringBuilder builder = new StringBuilder();
     builder.append("PsiMethodStub[");

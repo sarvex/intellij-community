@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,20 +16,26 @@
 
 package com.intellij.formatting;
 
+import com.intellij.diagnostic.LogMessageEx;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.Language;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.EditorFactory;
 import com.intellij.openapi.editor.TextChange;
 import com.intellij.openapi.editor.ex.DocumentEx;
 import com.intellij.openapi.editor.impl.BulkChangesMerger;
 import com.intellij.openapi.editor.impl.TextChangeImpl;
 import com.intellij.openapi.fileTypes.StdFileTypes;
+import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.codeStyle.CodeStyleSettings;
 import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
+import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.containers.MultiMap;
 import com.intellij.util.ui.UIUtil;
 import gnu.trove.TIntObjectHashMap;
 import org.jetbrains.annotations.NotNull;
@@ -37,7 +43,9 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
-class FormatProcessor {
+import static com.intellij.formatting.AbstractBlockAlignmentProcessor.Context;
+
+public class FormatProcessor {
 
   private static final Map<Alignment.Anchor, BlockAlignmentProcessor> ALIGNMENT_PROCESSORS =
     new EnumMap<Alignment.Anchor, BlockAlignmentProcessor>(Alignment.Anchor.class);
@@ -55,6 +63,8 @@ class FormatProcessor {
   private static final int BULK_REPLACE_OPTIMIZATION_CRITERIA = 3000;
 
   private static final Logger LOG = Logger.getInstance("#com.intellij.formatting.FormatProcessor");
+  private Set<Alignment> myAlignmentsInsideRangesToModify = null;
+  private boolean myReformatContext;
 
   private LeafBlockWrapper myCurrentBlock;
 
@@ -125,7 +135,7 @@ class FormatProcessor {
    * region' and value is dependent spacing object.
    * <p/>
    * Every time we detect that formatter changes 'has line feeds' status of such dependent region, we
-   * {@link DependantSpacingImpl#setDependentRegionChanged() mark} the dependent spacing as changed and schedule one more
+   * {@link DependantSpacingImpl#setDependentRegionLinefeedStatusChanged() mark} the dependent spacing as changed and schedule one more
    * formatting iteration.
    */
   private SortedMap<TextRange, DependantSpacingImpl> myPreviousDependencies =
@@ -152,6 +162,11 @@ class FormatProcessor {
 
   @NotNull
   private State myCurrentState;
+  private MultiMap<ExpandableIndent, AbstractBlockWrapper> myExpandableIndents;
+  private int myTotalBlocksWithAlignments;
+  private int myBlockRollbacks;
+  
+  private AlignmentCyclesDetector myCyclesDetector;
 
   public FormatProcessor(final FormattingDocumentModel docModel,
                          Block rootBlock,
@@ -160,23 +175,21 @@ class FormatProcessor {
                          @Nullable FormatTextRanges affectedRanges,
                          @NotNull FormattingProgressCallback progressCallback)
   {
-    this(docModel, rootBlock, settings, indentOptions, affectedRanges, -1, progressCallback);
+    this(docModel, rootBlock, new FormatOptions(settings, indentOptions, affectedRanges, false), progressCallback);
   }
 
-  public FormatProcessor(final FormattingDocumentModel docModel,
-                         Block rootBlock,
-                         CodeStyleSettings settings,
-                         CommonCodeStyleSettings.IndentOptions indentOptions,
-                         @Nullable FormatTextRanges affectedRanges,
-                         int interestingOffset,
-                         @NotNull FormattingProgressCallback progressCallback)
+  public FormatProcessor(FormattingDocumentModel model,
+                         Block block,
+                         FormatOptions options,
+                         @NotNull FormattingProgressCallback callback)
   {
-    myProgressCallback = progressCallback;
-    myDefaultIndentOption = indentOptions;
-    mySettings = settings;
-    myDocument = docModel.getDocument();
-    myCurrentState = new WrapBlocksState(rootBlock, docModel, affectedRanges, interestingOffset);
-    myRightMargin = getRightMargin(rootBlock);
+    myProgressCallback = callback;
+    myDefaultIndentOption = options.myIndentOptions;
+    mySettings = options.mySettings;
+    myDocument = model.getDocument();
+    myReformatContext = options.myReformatContext;
+    myCurrentState = new WrapBlocksState(block, model, options.myAffectedRanges, options.myInterestingOffset);
+    myRightMargin = getRightMargin(block);
   }
 
   private int getRightMargin(Block rootBlock) {
@@ -244,7 +257,11 @@ class FormatProcessor {
   public void format(FormattingModel model, boolean sequentially) {
     if (sequentially) {
       AdjustWhiteSpacesState adjustState = new AdjustWhiteSpacesState();
-      adjustState.setNext(new ApplyChangesState(model));
+      ExpandChildrenIndent expandChildrenIndent = new ExpandChildrenIndent();
+      ApplyChangesState applyChangesState = new ApplyChangesState(model);
+
+      expandChildrenIndent.setNext(applyChangesState);
+      adjustState.setNext(expandChildrenIndent);
       myCurrentState.setNext(adjustState);
     }
     else {
@@ -280,7 +297,9 @@ class FormatProcessor {
 
   @SuppressWarnings({"WhileLoopSpinsOnField"})
   public void formatWithoutRealModifications(boolean sequentially) {
-    myCurrentState.setNext(new AdjustWhiteSpacesState());
+    AdjustWhiteSpacesState adjustSpace = new AdjustWhiteSpacesState();
+    adjustSpace.setNext(new ExpandChildrenIndent());
+    myCurrentState.setNext(adjustSpace);
 
     if (sequentially) {
       return;
@@ -333,50 +352,55 @@ class FormatProcessor {
   }
 
   /**
-   * Decides whether applying formatter changes should be applied incrementally one-by-one or merge result should be
-   * constructed locally and the whole document text should be replaced. Performs such single bulk change if necessary.
+   * Performs formatter changes in a series of blocks, for each block a new contents of document is calculated 
+   * and whole document is replaced in one operation.
    *
    * @param blocksToModify        changes introduced by formatter
    * @param model                 current formatting model
    * @param indentOption          indent options to use
-   * @return                      <code>true</code> if given changes are applied to the document (i.e. no further processing is required);
-   *                              <code>false</code> otherwise
    */
   @SuppressWarnings({"deprecation"})
-  private boolean applyChangesAtRewriteMode(@NotNull final List<LeafBlockWrapper> blocksToModify,
+  private void applyChangesAtRewriteMode(@NotNull final List<LeafBlockWrapper> blocksToModify,
                                             @NotNull final FormattingModel model,
                                             @NotNull CommonCodeStyleSettings.IndentOptions indentOption)
   {
     FormattingDocumentModel documentModel = model.getDocumentModel();
     Document document = documentModel.getDocument();
-    if (document == null) {
-      return false;
+    CaretOffsetUpdater caretOffsetUpdater = new CaretOffsetUpdater(document);
+
+    if (document instanceof DocumentEx) ((DocumentEx)document).setInBulkUpdate(true);
+    try {
+      List<TextChange> changes = new ArrayList<TextChange>();
+      int shift = 0;
+      int currentIterationShift = 0;
+      for (LeafBlockWrapper block : blocksToModify) {
+        WhiteSpace whiteSpace = block.getWhiteSpace();
+        CharSequence newWs = documentModel.adjustWhiteSpaceIfNecessary(
+          whiteSpace.generateWhiteSpace(getIndentOptionsToUse(block, indentOption)), whiteSpace.getStartOffset(),
+          whiteSpace.getEndOffset(), block.getNode(), false
+        );
+        if (changes.size() > 10000) {
+          caretOffsetUpdater.update(changes);
+          CharSequence mergeResult = BulkChangesMerger.INSTANCE.mergeToCharSequence(document.getChars(), document.getTextLength(), changes);
+          document.replaceString(0, document.getTextLength(), mergeResult);
+          shift += currentIterationShift;
+          currentIterationShift = 0;
+          changes.clear();
+        }
+        TextChangeImpl change = new TextChangeImpl(newWs, whiteSpace.getStartOffset() + shift, whiteSpace.getEndOffset() + shift);
+        currentIterationShift += change.getDiff();
+        changes.add(change);
+      }
+      caretOffsetUpdater.update(changes);
+      CharSequence mergeResult = BulkChangesMerger.INSTANCE.mergeToCharSequence(document.getChars(), document.getTextLength(), changes);
+      document.replaceString(0, document.getTextLength(), mergeResult);
+    }
+    finally {
+      if (document instanceof DocumentEx) ((DocumentEx)document).setInBulkUpdate(false);
     }
 
-    List<TextChange> changes = new ArrayList<TextChange>();
-    int shift = 0;
-    int currentIterationShift = 0;
-    for (LeafBlockWrapper block : blocksToModify) {
-      WhiteSpace whiteSpace = block.getWhiteSpace();
-      CharSequence newWs = documentModel.adjustWhiteSpaceIfNecessary(
-        whiteSpace.generateWhiteSpace(getIndentOptionsToUse(block, indentOption)), whiteSpace.getStartOffset(),
-        whiteSpace.getEndOffset(), block.getNode(), false
-      );
-      if (changes.size() > 10000) {
-        CharSequence mergeResult = BulkChangesMerger.INSTANCE.mergeToCharSequence(document.getChars(), document.getTextLength(), changes);
-        document.replaceString(0, document.getTextLength(), mergeResult);
-        shift += currentIterationShift;
-        currentIterationShift = 0;
-        changes.clear();
-      }
-      TextChangeImpl change = new TextChangeImpl(newWs, whiteSpace.getStartOffset() + shift, whiteSpace.getEndOffset() + shift);
-      currentIterationShift += change.getDiff();
-      changes.add(change);
-    }
-    CharSequence mergeResult = BulkChangesMerger.INSTANCE.mergeToCharSequence(document.getChars(), document.getTextLength(), changes);
-    document.replaceString(0, document.getTextLength(), mergeResult);
+    caretOffsetUpdater.restoreCaretLocations();
     cleanupBlocks(blocksToModify);
-    return true;
   }
 
   private static void cleanupBlocks(List<LeafBlockWrapper> blocks) {
@@ -406,7 +430,7 @@ class FormatProcessor {
   ) {
     final WhiteSpace whiteSpace = block.getWhiteSpace();
     final TextRange textRange = whiteSpace.getTextRange();
-    final TextRange wsRange = shiftRange(textRange, shift);
+    final TextRange wsRange = textRange.shiftRight(shift);
     final String newWhiteSpace = _newWhiteSpace.toString();
     TextRange newWhiteSpaceRange = model instanceof FormattingModelEx
                                    ? ((FormattingModelEx) model).replaceWhiteSpace(wsRange, block.getNode(), newWhiteSpace)
@@ -415,14 +439,14 @@ class FormatProcessor {
     shift += newWhiteSpaceRange.getLength() - textRange.getLength();
 
     if (block.isLeaf() && whiteSpace.containsLineFeeds() && block.containsLineFeeds()) {
-      final TextRange currentBlockRange = shiftRange(block.getTextRange(), shift);
+      final TextRange currentBlockRange = block.getTextRange().shiftRight(shift);
 
       IndentInside oldBlockIndent = whiteSpace.getInitialLastLineIndent();
       IndentInside whiteSpaceIndent = IndentInside.createIndentOn(IndentInside.getLastLine(newWhiteSpace));
       final int shiftInside = calcShift(oldBlockIndent, whiteSpaceIndent, options);
 
       if (shiftInside != 0 || !oldBlockIndent.equals(whiteSpaceIndent)) {
-        final TextRange newBlockRange = model.shiftIndentInsideRange(currentBlockRange, shiftInside);
+        final TextRange newBlockRange = model.shiftIndentInsideRange(block.getNode(), currentBlockRange, shiftInside);
         shift += newBlockRange.getLength() - block.getLength();
       }
     }
@@ -461,13 +485,16 @@ class FormatProcessor {
     return result == null ? fallbackIndentOptions : result;
   }
 
-  private static TextRange shiftRange(final TextRange textRange, final int shift) {
-    return new TextRange(textRange.getStartOffset() + shift, textRange.getEndOffset() + shift);
-  }
-
   private void processToken() {
     final SpacingImpl spaceProperty = myCurrentBlock.getSpaceProperty();
     final WhiteSpace whiteSpace = myCurrentBlock.getWhiteSpace();
+
+    if (isReformatSelectedRangesContext()) {
+      if (isCurrentBlockAlignmentUsedInRangesToModify() && whiteSpace.isReadOnly() && spaceProperty != null && !spaceProperty.isReadOnly()) {
+        whiteSpace.setReadOnly(false);
+        whiteSpace.setLineFeedsAreReadOnly(true);
+      }
+    }
 
     whiteSpace.arrangeLineFeeds(spaceProperty, this);
 
@@ -496,11 +523,13 @@ class FormatProcessor {
       onCurrentLineChanged();
     }
 
-    if (shouldSaveDependency(spaceProperty, whiteSpace)) {
-      saveDependency(spaceProperty);
+
+    final List<TextRange> ranges = getDependentRegionRangesAfterCurrentWhiteSpace(spaceProperty, whiteSpace);
+    if (!ranges.isEmpty()) {
+      registerUnresolvedDependentSpacingRanges(spaceProperty, ranges);
     }
 
-    if (!whiteSpace.isIsReadOnly() && shouldReformatBecauseOfBackwardDependency(whiteSpace.getTextRange())) {
+    if (!whiteSpace.isIsReadOnly() && shouldReformatPreviouslyLocatedDependentSpacing(whiteSpace)) {
       myAlignAgain.add(whiteSpace);
     }
     else if (!myAlignAgain.isEmpty()) {
@@ -510,43 +539,74 @@ class FormatProcessor {
     myCurrentBlock = myCurrentBlock.getNextBlock();
   }
 
-  private boolean shouldReformatBecauseOfBackwardDependency(TextRange changed) {
+  private boolean isReformatSelectedRangesContext() {
+    return myReformatContext && !ContainerUtil.isEmpty(myAlignmentsInsideRangesToModify);
+  }
+
+  private boolean isCurrentBlockAlignmentUsedInRangesToModify() {
+    AbstractBlockWrapper block = myCurrentBlock;
+    AlignmentImpl alignment = myCurrentBlock.getAlignment();
+
+    while (alignment == null) {
+      block = block.getParent();
+      if (block == null || block.getStartOffset() != myCurrentBlock.getStartOffset()) {
+        return false;
+      }
+      alignment = block.getAlignment();
+    }
+
+    return myAlignmentsInsideRangesToModify.contains(alignment);
+  }
+
+  private boolean shouldReformatPreviouslyLocatedDependentSpacing(WhiteSpace space) {
+    final TextRange changed = space.getTextRange();
     final SortedMap<TextRange, DependantSpacingImpl> sortedHeadMap = myPreviousDependencies.tailMap(changed);
 
-    boolean result = false;
     for (final Map.Entry<TextRange, DependantSpacingImpl> entry : sortedHeadMap.entrySet()) {
       final TextRange textRange = entry.getKey();
 
       if (textRange.contains(changed)) {
-        final DependantSpacingImpl dependentSpacing = entry.getValue();
-        final boolean containedLineFeeds = dependentSpacing.getMinLineFeeds() > 0;
+        final DependantSpacingImpl spacing = entry.getValue();
+        if (spacing.isDependentRegionLinefeedStatusChanged()) {
+          continue;
+        }
+
+        final boolean containedLineFeeds = spacing.getMinLineFeeds() > 0;
         final boolean containsLineFeeds = containsLineFeeds(textRange);
 
         if (containedLineFeeds != containsLineFeeds) {
-          dependentSpacing.setDependentRegionChanged();
-          result = true;
+          spacing.setDependentRegionLinefeedStatusChanged();
+          return true;
         }
       }
     }
-    return result;
+
+    return false;
   }
 
-  private void saveDependency(final SpacingImpl spaceProperty) {
+  private void registerUnresolvedDependentSpacingRanges(final SpacingImpl spaceProperty, List<TextRange> unprocessedRanges) {
     final DependantSpacingImpl dependantSpaceProperty = (DependantSpacingImpl)spaceProperty;
-    final TextRange dependency = dependantSpaceProperty.getDependency();
-    if (dependantSpaceProperty.isDependentRegionChanged()) {
-      return;
+    if (dependantSpaceProperty.isDependentRegionLinefeedStatusChanged()) return;
+
+    for (TextRange range: unprocessedRanges) {
+      myPreviousDependencies.put(range, dependantSpaceProperty);
     }
-    myPreviousDependencies.put(dependency, dependantSpaceProperty);
   }
 
-  private static boolean shouldSaveDependency(final SpacingImpl spaceProperty, WhiteSpace whiteSpace) {
-    if (!(spaceProperty instanceof DependantSpacingImpl)) return false;
+  private static List<TextRange> getDependentRegionRangesAfterCurrentWhiteSpace(final SpacingImpl spaceProperty,
+                                                                                final WhiteSpace whiteSpace)
+  {
+    if (!(spaceProperty instanceof DependantSpacingImpl)) return ContainerUtil.emptyList();
 
-    if (whiteSpace.isReadOnly() || whiteSpace.isLineFeedsAreReadOnly()) return false;
+    if (whiteSpace.isReadOnly() || whiteSpace.isLineFeedsAreReadOnly()) return ContainerUtil.emptyList();
 
-    final TextRange dependency = ((DependantSpacingImpl)spaceProperty).getDependency();
-    return whiteSpace.getStartOffset() < dependency.getEndOffset();
+    DependantSpacingImpl spacing = (DependantSpacingImpl)spaceProperty;
+    return ContainerUtil.filter(spacing.getDependentRegionRanges(), new Condition<TextRange>() {
+      @Override
+      public boolean value(TextRange dependencyRange) {
+        return whiteSpace.getStartOffset() < dependencyRange.getEndOffset();
+      }
+    });
   }
 
   /**
@@ -683,10 +743,10 @@ class FormatProcessor {
 
     BlockAlignmentProcessor.Context context = new BlockAlignmentProcessor.Context(
       myDocument, alignment, myCurrentBlock, myAlignmentMappings, myBackwardShiftedAlignedBlocks,
-      getIndentOptionsToUse(myCurrentBlock, myDefaultIndentOption), myRightMargin
-    );
-    BlockAlignmentProcessor.Result result = alignmentProcessor.applyAlignment(context);
+      getIndentOptionsToUse(myCurrentBlock, myDefaultIndentOption));
     final LeafBlockWrapper offsetResponsibleBlock = alignment.getOffsetRespBlockBefore(myCurrentBlock);
+    myCyclesDetector.registerOffsetResponsibleBlock(offsetResponsibleBlock);
+    BlockAlignmentProcessor.Result result = alignmentProcessor.applyAlignment(context);
     switch (result) {
       case TARGET_BLOCK_PROCESSED_NOT_ALIGNED: return true;
       case TARGET_BLOCK_ALIGNED: storeAlignmentMapping(); return true;
@@ -699,7 +759,15 @@ class FormatProcessor {
         myBackwardShiftedAlignedBlocks.put(offsetResponsibleBlock, blocksCausedRealignment);
         blocksCausedRealignment.add(myCurrentBlock);
         storeAlignmentMapping(myCurrentBlock, offsetResponsibleBlock);
-        myCurrentBlock = offsetResponsibleBlock.getNextBlock();
+        
+        if (myCyclesDetector.isCycleDetected()) {
+          reportAlignmentProcessingError(context);
+          return true;
+        }
+        else {
+          myCyclesDetector.registerBlockRollback(myCurrentBlock);
+          myCurrentBlock = offsetResponsibleBlock.getNextBlock();
+        }
         onCurrentLineChanged();
         return false;
       case RECURSION_DETECTED:
@@ -709,6 +777,14 @@ class FormatProcessor {
         return false;
       default: return true;
     }
+  }
+
+  private static void reportAlignmentProcessingError(Context context) {
+    ASTNode node = context.targetBlock.getNode();
+    Language language = node != null ? node.getPsi().getLanguage() : null;
+    LogMessageEx.error(LOG,
+                       (language != null ? language.getDisplayName() + ": " : "") +
+                       "Can't align block " + context.targetBlock, context.document.getText());
   }
 
   /**
@@ -1228,12 +1304,7 @@ class FormatProcessor {
                                @NotNull final CommonCodeStyleSettings.IndentOptions options)
   {
     if (oldIndent.equals(newIndent)) return 0;
-    if (options.USE_TAB_CHARACTER) {
-      return (newIndent.tabs - oldIndent.getTabsCount(options)) * options.TAB_SIZE;
-    }
-    else {
-      return newIndent.whiteSpaces - oldIndent.getSpacesCount(options);
-    }
+    return newIndent.getSpacesCount(options) - oldIndent.getSpacesCount(options);
   }
 
   /**
@@ -1320,6 +1391,9 @@ class FormatProcessor {
       myWrapper = InitialInfoBuilder.prepareToBuildBlocksSequentially(
         root, model, affectedRanges, mySettings, myDefaultIndentOption, interestingOffset, myProgressCallback
       );
+      myWrapper.setCollectAlignmentsInsideFormattingRange(myReformatContext);
+
+      myExpandableIndents = myWrapper.getExpandableIndentsBlocks();
     }
 
     @Override
@@ -1343,8 +1417,13 @@ class FormatProcessor {
       myLastTokenBlock = myWrapper.getLastTokenBlock();
       myCurrentBlock = myFirstTokenBlock;
       myTextRangeToWrapper = buildTextRangeToInfoMap(myFirstTokenBlock);
-      myLastWhiteSpace = new WhiteSpace(getLastBlock().getEndOffset(), false);
-      myLastWhiteSpace.append(myModel.getTextLength(), myModel, myDefaultIndentOption);
+      int lastBlockOffset = getLastBlock().getEndOffset();
+      myLastWhiteSpace = new WhiteSpace(lastBlockOffset, false);
+      myLastWhiteSpace.append(Math.max(lastBlockOffset, myWrapper.getEndOffset()), myModel, myDefaultIndentOption);
+      myAlignmentsInsideRangesToModify = myWrapper.getAlignmentsInsideRangeToModify();
+      myTotalBlocksWithAlignments = myWrapper.getBlocksToAlign().values().size();
+
+      myCyclesDetector = new AlignmentCyclesDetector(myTotalBlocksWithAlignments);
     }
   }
 
@@ -1423,16 +1502,16 @@ class FormatProcessor {
       myProgressCallback.beforeApplyingFormatChanges(myBlocksToModify);
 
       final int blocksToModifyCount = myBlocksToModify.size();
-      final boolean bulkReformat = blocksToModifyCount > 50;
-      DocumentEx updatedDocument = bulkReformat ? getAffectedDocument(myModel) : null;
-      if (updatedDocument != null) {
-        updatedDocument.setInBulkUpdate(true);
-        myResetBulkUpdateState = true;
-      }
-      if (blocksToModifyCount > BULK_REPLACE_OPTIMIZATION_CRITERIA
-          && applyChangesAtRewriteMode(myBlocksToModify, myModel, myDefaultIndentOption))
-      {
+      if (blocksToModifyCount > BULK_REPLACE_OPTIMIZATION_CRITERIA) {
+        applyChangesAtRewriteMode(myBlocksToModify, myModel, myDefaultIndentOption);
         setDone(true);
+      }
+      else if (blocksToModifyCount > 50) {
+        DocumentEx updatedDocument = getAffectedDocument(myModel);
+        if (updatedDocument != null) {
+          updatedDocument.setInBulkUpdate(true);
+          myResetBulkUpdateState = true;
+        }
       }
     }
 
@@ -1485,6 +1564,248 @@ class FormatProcessor {
           }
         });
       }
+    }
+  }
+
+  private static class CaretOffsetUpdater {
+    private final Map<Editor, Integer> myCaretOffsets = new HashMap<Editor, Integer>();
+
+    private CaretOffsetUpdater(@NotNull Document document) {
+      Editor[] editors = EditorFactory.getInstance().getEditors(document);
+      for (Editor editor : editors) {
+        myCaretOffsets.put(editor, editor.getCaretModel().getOffset());
+      }
+    }
+
+    private void update(@NotNull List<? extends TextChange> changes) {
+      BulkChangesMerger merger = BulkChangesMerger.INSTANCE;
+      for (Map.Entry<Editor, Integer> entry : myCaretOffsets.entrySet()) {
+        entry.setValue(merger.updateOffset(entry.getValue(), changes));
+      }
+    }
+
+    private void restoreCaretLocations() {
+      for (Map.Entry<Editor, Integer> entry : myCaretOffsets.entrySet()) {
+        entry.getKey().getCaretModel().moveToOffset(entry.getValue());
+      }
+    }
+  }
+
+
+  public static class FormatOptions {
+    private CodeStyleSettings mySettings;
+    private CommonCodeStyleSettings.IndentOptions myIndentOptions;
+
+    private FormatTextRanges myAffectedRanges;
+    private boolean myReformatContext;
+
+    private int myInterestingOffset;
+
+    public FormatOptions(CodeStyleSettings settings,
+                         CommonCodeStyleSettings.IndentOptions options,
+                         FormatTextRanges ranges,
+                         boolean reformatContext) {
+      this(settings, options, ranges, reformatContext, -1);
+    }
+
+    public FormatOptions(CodeStyleSettings settings,
+                         CommonCodeStyleSettings.IndentOptions options,
+                         FormatTextRanges ranges,
+                         boolean reformatContext,
+                         int interestingOffset) {
+      mySettings = settings;
+      myIndentOptions = options;
+      myAffectedRanges = ranges;
+      myReformatContext = reformatContext;
+      myInterestingOffset = interestingOffset;
+    }
+  }
+
+  private class ExpandChildrenIndent extends State {
+    private Iterator<ExpandableIndent> myIterator;
+    private MultiMap<Alignment, LeafBlockWrapper> myBlocksToRealign = new MultiMap<Alignment, LeafBlockWrapper>();
+
+    public ExpandChildrenIndent() {
+      super(FormattingStateId.EXPANDING_CHILDREN_INDENTS);
+    }
+
+    @Override
+    protected void doIteration() {
+      if (myIterator == null) {
+        myIterator = myExpandableIndents.keySet().iterator();
+      }
+      if (!myIterator.hasNext()) {
+        setDone(true);
+        return;
+      }
+
+      final ExpandableIndent indent = myIterator.next();
+      Collection<AbstractBlockWrapper> blocksToExpandIndent = myExpandableIndents.get(indent);
+      if (shouldExpand(blocksToExpandIndent)) {
+        for (AbstractBlockWrapper block : blocksToExpandIndent) {
+          indent.setEnforceIndent(true);
+          reindentNewLineChildren(block);
+          indent.setEnforceIndent(false);
+        }
+      }
+
+      restoreAlignments(myBlocksToRealign);
+      myBlocksToRealign.clear();
+    }
+
+    private void restoreAlignments(MultiMap<Alignment, LeafBlockWrapper> blocks) {
+      for (Alignment alignment : blocks.keySet()) {
+        AlignmentImpl alignmentImpl = (AlignmentImpl)alignment;
+        if (!alignmentImpl.isAllowBackwardShift()) continue;
+        
+        Set<LeafBlockWrapper> toRealign = alignmentImpl.getOffsetResponsibleBlocks();
+        arrangeSpaces(toRealign);
+        
+        LeafBlockWrapper rightMostBlock = getRightMostBlock(toRealign);
+        int maxSpacesBeforeBlock = rightMostBlock.getNumberOfSymbolsBeforeBlock().getTotalSpaces();
+        int rightMostBlockLine = myDocument.getLineNumber(rightMostBlock.getStartOffset());
+
+        for (LeafBlockWrapper block : toRealign) {
+          int currentBlockLine = myDocument.getLineNumber(block.getStartOffset());
+          if (currentBlockLine == rightMostBlockLine) continue;
+          
+          int blockIndent = block.getNumberOfSymbolsBeforeBlock().getTotalSpaces();
+          int delta = maxSpacesBeforeBlock - blockIndent;
+          if (delta > 0) {
+            int newSpaces = block.getWhiteSpace().getTotalSpaces() + delta;
+            adjustSpacingToKeepAligned(block, newSpaces);
+          }
+        }
+      }
+    }
+
+    private void adjustSpacingToKeepAligned(LeafBlockWrapper block, int newSpaces) {
+      WhiteSpace space = block.getWhiteSpace();
+      SpacingImpl property = block.getSpaceProperty();
+      if (property == null) return;
+      space.arrangeSpaces(new SpacingImpl(newSpaces, newSpaces, 
+                                          property.getMinLineFeeds(), 
+                                          property.isReadOnly(), 
+                                          property.isSafe(), 
+                                          property.shouldKeepLineFeeds(), 
+                                          property.getKeepBlankLines(), 
+                                          property.shouldKeepFirstColumn(), 
+                                          property.getPrefLineFeeds()));
+    }
+
+    private LeafBlockWrapper getRightMostBlock(Collection<LeafBlockWrapper> toRealign) {
+      int maxSpacesBeforeBlock = -1;
+      LeafBlockWrapper rightMostBlock = null;
+      
+      for (LeafBlockWrapper block : toRealign) {
+        int spaces = block.getNumberOfSymbolsBeforeBlock().getTotalSpaces();
+        if (spaces > maxSpacesBeforeBlock) {
+          maxSpacesBeforeBlock = spaces;
+          rightMostBlock = block;
+        }
+      }
+      
+      return rightMostBlock;
+    }
+
+    private void arrangeSpaces(Collection<LeafBlockWrapper> toRealign) {
+      for (LeafBlockWrapper block : toRealign) {
+        WhiteSpace whiteSpace = block.getWhiteSpace();
+        SpacingImpl spacing = block.getSpaceProperty();
+        whiteSpace.arrangeSpaces(spacing);
+      }
+    }
+
+    private boolean shouldExpand(Collection<AbstractBlockWrapper> blocksToExpandIndent) {
+      AbstractBlockWrapper last = null;
+      for (AbstractBlockWrapper block : blocksToExpandIndent) {
+        if (block.getWhiteSpace().containsLineFeeds()) {
+          return true;
+        }
+        last = block;
+      }
+
+      if (last != null) {
+        AbstractBlockWrapper next = getNextBlock(last);
+        if (next != null && next.getWhiteSpace().containsLineFeeds()) {
+          int nextNewLineBlockIndent = next.getNumberOfSymbolsBeforeBlock().getTotalSpaces();
+          if (nextNewLineBlockIndent >= finMinNewLineIndent(blocksToExpandIndent)) {
+            return true;  
+          }
+        }
+      }
+      
+      return false;
+    }
+
+    private int finMinNewLineIndent(@NotNull Collection<AbstractBlockWrapper> wrappers) {
+      int totalMinimum = Integer.MAX_VALUE;
+      for (AbstractBlockWrapper wrapper : wrappers) {
+        int minNewLineIndent = findMinNewLineIndent(wrapper);
+        if (minNewLineIndent < totalMinimum) {
+          totalMinimum = minNewLineIndent;
+        }
+      }
+      return totalMinimum;
+    }
+    
+    private int findMinNewLineIndent(@NotNull AbstractBlockWrapper block) {
+      if (block instanceof LeafBlockWrapper && block.getWhiteSpace().containsLineFeeds()) {
+        return block.getNumberOfSymbolsBeforeBlock().getTotalSpaces();
+      }
+      else if (block instanceof CompositeBlockWrapper) {
+        List<AbstractBlockWrapper> children = ((CompositeBlockWrapper)block).getChildren();
+        int currentMin = Integer.MAX_VALUE;
+        for (AbstractBlockWrapper child : children) {
+          int childIndent = findMinNewLineIndent(child);
+          if (childIndent < currentMin) {
+            currentMin = childIndent;
+          }
+        }
+        return currentMin;
+      }
+      return Integer.MAX_VALUE;
+    }
+    
+    private AbstractBlockWrapper getNextBlock(AbstractBlockWrapper block) {
+      List<AbstractBlockWrapper> children = block.getParent().getChildren();
+      int nextBlockIndex = children.indexOf(block) + 1;
+      if (nextBlockIndex < children.size()) {
+        return children.get(nextBlockIndex);
+      }
+      return null;
+    }
+    
+    private void reindentNewLineChildren(final @NotNull AbstractBlockWrapper block) {
+      if (block instanceof LeafBlockWrapper) {
+        WhiteSpace space = block.getWhiteSpace();
+
+        if (space.containsLineFeeds()) {
+          myCurrentBlock = (LeafBlockWrapper)block;
+          adjustIndent();
+          storeAlignmentsAfterCurrentBlock();
+        }
+      }
+      else if (block instanceof CompositeBlockWrapper) {
+        List<AbstractBlockWrapper> children = ((CompositeBlockWrapper)block).getChildren();
+        for (AbstractBlockWrapper childBlock : children) {
+          reindentNewLineChildren(childBlock);
+        }
+      }
+    }
+
+    private void storeAlignmentsAfterCurrentBlock() {
+      LeafBlockWrapper current = myCurrentBlock.getNextBlock();
+      while (current != null && !current.getWhiteSpace().containsLineFeeds()) {
+        if (current.getAlignment() != null) {
+          myBlocksToRealign.putValue(current.getAlignment(), current);
+        }
+        current = current.getNextBlock();
+      }
+    }
+
+    @Override
+    protected void prepare() {
     }
   }
 }

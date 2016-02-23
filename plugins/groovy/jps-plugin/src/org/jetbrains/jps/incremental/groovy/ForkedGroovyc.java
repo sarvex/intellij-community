@@ -18,12 +18,14 @@ package org.jetbrains.jps.incremental.groovy;
 import com.intellij.execution.process.BaseOSProcessHandler;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.Function;
 import com.intellij.util.SystemProperties;
 import com.intellij.util.containers.ContainerUtilRt;
 import com.intellij.util.lang.UrlClassLoader;
 import gnu.trove.THashMap;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.groovy.compiler.rt.GroovyRtConstants;
 import org.jetbrains.jps.ModuleChunk;
 import org.jetbrains.jps.cmdline.ClasspathBootstrap;
@@ -60,7 +62,7 @@ class ForkedGroovyc implements GroovycFlavor {
     throws Exception {
     List<String> classpath = new ArrayList<String>();
     if (myOptimizeClassLoading) {
-      classpath.add(GroovyBuilder.getGroovyRtRoot().getPath());
+      classpath.addAll(GroovyBuilder.getGroovyRtRoots());
       classpath.add(ClasspathBootstrap.getResourcePath(Function.class));
       classpath.add(ClasspathBootstrap.getResourcePath(UrlClassLoader.class));
       classpath.add(ClasspathBootstrap.getResourceFile(THashMap.class).getPath());
@@ -69,15 +71,15 @@ class ForkedGroovyc implements GroovycFlavor {
     }
 
     List<String> vmParams = ContainerUtilRt.newArrayList();
-    vmParams.add("-Xmx" + settings.heapSize + "m");
+    vmParams.add("-Xmx" + System.getProperty("groovyc.heap.size", settings.heapSize) + "m");
     vmParams.add("-Dfile.encoding=" + System.getProperty("file.encoding"));
     //vmParams.add("-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5239");
     
     if ("false".equals(System.getProperty(GroovyRtConstants.GROOVYC_ASM_RESOLVING_ONLY))) {
       vmParams.add("-D" + GroovyRtConstants.GROOVYC_ASM_RESOLVING_ONLY + "=false");
     }
-    String configScript = System.getProperty(GroovyRtConstants.GROOVYC_CONFIG_SCRIPT);
-    if (configScript != null) {
+    String configScript = settings.configScript;
+    if (StringUtil.isNotEmpty(configScript)) {
       vmParams.add("-D" + GroovyRtConstants.GROOVYC_CONFIG_SCRIPT + "=" + configScript);
     }
 
@@ -94,9 +96,10 @@ class ForkedGroovyc implements GroovycFlavor {
       getProgramParams(tempFile, settings, forStubs)
     );
     final Process process = Runtime.getRuntime().exec(ArrayUtil.toStringArray(cmd));
-    ProcessHandler handler = new BaseOSProcessHandler(process, null, null) {
+    ProcessHandler handler = new BaseOSProcessHandler(process, StringUtil.join(cmd, " "), null) {
+      @NotNull
       @Override
-      protected Future<?> executeOnPooledThread(Runnable task) {
+      protected Future<?> executeOnPooledThread(@NotNull Runnable task) {
         return SharedThreadPool.getInstance().executeOnPooledThread(task);
       }
 

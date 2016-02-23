@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,8 @@ import com.intellij.openapi.editor.colors.ColorKey;
 import com.intellij.openapi.editor.colors.EditorColorsScheme;
 import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.editor.markup.TextAttributes;
-import com.intellij.openapi.options.ExternalInfo;
 import com.intellij.openapi.options.ExternalizableScheme;
 import com.intellij.openapi.util.Comparing;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.awt.*;
@@ -31,8 +29,6 @@ import java.awt.*;
  * @author Yura Cangea
  */
 public class EditorColorsSchemeImpl extends AbstractColorsScheme implements ExternalizableScheme {
-  private final ExternalInfo myExternalInfo = new ExternalInfo();
-
   public EditorColorsSchemeImpl(EditorColorsScheme parentScheme) {
     super(parentScheme);
   }
@@ -55,21 +51,17 @@ public class EditorColorsSchemeImpl extends AbstractColorsScheme implements Exte
   public TextAttributes getAttributes(TextAttributesKey key) {
     if (key != null) {
       TextAttributesKey fallbackKey = key.getFallbackAttributeKey();
-      TextAttributes attributes = myAttributesMap.get(key);
+      TextAttributes attributes = getDirectlyDefinedAttributes(key);
       if (fallbackKey == null) {
-        if (attributes != null) return attributes;
+        if (containsValue(attributes)) return attributes;
       }
       else {
-        if (attributes != null && !attributes.isFallbackEnabled()) return attributes;
+        if (containsValue(attributes) && !attributes.isFallbackEnabled()) return attributes;
         attributes = getFallbackAttributes(fallbackKey);
-        if (attributes != null) return attributes;
+        if (containsValue(attributes)) return attributes;
       }
     }
     return myParentScheme.getAttributes(key);
-  }
-
-  public boolean containsKey(TextAttributesKey key) {
-    return myAttributesMap.containsKey(key);
   }
 
   @Nullable
@@ -89,11 +81,5 @@ public class EditorColorsSchemeImpl extends AbstractColorsScheme implements Exte
     copyTo(newScheme);
     newScheme.setName(getName());
     return newScheme;
-  }
-
-  @Override
-  @NotNull
-  public ExternalInfo getExternalInfo() {
-    return myExternalInfo;
   }
 }

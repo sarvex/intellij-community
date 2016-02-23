@@ -14,20 +14,21 @@
  * limitations under the License.
  */
 
-package com.intellij.codeInsight.completion;
-
+package com.intellij.codeInsight.completion
 
 import com.intellij.JavaTestUtil
 import com.intellij.codeInsight.CodeInsightSettings
 import com.intellij.codeInsight.lookup.LookupElement
 import com.intellij.codeInsight.lookup.LookupElementPresentation
 import com.intellij.codeInsight.lookup.impl.LookupImpl
+import com.intellij.codeInsight.template.impl.LiveTemplateCompletionContributor
 import com.intellij.ide.ui.UISettings
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiField
 import com.intellij.psi.PsiMethod
-import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.psi.statistics.StatisticsManager
+import com.intellij.ui.JBColor
 
 public class NormalCompletionOrderingTest extends CompletionSortingTestCase {
   private static final String BASE_PATH = "/codeInsight/completion/normalSorting";
@@ -110,7 +111,7 @@ public class NormalCompletionOrderingTest extends CompletionSortingTestCase {
     final String path = getTestName(false) + ".java";
     myFixture.configureByFile(path);
     myFixture.complete(CompletionType.BASIC, 2);
-    assertPreferredItems(0, "BOOLEAN", "booleanMethod", "AN_OBJECT", "voidMethod", "registerNatives");
+    assertPreferredItems(0, "BOOLEAN", "booleanMethod", "AN_OBJECT", "voidMethod");
   }
 
   public void testDispreferDeclared() throws Throwable {
@@ -270,6 +271,9 @@ public class NormalCompletionOrderingTest extends CompletionSortingTestCase {
 
   public void testPreferInterfacesInImplements() {
     checkPreferredItems(0, "XFooIntf", "XFoo", "XFooClass");
+    assert LookupElementPresentation.renderElement(lookup.items[0]).itemTextForeground == JBColor.foreground()
+    assert LookupElementPresentation.renderElement(lookup.items[1]).itemTextForeground == JBColor.RED
+    assert LookupElementPresentation.renderElement(lookup.items[2]).itemTextForeground == JBColor.RED
   }
 
   public void testPreferClassesInExtends() {
@@ -288,8 +292,12 @@ public class NormalCompletionOrderingTest extends CompletionSortingTestCase {
     checkPreferredItems(0, "return", "rLocal", "rParam", "rMethod");
   }
 
+  public void testPreferReturnBeforeExpression() {
+    checkPreferredItems(0, "return", "rLocal", "rParam", "rMethod");
+  }
+
   public void testPreferModifiers() {
-    checkPreferredItems(0, "private", "protected", "public", "paaa", "paab");
+    checkPreferredItems(0, "private", "protected", "public");
   }
 
   public void testPreferEnumConstants() {
@@ -652,6 +660,79 @@ interface TxANotAnno {}
     assertPreferredItems 0, 'newLinkedSet0', 'newLinkedSet1', 'newLinkedSet2'
     incUseCount lookup, 1
     assertPreferredItems 0, 'newLinkedSet1', 'newLinkedSet0', 'newLinkedSet2'
+  }
+
+  public void testStaticMemberTypes() {
+    checkPreferredItems 0, 'newMap', 'newList'
+  }
+
+  public void testNoStatsInSuperInvocation() {
+    checkPreferredItems 0, 'put', 'putAll'
+
+    myFixture.type('\n')
+    assert myFixture.editor.document.text.contains("put")
+    
+    myFixture.type(');\nsuper.')
+    myFixture.completeBasic()
+
+    assertPreferredItems 0, 'get'
+  }
+
+  public void testLiveTemplateOrdering() {
+    LiveTemplateCompletionContributor.setShowTemplatesInTests(true, getTestRootDisposable())
+    checkPreferredItems(0, 'return')
+    assert lookup.items.find { it.lookupString == 'ritar'} != null
+  }
+
+  public void testPreferLocalToExpectedTypedMethod() {
+    checkPreferredItems 0, 'event', 'equals'
+  }
+
+  public void testDispreferJustUsedEnumConstantsInSwitch() {
+    checkPreferredItems 0, 'BAR', 'FOO', 'GOO'
+    myFixture.type('\nbreak;\ncase ')
+
+    def items = myFixture.completeBasic()
+    assertPreferredItems 0, 'FOO', 'GOO', 'BAR'
+
+    assert LookupElementPresentation.renderElement(items[0]).itemTextForeground == JBColor.foreground()
+    assert LookupElementPresentation.renderElement(items.find { it.lookupString == 'BAR' }).itemTextForeground == JBColor.RED
+  }
+
+  public void testPreferValueTypesReturnedFromMethod() {
+    checkPreferredItems 0, 'StringBuffer', 'String', 'Serializable', 'SomeInterface', 'SomeInterface', 'SomeOtherClass'
+    assert 'SomeInterface<String>' == LookupElementPresentation.renderElement(myFixture.lookupElements[3]).itemText
+    assert 'SomeInterface' == LookupElementPresentation.renderElement(myFixture.lookupElements[4]).itemText
+  }
+
+  public void testPreferCastTypesHavingSpecifiedMethod() {
+    checkPreferredItems 0, 'MainClass1', 'MainClass2', 'Maa'
+  }
+
+  public void testNaturalSorting() {
+    checkPreferredItems 0, 'fun1', 'fun2', 'fun10'
+  }
+
+  public void testPreferVarsHavingReferencedMember() {
+    checkPreferredItems 0, 'xzMap', 'xaString'
+  }
+
+  public void testPreferCollectionsStaticOfExpectedType() {
+    checkPreferredItems 0, 'unmodifiableList', 'unmodifiableCollection'
+  }
+
+  public void testDispreferDeprecatedMethodWithUnresolvedQualifier() {
+    myFixture.addClass("package foo; public class Assert { public static void assertTrue() {} }")
+    myFixture.addClass("package bar; @Deprecated public class Assert { public static void assertTrue() {}; public static void assertTrue2() {} }")
+    checkPreferredItems 0, 'Assert.assertTrue', 'Assert.assertTrue', 'Assert.assertTrue2'
+
+    def p = LookupElementPresentation.renderElement(myFixture.lookup.items[0])
+    assert p.tailText.contains('foo')
+    assert !p.strikeout
+
+    p = LookupElementPresentation.renderElement(myFixture.lookup.items[1])
+    assert p.tailText.contains('bar')
+    assert p.strikeout
   }
 
 }

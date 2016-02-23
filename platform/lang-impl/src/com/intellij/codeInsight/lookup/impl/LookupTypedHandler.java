@@ -40,7 +40,6 @@ import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.EditorModificationUtil;
 import com.intellij.openapi.editor.actionSystem.TypedActionHandler;
 import com.intellij.openapi.extensions.Extensions;
-import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
@@ -68,7 +67,7 @@ public class LookupTypedHandler extends TypedActionHandlerBase {
       return;
     }
 
-    if (!CodeInsightUtilBase.prepareEditorForWrite(originalEditor) || !FileDocumentManager.getInstance().requestWriting(originalEditor.getDocument(), project)) {
+    if (!CodeInsightUtilBase.prepareEditorForWrite(originalEditor)) {
       return;
     }
 
@@ -185,23 +184,11 @@ public class LookupTypedHandler extends TypedActionHandlerBase {
 
   static CharFilter.Result getLookupAction(final char charTyped, final LookupImpl lookup) {
     final CharFilter.Result filtersDecision = getFiltersDecision(charTyped, lookup);
-
-    final LookupElement currentItem = lookup.getCurrentItem();
-    if (currentItem != null && charTyped != ' ') {
-      String postfix = lookup.getAdditionalPrefix() + charTyped;
-      final PrefixMatcher matcher = lookup.itemMatcher(currentItem);
-      for (String lookupString : currentItem.getAllLookupStrings()) {
-        if (lookupString.startsWith(matcher.getPrefix() + postfix)) {
-          return CharFilter.Result.ADD_TO_PREFIX;
-        }
-      }
-    }
-
     if (filtersDecision != null) {
       return filtersDecision;
     }
     throw new AssertionError("Typed char not handler by char filter: c=" + charTyped +
-                             "; prefix=" + currentItem +
+                             "; prefix=" + lookup.getCurrentItem() +
                              "; filters=" + Arrays.toString(getFilters()));
   }
 

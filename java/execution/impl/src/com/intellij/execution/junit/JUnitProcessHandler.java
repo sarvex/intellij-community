@@ -19,7 +19,10 @@ import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.execution.junit2.segments.Extractor;
 import com.intellij.execution.process.KillableColoredProcessHandler;
+import com.intellij.execution.process.ProcessAdapter;
+import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessTerminatedListener;
+import com.intellij.openapi.util.Disposer;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Reader;
@@ -31,18 +34,27 @@ public class JUnitProcessHandler extends KillableColoredProcessHandler {
   private final Extractor myOut;
   private final Extractor myErr;
 
-  public JUnitProcessHandler(@NotNull GeneralCommandLine commandLine) throws ExecutionException {
+  private JUnitProcessHandler(@NotNull GeneralCommandLine commandLine) throws ExecutionException {
     super(commandLine);
 
     myOut = new Extractor(getProcess().getInputStream(), commandLine.getCharset());
     myErr = new Extractor(getProcess().getErrorStream(), commandLine.getCharset());
+    addProcessListener(new ProcessAdapter(){
+      @Override
+      public void processTerminated(ProcessEvent event) {
+        Disposer.dispose(myOut);
+        Disposer.dispose(myErr);
+      }
+    });
   }
 
+  @NotNull
   @Override
   protected Reader createProcessOutReader() {
     return myOut.createReader();
   }
 
+  @NotNull
   @Override
   protected Reader createProcessErrReader() {
     return myErr.createReader();
@@ -63,5 +75,10 @@ public class JUnitProcessHandler extends KillableColoredProcessHandler {
     final JUnitProcessHandler processHandler = new JUnitProcessHandler(commandLine);
     ProcessTerminatedListener.attach(processHandler);
     return processHandler;
+  }
+
+  @Override
+  protected boolean useNonBlockingRead() {
+    return true;
   }
 }

@@ -35,7 +35,7 @@ public class Group implements KeymapGroup {
   private String myId;
   private final Icon myIcon;
   /**
-   * Group or action id (String) or Separator or QuickList
+   * Group or action id (String) or Separator or QuickList or Hyperlink
    */
   private final ArrayList<Object> myChildren;
 
@@ -72,6 +72,10 @@ public class Group implements KeymapGroup {
 
   public void addQuickList(QuickList list) {
     myChildren.add(list);
+  }
+
+  public void addHyperlink(Hyperlink link) {
+    myChildren.add(link);
   }
 
   public void addGroup(KeymapGroup keymapGroup) {
@@ -147,6 +151,9 @@ public class Group implements KeymapGroup {
   }
 
   private String calcActionQualifiedPath(String id) {
+    if (!isRoot() && StringUtil.equals(id, myId)) {
+      return getName();
+    }
     for (Object child : myChildren) {
       if (child instanceof QuickList) {
         child = ((QuickList)child).getActionId();

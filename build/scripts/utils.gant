@@ -15,12 +15,15 @@
  */
 
 
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.io.FileUtil
+import com.intellij.openapi.util.text.StringUtil
 import org.jetbrains.jps.gant.JpsGantTool
 import org.jetbrains.jps.gant.TeamCityBuildInfoPrinter
-import org.jetbrains.jps.model.java.JavaSourceRootType
-import org.jetbrains.jps.model.java.JpsJavaExtensionService
+import org.jetbrains.jps.model.java.*
+import org.jetbrains.jps.model.library.JpsOrderRootType
 import org.jetbrains.jps.model.module.JpsModule
+import org.jetbrains.jps.model.serialization.JpsModelSerializationDataService
 
 includeTool << JpsGantTool
 
@@ -34,6 +37,14 @@ binding.setVariable("p", {String key, String defaultValue = null ->
     }
     throw e;
   }
+})
+
+binding.setVariable("versionSelector", {
+  def fullVersion = p("component.version.major") + "." + p("component.version.minor")
+  def versionParts = fullVersion.split("\\.")
+
+  def minor = versionParts[1]
+  versionParts[0] + (minor == "0" ? "": "." + minor)
 })
 
 binding.setVariable("guessJdk", {
@@ -64,23 +75,24 @@ binding.setVariable("isEap", {
   return "true" == p("component.version.eap")
 })
 
-binding.setVariable("mem32", "-server -Xms128m -Xmx512m -XX:MaxPermSize=250m -XX:ReservedCodeCacheSize=150m")
-binding.setVariable("mem64", "-Xms128m -Xmx750m -XX:MaxPermSize=350m -XX:ReservedCodeCacheSize=225m")
+binding.setVariable("mem32", "-server -Xms128m -Xmx512m -XX:MaxPermSize=250m -XX:ReservedCodeCacheSize=240m")
+binding.setVariable("mem64", "-Xms128m -Xmx750m -XX:MaxPermSize=350m -XX:ReservedCodeCacheSize=240m")
 binding.setVariable("common_vmoptions", "-XX:+UseConcMarkSweepGC -XX:SoftRefLRUPolicyMSPerMB=50 -ea " +
-                                        "-Dsun.io.useCanonCaches=false -Djava.net.preferIPv4Stack=true")
+                                        "-Dsun.io.useCanonCaches=false -Djava.net.preferIPv4Stack=true " +
+                                        "-XX:+HeapDumpOnOutOfMemoryError -XX:-OmitStackTraceInFastThrow")
 
-binding.setVariable("vmOptions", { "$common_vmoptions ${isEap() ? '-XX:+HeapDumpOnOutOfMemoryError' : ''}".trim() })
+binding.setVariable("vmOptions", { "$common_vmoptions".trim() })
 binding.setVariable("vmOptions32", { "$mem32 ${vmOptions()}".trim() })
 binding.setVariable("vmOptions64", { "$mem64 ${vmOptions()}".trim() })
 
-binding.setVariable("yjpOptions", { String systemSelector, String platformSuffix = "" ->
-  "-agentlib:yjpagent$platformSuffix=probe_disable=*,disablealloc,disabletracing,onlylocal,disableexceptiontelemetry,delay=10000,sessionname=$systemSelector".trim()
+binding.setVariable("yjpOptions", { String sessionName, String platformSuffix = "" ->
+  "-agentlib:yjpagent$platformSuffix=probe_disable=*,disablealloc,disabletracing,onlylocal,disableexceptiontelemetry,delay=10000,sessionname=$sessionName".trim()
 })
-binding.setVariable("vmOptions32yjp", { String systemSelector ->
-  "${vmOptions32()} ${yjpOptions(systemSelector)}".trim()
+binding.setVariable("vmOptions32yjp", { String sessionName ->
+  "${vmOptions32()} ${yjpOptions(sessionName)}".trim()
 })
-binding.setVariable("vmOptions64yjp", { String systemSelector ->
-  "${vmOptions64()} ${yjpOptions(systemSelector, "64")}".trim()
+binding.setVariable("vmOptions64yjp", { String sessionName ->
+  "${vmOptions64()} ${yjpOptions(sessionName, "64")}".trim()
 })
 
 binding.setVariable("isDefined", {String key ->
@@ -128,13 +140,17 @@ binding.setVariable("guessHome", {
 })
 
 binding.setVariable("loadProject", {
-  requireProperty("jdkHome", guessJdk())
-  def mac = isMac()
-  jdk("IDEA jdk", jdkHome) {
-    if (!mac) {
-      classpath "$jdkHome/lib/tools.jar"
-    }
+  defineJdk("IDEA jdk", setupJdkPath("jdkHome", "$home/build/jdk/1.6", "JDK_16_x64"))
+  defineJdk("1.8", setupJdkPath("jdk8Home", "$home/build/jdk/1.8", "JDK_18_x64"))
+  def bundledKotlinPath = "$home/build/kotlinc"
+  if (!new File(bundledKotlinPath, "lib/kotlin-runtime.jar").exists()) {
+    bundledKotlinPath = "$home/community/build/kotlinc"
   }
+  if (!new File(bundledKotlinPath, "lib/kotlin-runtime.jar").exists()) {
+    projectBuilder.error("Could not find Kotlin runtime at $bundledKotlinPath/lib/kotlin-runtime.jar: run download_kotlin.gant script to download Kotlin JARs")
+    return
+  }
+  setPathVariable("KOTLIN_BUNDLED", bundledKotlinPath)
   projectBuilder.buildIncrementally = Boolean.parseBoolean(p("jps.build.incrementally", "false"))
   def dataDirName = projectBuilder.buildIncrementally ? ".jps-incremental-build" : ".jps-build-data"
   projectBuilder.dataStorageRoot = new File("$home/$dataDirName")
@@ -148,12 +164,87 @@ binding.setVariable("loadProject", {
   compilerOptions.ADDITIONAL_OPTIONS_STRING = compilerOptions.ADDITIONAL_OPTIONS_STRING.replace("-Xlint:unchecked", "")
 })
 
+binding.setVariable("removeJdkJarFiles", { Collection<String> classpath ->
+  def jdkHomePaths = project.model.global.libraryCollection.getLibraries(JpsJavaSdkType.INSTANCE).collect {
+    def homeDir = new File(it.properties.homePath)
+    return SystemInfo.isMac && homeDir.name == "Home" ? homeDir.parent : homeDir.absolutePath
+  }
+  return classpath.findAll { jarPath -> jdkHomePaths.every { !FileUtil.isAncestor(it, jarPath, false) } }
+})
+
+private String setupJdkPath(String propertyName, String defaultDir, String envVarName) {
+  try {
+    this[propertyName]
+  }
+  catch (MissingPropertyException ignored) {
+    def jdk = SystemInfo.isMac ? "$defaultDir/Home" : defaultDir
+    if (new File(jdk).exists()) {
+      projectBuilder.info("$propertyName set to $jdk")
+    }
+    else {
+      jdk = System.getenv(envVarName)
+      if (jdk != null) {
+        projectBuilder.info("'$defaultDir' doesn't exist, $propertyName set to '$envVarName' environment variable: $jdk")
+      }
+      else {
+        jdk = guessJdk()
+        def version = JdkVersionDetector.instance.detectJdkVersion(jdk)
+        if (propertyName.contains("8") && !version.contains("1.8.")) {
+          projectBuilder.error("JDK 1.8 is required to compile the project, but '$propertyName' property and '$envVarName' environment variable aren't defined and default JDK $jdk ($version) cannot be used as JDK 1.8")
+          return null
+        }
+        projectBuilder.info("'$envVarName' isn't defined and '$defaultDir' doesn't exist, $propertyName set to $jdk")
+      }
+    }
+    this[propertyName] = jdk
+    return jdk
+  }
+}
+
+private void defineJdk(String jdkName, jdkHomePath) {
+  jdk(jdkName, jdkHomePath) {
+    def toolsJar = "$jdkHomePath/lib/tools.jar"
+    if (new File(toolsJar).exists()) {
+      classpath toolsJar
+    }
+  }
+
+  if (SystemInfo.isMac) {
+    //temporary workaround for Mac: resolve symlinks manually. Previously ZipFileCache used FileUtil.toCanonicalPath method which doesn't resolve symlinks.
+    def jdk = global.libraryCollection.findLibrary(jdkName, JpsJavaSdkType.INSTANCE)
+    def jdkClasspath = jdk.getFiles(JpsOrderRootType.COMPILED)
+    def urls = jdk.getRootUrls(JpsOrderRootType.COMPILED)
+    urls.each { jdk.removeUrl(it, JpsOrderRootType.COMPILED) }
+    jdkClasspath.each {
+      try {
+        jdk.addRoot(it.getCanonicalFile(), JpsOrderRootType.COMPILED)
+      }
+      catch (IOException ignored) {
+      }
+    }
+    projectBuilder.info("JDK '$jdkName' classpath: ${jdk.getFiles(JpsOrderRootType.COMPILED)}")
+  }
+}
+
+private void setPathVariable(String name, String value) {
+  def pathVars = JpsModelSerializationDataService.getOrCreatePathVariablesConfiguration(global)
+  pathVars.addPathVariable(name, value)
+}
+
 binding.setVariable("prepareOutputFolder", {
   def targetFolder = projectBuilder.buildIncrementally ? "$home/out/incremental-build" : out
   projectBuilder.targetFolder = targetFolder
   if (projectBuilder.buildIncrementally && Boolean.parseBoolean(p("jps.build.clear.incremental.caches", "false"))) {
     FileUtil.delete(new File(targetFolder))
     FileUtil.delete(projectBuilder.dataStorageRoot)
+  }
+})
+
+binding.setVariable("clearBuildCaches", {
+  //todo[nik] this is temporary solution until we update bootstrap jps-builders jars to the new version where cleaning is performed in JpsGantProjectBuilder#cleanOutput
+  def storageRoot = projectBuilder.dataStorageRoot
+  if (storageRoot != null) {
+    FileUtil.delete(storageRoot)
   }
 })
 
@@ -167,14 +258,6 @@ binding.setVariable("findModule", {String name ->
 
 binding.setVariable("allModules", {
   return project.modules
-})
-
-binding.setVariable("printUnusedModules", {Set<String> usedModules ->
-  allModules().each {JpsModule m ->
-    if (!usedModules.contains(m.name) && hasSourceRoots(m)) {
-      projectBuilder.warning("Module $m.name is not used in project layout")
-    }
-  }
 })
 
 requireProperty("home", guessHome())
@@ -194,7 +277,7 @@ projectBuilder.buildInfoPrinter = new TeamCityBuildInfoPrinter()
 projectBuilder.compressJars = false
 
 binding.setVariable("notifyArtifactBuilt", { String artifactPath ->
-  if (!artifactPath.startsWith(home)) {
+  if (!FileUtil.startsWith(artifactPath, home)) {
     projectBuilder.error("Artifact path $artifactPath should start with $home")
   }
   def relativePath = artifactPath.substring(home.length())
@@ -257,9 +340,12 @@ binding.setVariable("wireBuildDate", { String buildNumber, String appInfoFile ->
 binding.setVariable("commonJvmArgsForTests", {
   def jdwp = "-Xrunjdwp:transport=dt_socket,server=y,suspend=$debugSuspend"
   if (debugPort != null) jdwp += ",address=$debugPort"
+
   return [
     "-ea",
+    "-Dfile.encoding=UTF-8",
     "-Dio.netty.leakDetectionLevel=PARANOID",
+//    yjpOptions("junit", "64"), // uncomment to start tests with a profiling agent (e.g. in a personal build)
     "-server",
     "-Xbootclasspath/p:${projectBuilder.moduleOutput(findModule("boot"))}",
     "-XX:+HeapDumpOnOutOfMemoryError",
@@ -267,6 +353,10 @@ binding.setVariable("commonJvmArgsForTests", {
     "-Didea.config.path=${p("teamcity.build.tempDir")}/config",
     "-Didea.system.path=${p("teamcity.build.tempDir")}/system",
     "-Xdebug",
+    "-XX:ReservedCodeCacheSize=240m",
+    "-XX:SoftRefLRUPolicyMSPerMB=50",
+    "-XX:+UseConcMarkSweepGC",
+    "-XX:-OmitStackTraceInFastThrow",
     jdwp
   ]
 })
@@ -297,7 +387,6 @@ binding.setVariable("platformApiModules", [
   "projectModel-api",
   "remote-servers-agent-rt",
   "remote-servers-api",
-  "structure-view-api",
   "usageView",
   "vcs-api-core",
   "vcs-api",
@@ -343,7 +432,8 @@ binding.setVariable("platformImplementationModules", [
   "xml-analysis-impl",
   "xml-psi-impl",
   "xml-structure-view-impl",
-  "xml"
+  "xml",
+  "configuration-store-impl",
 ])
 
 binding.setVariable("layoutMacApp", { String path, String ch, Map args ->
@@ -405,7 +495,7 @@ binding.setVariable("layoutMacApp", { String path, String ch, Map args ->
   String archs = """
     <key>LSArchitecturePriority</key>
     <array>"""
-  (args.archs != null ? args.archs : ["x86_64", "i386"]).each {
+  (args.archs != null ? args.archs : ["x86_64"]).each {
     archs += "<string>${it}</string>"
   }
   archs +="</array>\n"
@@ -442,6 +532,9 @@ binding.setVariable("layoutMacApp", { String path, String ch, Map args ->
     replacefilter(token: "@@product_state@@", value: EAP)
     replacefilter(token: "@@bundle_identifier@@", value: args.bundleIdentifier)
     replacefilter(token: "@@year@@", value: "$todayYear")
+    replacefilter(token: "@@company_name@@", value: p("component.company.name"))
+    replacefilter(token: "@@min_year@@", value: "2000")
+    replacefilter(token: "@@max_year@@", value: "$todayYear")
     replacefilter(token: "@@version@@", value: version)
     replacefilter(token: "@@vmoptions@@", value: vmOptions)
     replacefilter(token: "@@idea_properties@@", value: coreProperties)
@@ -543,14 +636,14 @@ binding.setVariable("unixScripts", { String target, String home, String name, Ma
   ant.fixcrlf(srcdir: "$target/bin", includes: "*.sh", eol: "unix")
 })
 
-binding.setVariable("winVMOptions", { String target, String system_selector, String name, String name64 = null ->
+binding.setVariable("winVMOptions", { String target, String yjpSessionName, String name, String name64 = null ->
   if (name != null) {
-    def options = isEap() && system_selector != null ? vmOptions32yjp(system_selector) : vmOptions32()
+    def options = isEap() && yjpSessionName != null ? vmOptions32yjp(yjpSessionName) : vmOptions32()
     ant.echo(file: "$target/bin/${name}.vmoptions", message: options.replace(' ', '\n'))
   }
 
   if (name64 != null) {
-    def options = isEap() && system_selector != null ? vmOptions64yjp(system_selector) : vmOptions64()
+    def options = isEap() && yjpSessionName != null ? vmOptions64yjp(yjpSessionName) : vmOptions64()
     ant.echo(file: "$target/bin/${name64}.vmoptions", message: options.replace(' ', '\n'))
   }
 
@@ -644,7 +737,7 @@ binding.setVariable("zipSources", { String home, String targetDir ->
   ant.delete(file: sources)
   ant.zip(destfile: sources) {
     fileset(dir: home) {
-      ["java", "groovy", "ipr", "iml", "form", "xml", "properties"].each {
+      ["java", "groovy", "ipr", "iml", "form", "xml", "properties", "kt"].each {
         include(name: "**/*.$it")
       }
       exclude(name: "**/testData/**")
@@ -654,7 +747,7 @@ binding.setVariable("zipSources", { String home, String targetDir ->
   notifyArtifactBuilt(sources)
 })
 
-binding.setVariable("zipSourcesOfModules", { String home, String targetFilePath, Collection<String> modules ->
+binding.setVariable("zipSourcesOfModules", { String targetFilePath, Collection<String> modules ->
   projectBuilder.stage("zip sources of ${modules.size()} modules to $targetFilePath")
 
   ant.mkdir(dir: new File(targetFilePath).getParent())
@@ -662,13 +755,26 @@ binding.setVariable("zipSourcesOfModules", { String home, String targetFilePath,
   ant.zip(destfile: targetFilePath) {
     modules.each {
       JpsModule module = findModule(it)
-      module.getSourceRoots(JavaSourceRootType.SOURCE).flatten().collect {it.file}.each { File srcRoot ->
-        zipfileset(prefix: module.name, dir: srcRoot.absolutePath)
+      module.getSourceRoots(JavaSourceRootType.SOURCE).each { root ->
+        ant.zipfileset(dir: root.file.absolutePath, prefix: root.properties.packagePrefix.replace('.', '/'), erroronmissingdir: false)
+      }
+      module.getSourceRoots(JavaResourceRootType.RESOURCE).each { root ->
+        ant.zipfileset(dir: root.file.absolutePath, prefix: root.properties.relativeOutputPath, erroronmissingdir: false)
       }
     }
   }
 
   notifyArtifactBuilt(targetFilePath)
+})
+
+binding.setVariable("moduleSrc", {String moduleName ->
+  result = []
+  JpsModule module = findModule(moduleName)
+  if (module == null) projectBuilder.error("Module $moduleName not found")
+  module.getSourceRoots(JavaSourceRootType.SOURCE).each { root ->
+    result << ant.zipfileset(dir: root.file.absolutePath , prefix: root.properties.packagePrefix.replace('.', '/'), erroronmissingdir: false)
+  }
+  result
 })
 
 /**
@@ -699,7 +805,6 @@ private Map readIdeaProperties(Map args) {
   ideaPropertiesFile.close();
 
   def defaultProperties = ["CVS_PASSFILE": "~/.cvspass",
-                           "JVMVersion": "1.6*",
                            "com.apple.mrj.application.live-resize": "false",
                            "idea.paths.selector": args.system_selector,
                            "idea.executable": args.executable,
@@ -754,29 +859,158 @@ private List<File> getChildren(File file) {
   return file.listFiles().sort { File f -> f.name.toLowerCase() }
 }
 
-binding.setVariable("getCustomJDK", { File customJdkDir ->
-  getChildren(customJdkDir).each {
-    if (it.getName().endsWith(".tar.gz")) {
-      def customJdkFileName = it.getAbsolutePath().substring(0, it.getAbsolutePath().length() - 3)
-      if (new File(customJdkFileName).exists()){ ant.delete(file: customJdkFileName) }
-      if (new File("${home}/build/jdk/custom_jdk_${buildNumber}.tar").exists()){
-        ant.delete(file: "${home}/build/jdk/custom_jdk_${buildNumber}.tar")
-      }
-      ant.gunzip(src: it.getAbsolutePath())
-      projectBuilder.info("customJdkFileName: " + customJdkFileName)
-      ant.copy(file: customJdkFileName, tofile: "${home}/build/jdk/custom_jdk_${buildNumber}.tar")
+binding.setVariable("signExecutableFiles", { String binDir ->
+  projectBuilder.stage("Signing binaries")
+  def fileBinDir = new File(binDir)
+  def fileName = ""
+  getChildren(fileBinDir).each {
+    fileName = it.getName()
+    if (fileName.endsWith(".exe")) {
+      executeExternalAnt(["dirName": binDir, "fileName": fileName], "$home/build/signBuild.xml")
     }
   }
+  projectBuilder.stage("Signing done")
 })
 
-binding.setVariable("buildWinZip", { String zipPath, List paths ->
+binding.setVariable("bundledJDKs"){
+  bundledJDK(false)
+}
+
+binding.setVariable("bundledJDK64s"){
+  bundledJDK(true)
+}
+
+private bundledJDK(boolean win64) {
+  requireProperty("artifact.linux.no.jdk", "true")
+  requireProperty("artifact.mac.no.jdk", "true")
+  requireProperty("jdk.win", "jdk1.8")
+  requireProperty("jdk.mac", "openjdk.1.8")
+  requireProperty("jdk.linux", "openjdk.1.8")
+
+  if (new File("${home}/build/jdk").exists()) {
+    if (p("jdk.win") != "false") {
+      setProperty("winJDK", getPathToBundledJDK(new File("${home}/build/jdk/win"), p("jdk.win"), (win64 ? "x64.zip": "x32.zip") ))
+      extractRedistJre(winJDK, "${paths.sandbox}/jdk.win/jre")
+    }
+    def customJdkDir = new File("${home}/build/jdk/mac/custom")
+    if (p("jdk.mac") != "false" && (customJdkDir.exists() && customJdkDir.isDirectory())) {
+      setProperty("macCustomJDK", getPathToBundledJDK(customJdkDir, p("jdk.mac"), ".tar.gz"))
+    }
+    customJdkDir = new File("${home}/build/jdk/linux/custom")
+    if (p("jdk.linux") != "false" && (customJdkDir.exists() && customJdkDir.isDirectory())) {
+      setProperty("linuxJDK", getPathToBundledJDK(customJdkDir, p("jdk.linux"), ".tar.gz"))
+      extractRedistJre(linuxJDK, "${paths.sandbox}/jdk.linux")
+    }
+  }
+}
+
+binding.setVariable("getPathToBundledJDK", { File jdkDir, String prefix, String ext ->
+  def JdkFileName = ""
+  getChildren(jdkDir).each {
+    if (it.getName().startsWith(prefix) && it.getName().endsWith(ext)) {
+      JdkFileName = it.getAbsolutePath()
+      if (ext == ".tar.gz") {
+        def OriginalJdkFileName = JdkFileName.substring(0, JdkFileName.length() - 3)
+        JdkFileName = JdkFileName.substring(0, JdkFileName.length() - 7) + "_${buildNumber}.tar"
+        if (new File(JdkFileName).exists()) { ant.delete(file: JdkFileName) }
+        ant.gunzip(src: it.getAbsolutePath())
+        ant.copy(file: OriginalJdkFileName, tofile: JdkFileName)
+      }
+    }
+  }
+  return JdkFileName.replace('\\', '/')
+})
+
+binding.setVariable("buildWinZip", { String zipPath, List paths, String zipPrefix = "" ->
   projectBuilder.stage(".win.zip")
 
   fixIdeaPropertiesEol(paths, "dos")
 
   ant.zip(zipfile: zipPath) {
     paths.each {
-      fileset(dir: it)
+      zipfileset(dir: it, prefix: zipPrefix)
+    }
+  }
+
+  notifyArtifactBuilt(zipPath)
+})
+
+binding.setVariable("buildCrossPlatformZip", { String zipPath, String sandbox, List commonPaths, String distWin, String distUnix, String distMac ->
+  projectBuilder.stage("Building cross-platform zip")
+
+  def executableName = StringUtil.trimEnd(new File(distMac, "bin").list().find { it.endsWith(".vmoptions") }, ".vmoptions")
+  def zipDir = "$sandbox/cross-platform-zip"
+  def ideaPropertiesFile = commonPaths.collect { new File(it, "bin/idea.properties") }.find { it.exists() }
+  ["win", "linux"].each {
+    ant.mkdir(dir: "$zipDir/bin/$it")
+    ant.copy(file: ideaPropertiesFile.absolutePath, todir: "$zipDir/bin/$it")
+  }
+  ant.fixcrlf(file: "$zipDir/bin/win/idea.properties", eol: "dos")
+  ant.copy(todir: "$zipDir/bin/linux") {
+    fileset(dir: "$distUnix/bin") {
+      include(name: "*.vmoptions")
+    }
+  }
+  ant.copy(todir: "$zipDir/bin/mac") {
+    fileset(dir: "$distMac/bin") {
+      include(name: "${executableName}.vmoptions")
+      include(name: "idea.properties")
+    }
+  }
+  ant.copy(file: "$distMac/bin/${executableName}.vmoptions", tofile: "$zipDir/bin/mac/${executableName}64.vmoptions")
+  ant.copy(todir: "$zipDir/bin") {
+    fileset(dir: "$distMac/bin") {
+      include(name: "*.jnilib")
+    }
+    mapper(type: "glob", from: "*.jnilib", to: "*.dylib")
+  }
+
+  ant.zip(zipfile: zipPath, duplicate: "fail") {
+    commonPaths.each {
+      fileset(dir: it) {
+        exclude(name: "bin/idea.properties")
+      }
+    }
+    fileset(dir: zipDir)
+
+    fileset(dir: distWin) {
+      exclude(name: "bin/fsnotifier*.exe")
+      exclude(name: "bin/*.exe.vmoptions")
+      exclude(name: "bin/${executableName}*.exe")
+    }
+    zipfileset(dir: "$distWin/bin", prefix: "bin/win") {
+      include(name: "fsnotifier*.exe")
+      include(name: "*.exe.vmoptions")
+    }
+
+    fileset(dir: distUnix) {
+      exclude(name: "bin/fsnotifier*")
+      exclude(name: "bin/*.vmoptions")
+      exclude(name: "bin/*.sh")
+      exclude(name: "help/**")
+    }
+    zipfileset(dir: "$distUnix/bin", filemode: "775", prefix: "bin") {
+      include(name: "*.sh")
+    }
+    zipfileset(dir: "$distUnix/bin", prefix: "bin/linux", filemode: "775") {
+      include(name: "fsnotifier*")
+    }
+
+    fileset(dir: distMac) {
+      exclude(name: "bin/fsnotifier*")
+      exclude(name: "bin/restarter*")
+      exclude(name: "bin/*.sh")
+      exclude(name: "bin/*.py")
+      exclude(name: "bin/*.jnilib")
+      exclude(name: "bin/idea.properties")
+      exclude(name: "bin/*.vmoptions")
+    }
+    zipfileset(dir: "$distMac/bin", filemode: "775", prefix: "bin") {
+      include(name: "restarter*")
+      include(name: "*.py")
+    }
+    zipfileset(dir: "$distMac/bin", prefix: "bin/mac", filemode: "775") {
+      include(name: "fsnotifier*")
     }
   }
 
@@ -863,6 +1097,17 @@ binding.setVariable("buildTarGz", { String tarRoot, String tarPath, List paths, 
   notifyArtifactBuilt(gzPath)
 })
 
+binding.setVariable("extractRedistJre", { String jdk_file_name, String destination  ->
+  def jre_redist = "${destination}"
+  ant.mkdir(dir: jre_redist)
+  if (jdk_file_name.endsWith(".tar")) {
+    ant.untar(dest: jre_redist, src: "${jdk_file_name}")
+  }
+  else {
+    ant.unzip(dest: jre_redist, src: "${jdk_file_name}")
+  }
+})
+
 private void fixIdeaPropertiesEol(List paths, String eol) {
   paths.each {
     String file = "$it/bin/idea.properties"
@@ -905,6 +1150,14 @@ binding.setVariable("buildWinLauncher", { String ch, String inputPath, String ou
   }
 })
 
+binding.setVariable("layoutUpdater", { String target, String jarName = "updater.jar" ->
+  layout(target) {
+    jar(jarName) {
+      module("updater")
+    }
+  }
+})
+
 binding.setVariable("collectUsedJars", { List modules, List approvedJars, List forbiddenJars, List modulesToBuild ->
   def usedJars = new HashSet();
 
@@ -934,9 +1187,13 @@ binding.setVariable("collectUsedJars", { List modules, List approvedJars, List f
   return usedJars
 })
 
+final def javaRT = "java-runtime" // that is used by build system in "buildSearchableOptions"
+
 binding.setVariable("buildModulesAndCollectUsedJars", { List modules, List approvedJars, List forbiddenJars ->
   def modulesToBuild = []
-  def usedJars = collectUsedJars(modules, approvedJars, forbiddenJars, modulesToBuild)
+  def modulesNames = modules.contains(javaRT) ? modules : [*modules, javaRT]
+  def usedJars = collectUsedJars(modulesNames, approvedJars, forbiddenJars, modulesToBuild)
+  clearBuildCaches()
   projectBuilder.cleanOutput()
   projectBuilder.buildModules(modulesToBuild)
 
@@ -945,7 +1202,8 @@ binding.setVariable("buildModulesAndCollectUsedJars", { List modules, List appro
 
 binding.setVariable("buildSearchableOptions", { String target, List licenses, Closure cp, String jvmArgs = null,
                                                 def paths = getProperty("paths") ->
-  projectBuilder.stage("Building searchable options")
+  def pathToJRT = "${projectBuilder.moduleOutput(findModule(javaRT))}"
+  projectBuilder.stage("Building searchable options JRT:" + pathToJRT)
 
   String targetFile = "${target}/searchableOptions.xml"
   ant.delete(file: targetFile)
@@ -974,7 +1232,7 @@ binding.setVariable("buildSearchableOptions", { String target, List licenses, Cl
     arg(value: "${target}/searchableOptions.xml")
 
     classpath() {
-      pathelement(location: "${projectBuilder.moduleOutput(findModule("java-runtime"))}")
+      pathelement(location: "${pathToJRT}")
     }
   }
 
@@ -1008,7 +1266,6 @@ binding.setVariable("analysisApiModules", [
     "jps-model-api",
     "jps-model-serialization",
     "projectModel-api",
-    "structure-view-api",
     "util",
     "util-rt",
     "xml-analysis-api",

@@ -1,22 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <module relativePaths="true" type="JAVA_MODULE" version="4">
-  <component name="NewModuleRootManager" inherit-compiler-output="true">
+  <component name="NewModuleRootManager" LANGUAGE_LEVEL="JDK_1_6" inherit-compiler-output="true">
     <exclude-output />
     <content url="file://$MODULE_DIR$">
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/testSrc" isTestSource="true" />
     </content>
-    <orderEntry type="inheritedJdk" />
+    <orderEntry type="jdk" jdkName="IDEA jdk" jdkType="JavaSDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" exported="" name="XStream" level="project" />
     <orderEntry type="library" exported="" name="JDOM" level="project" />
     <orderEntry type="library" name="picocontainer" level="project" />
     <orderEntry type="module" module-name="util" />
     <orderEntry type="library" scope="TEST" name="JUnit4" level="project" />
-    <orderEntry type="library" scope="TEST" name="JMock1" level="project" />
-    <orderEntry type="library" scope="TEST" name="asm" level="project" />
-    <orderEntry type="library" scope="TEST" name="CGLIB" level="project" />
-    <orderEntry type="library" scope="TEST" name="Mocks" level="project" />
+    <orderEntry type="library" scope="TEST" name="Xerces" level="project" />
+    <orderEntry type="library" scope="TEST" name="hamcrest" level="project" />
   </component>
   <component name="copyright">
     <Base>
@@ -171,4 +169,3 @@
     </LanguageOptions>
   </component>
 </module>
-

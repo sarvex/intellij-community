@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ import com.intellij.facet.impl.ProjectFacetsConfigurator;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.DataProvider;
 import com.intellij.openapi.actionSystem.LangDataKeys;
+import com.intellij.openapi.components.ServiceKt;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.ExtensionPointName;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.module.Module;
@@ -37,7 +39,6 @@ import com.intellij.openapi.roots.impl.libraries.LibraryEx;
 import com.intellij.openapi.roots.impl.libraries.LibraryTableBase;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.roots.libraries.LibraryTable;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.ui.navigation.History;
 import com.intellij.ui.navigation.Place;
 import com.intellij.util.EventDispatcher;
@@ -62,6 +63,7 @@ import java.util.List;
  */
 @SuppressWarnings({"AssignmentToStaticFieldFromInstanceMethod"})
 public abstract class ModuleEditor implements Place.Navigator, Disposable {
+  private static final Logger LOG = Logger.getInstance(ModuleEditor.class);
   private static final ExtensionPointName<ModuleConfigurableEP> MODULE_CONFIGURABLES = ExtensionPointName.create("com.intellij.moduleConfigurable");
   public static final String SELECTED_EDITOR_NAME = "selectedEditor";
 
@@ -78,6 +80,7 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
 
   private final EventDispatcher<ChangeListener> myEventDispatcher = EventDispatcher.create(ChangeListener.class);
   @NonNls private static final String METHOD_COMMIT = "commit";
+  private boolean myEditorsInitialized;
 
   protected History myHistory;
 
@@ -186,10 +189,11 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
     return false;
   }
 
-  private void createEditors(Module module) {
-    ModuleConfigurationEditorProvider[] providers = collectProviders(module);
+  private void createEditors(@Nullable Module module) {
+    if (module == null) return;
+
     ModuleConfigurationState state = createModuleConfigurationState();
-    for (ModuleConfigurationEditorProvider provider : providers) {
+    for (ModuleConfigurationEditorProvider provider : collectProviders(module)) {
       ModuleConfigurationEditor[] editors = provider.createEditors(state);
       if (editors.length > 0 && provider instanceof ModuleConfigurationEditorProviderEx &&
           ((ModuleConfigurationEditorProviderEx)provider).isCompleteEditorSet()) {
@@ -202,19 +206,34 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
       }
     }
 
-    for (final Configurable moduleConfigurable : myModule.getComponents(Configurable.class)) {
+    for (Configurable moduleConfigurable : ServiceKt.getComponents(module, Configurable.class)) {
+      reportDeprecatedModuleEditor(moduleConfigurable.getClass());
       myEditors.add(new ModuleConfigurableWrapper(moduleConfigurable));
     }
-    for(ModuleConfigurableEP extension : myModule.getExtensions(MODULE_CONFIGURABLES)) {
+    for(ModuleConfigurableEP extension : module.getExtensions(MODULE_CONFIGURABLES)) {
       if (extension.canCreateConfigurable()) {
-        myEditors.add(new ModuleConfigurableWrapper(extension.createConfigurable()));
+        Configurable configurable = extension.createConfigurable();
+        if (configurable != null) {
+          reportDeprecatedModuleEditor(configurable.getClass());
+          myEditors.add(new ModuleConfigurableWrapper(configurable));
+        }
       }
     }
   }
 
-  private static ModuleConfigurationEditorProvider[] collectProviders(final Module module) {
+  private static Set<Class<?>> ourReportedDeprecatedClasses = new HashSet<Class<?>>();
+  private static void reportDeprecatedModuleEditor(Class<?> aClass) {
+    if (ourReportedDeprecatedClasses.add(aClass)) {
+      LOG.warn(aClass.getName() + " uses deprecated way to register itself as a module editor. " + ModuleConfigurationEditorProvider.class.getName() + " extension point should be used instead");
+    }
+  }
+
+  private static ModuleConfigurationEditorProvider[] collectProviders(@NotNull Module module) {
     List<ModuleConfigurationEditorProvider> result = new ArrayList<ModuleConfigurationEditorProvider>();
-    ContainerUtil.addAll(result, module.getComponents(ModuleConfigurationEditorProvider.class));
+    result.addAll(ServiceKt.getComponents(module, ModuleConfigurationEditorProvider.class));
+    for (ModuleConfigurationEditorProvider component : result) {
+      reportDeprecatedModuleEditor(component.getClass());
+    }
     ContainerUtil.addAll(result, Extensions.getExtensions(ModuleConfigurationEditorProvider.EP_NAME, module));
     return result.toArray(new ModuleConfigurationEditorProvider[result.size()]);
   }
@@ -241,13 +260,9 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
 
     createEditors(getModule());
 
-    if (!Registry.is("ide.new.project.settings")) {
-      JPanel northPanel = new JPanel(new GridBagLayout());
-      myGenericSettingsPanel.add(northPanel, BorderLayout.NORTH);
-    }
-
     final JComponent component = createCenterPanel();
     myGenericSettingsPanel.add(component, BorderLayout.CENTER);
+    myEditorsInitialized = true;
     return myGenericSettingsPanel;
   }
 
@@ -260,14 +275,16 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
   }
 
   public void moduleCountChanged() {
-    updateOrderEntriesInEditors();
+    updateOrderEntriesInEditors(false);
   }
 
-  private void updateOrderEntriesInEditors() {
+  private void updateOrderEntriesInEditors(boolean forceInitEditors) {
     if (getModule() != null) { //module with attached module libraries was deleted
-      getPanel();  //init editor if needed
-      for (final ModuleConfigurationEditor myEditor : myEditors) {
-        myEditor.moduleStateChanged();
+      if (myEditorsInitialized || forceInitEditors) {
+        getPanel();  //init editor if needed
+        for (final ModuleConfigurationEditor myEditor : myEditors) {
+          myEditor.moduleStateChanged();
+        }
       }
       myEventDispatcher.getMulticaster().moduleStateChanged(getModifiableRootModelProxy());
     }
@@ -332,7 +349,7 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
     return myName;
   }
 
-  private class ModifiableRootModelInvocationHandler implements InvocationHandler {
+  private class ModifiableRootModelInvocationHandler implements InvocationHandler, ProxyDelegateAccessor {
     private final ModifiableRootModel myDelegateModel;
     @NonNls private final Set<String> myCheckedNames = new HashSet<String>(
       Arrays.asList("addOrderEntry", "addLibraryEntry", "addInvalidLibrary", "addModuleOrderEntry", "addInvalidModuleEntry",
@@ -358,9 +375,14 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
       }
       finally {
         if (needUpdate) {
-          updateOrderEntriesInEditors();
+          updateOrderEntriesInEditors(true);
         }
       }
+    }
+
+    @Override
+    public Object getDelegate() {
+      return myDelegateModel;
     }
   }
 
@@ -401,7 +423,7 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
       }
       finally {
         if (needUpdate) {
-          updateOrderEntriesInEditors();
+          updateOrderEntriesInEditors(true);
         }
       }
     }
@@ -458,7 +480,7 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
       }
       finally {
         if (needUpdate) {
-          updateOrderEntriesInEditors();
+          updateOrderEntriesInEditors(true);
         }
       }
     }
@@ -502,7 +524,7 @@ public abstract class ModuleEditor implements Place.Navigator, Disposable {
       }
       finally {
         if (needUpdate) {
-          updateOrderEntriesInEditors();
+          updateOrderEntriesInEditors(true);
         }
       }
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,10 +20,7 @@ import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.openapi.vcs.FilePath;
-import com.intellij.openapi.vcs.FilePathImpl;
-import com.intellij.openapi.vcs.VcsConfiguration;
-import com.intellij.openapi.vcs.VcsException;
+import com.intellij.openapi.vcs.*;
 import com.intellij.openapi.vcs.annotate.ShowAllAffectedGenericAction;
 import com.intellij.openapi.vcs.changes.ContentRevision;
 import com.intellij.openapi.vcs.history.*;
@@ -33,6 +30,7 @@ import com.intellij.util.ArrayUtil;
 import com.intellij.util.Consumer;
 import com.intellij.util.Processor;
 import com.intellij.util.ui.ColumnInfo;
+import com.intellij.vcsUtil.VcsUtil;
 import git4idea.GitFileRevision;
 import git4idea.GitRevisionNumber;
 import git4idea.GitUtil;
@@ -40,7 +38,7 @@ import git4idea.GitVcs;
 import git4idea.changes.GitChangeUtils;
 import git4idea.config.GitExecutableValidator;
 import git4idea.history.browser.SHAHash;
-import git4idea.history.wholeTree.SelectRevisionInGitLogAction;
+import git4idea.log.GitShowCommitInLogAction;
 import git4idea.repo.GitRepository;
 import git4idea.repo.GitRepositoryManager;
 import org.jetbrains.annotations.NotNull;
@@ -70,8 +68,8 @@ public class GitHistoryProvider implements VcsHistoryProviderEx, VcsCacheableHis
   public AnAction[] getAdditionalActions(Runnable refresher) {
     return new AnAction[] {
       ShowAllAffectedGenericAction.getInstance(),
-      ActionManager.getInstance().getAction("Vcs.CopyRevisionNumberAction"),
-      new SelectRevisionInGitLogAction() };
+      ActionManager.getInstance().getAction(VcsActions.ACTION_COPY_REVISION_NUMBER),
+      new GitShowCommitInLogAction() };
   }
 
   public boolean isDateOmittable() {
@@ -172,7 +170,14 @@ public class GitHistoryProvider implements VcsHistoryProviderEx, VcsCacheableHis
     return ! processor.process(content.getContent());
   }
 
-  public void reportAppendableHistory(final FilePath path, final VcsAppendableHistorySessionPartner partner) throws VcsException {
+  public void reportAppendableHistory(FilePath path, VcsAppendableHistorySessionPartner partner) throws VcsException {
+    reportAppendableHistory(path, null, partner);
+  }
+
+  @Override
+  public void reportAppendableHistory(@NotNull FilePath path, 
+                                      @Nullable VcsRevisionNumber startingRevision, 
+                                      @NotNull final VcsAppendableHistorySessionPartner partner) throws VcsException {
     final VcsAbstractHistorySession emptySession = createSession(path, Collections.<VcsFileRevision>emptyList(), null);
     partner.reportCreatedEmptySession(emptySession);
 
@@ -182,17 +187,20 @@ public class GitHistoryProvider implements VcsHistoryProviderEx, VcsCacheableHis
                               ArrayUtil.EMPTY_STRING_ARRAY;
 
     final GitExecutableValidator validator = GitVcs.getInstance(myProject).getExecutableValidator();
-    GitHistoryUtils.history(myProject, refreshPath(path), null, new Consumer<GitFileRevision>() {
-      public void consume(GitFileRevision gitFileRevision) {
-        partner.acceptRevision(gitFileRevision);
-      }
-    }, new Consumer<VcsException>() {
-      public void consume(VcsException e) {
-        if (validator.checkExecutableAndNotifyIfNeeded()) {
-          partner.reportException(e);
-        }
-      }
-    }, additionalArgs);
+    GitHistoryUtils.history(myProject, refreshPath(path), null, startingRevision == null ? GitRevisionNumber.HEAD : startingRevision,
+                            new Consumer<GitFileRevision>() {
+                              public void consume(GitFileRevision gitFileRevision) {
+                                partner.acceptRevision(gitFileRevision);
+                              }
+                            }, 
+                            new Consumer<VcsException>() {
+                              public void consume(VcsException e) {
+                                if (validator.checkExecutableAndNotifyIfNeeded()) {
+                                  partner.reportException(e);
+                                }
+                              }
+                            }, 
+                            additionalArgs);
   }
 
   /**
@@ -204,7 +212,7 @@ public class GitHistoryProvider implements VcsHistoryProviderEx, VcsCacheableHis
     if (virtualFile == null) {
       return path;
     }
-    return new FilePathImpl(virtualFile);
+    return VcsUtil.getFilePath(virtualFile);
   }
 
   public boolean supportsHistoryForDirectories() {

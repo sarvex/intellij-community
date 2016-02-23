@@ -41,14 +41,22 @@ public class ConfigurableWrapper implements SearchableConfigurable, Weighted {
     if (!ep.canCreateConfigurable()) {
       return null;
     }
-    if (ep.displayName != null || ep.key != null || ep.groupId != null) {
+    if (ep.displayName != null || ep.key != null || ep.parentId != null || ep.groupId != null) {
       return !ep.dynamic && ep.children == null && ep.childrenEPName == null
              ? (T)new ConfigurableWrapper(ep)
              : (T)new CompositeWrapper(ep);
     }
+    return createConfigurable(ep, LOG.isDebugEnabled());
+  }
+
+  private static <T extends UnnamedConfigurable> T createConfigurable(@NotNull ConfigurableEP<T> ep, boolean log) {
+    long time = System.currentTimeMillis();
     T configurable = ep.createConfigurable();
-    if (configurable instanceof Configurable && LOG.isDebugEnabled()) {
-      LOG.debug("cannot create configurable wrapper for " + configurable.getClass());
+    if (configurable instanceof Configurable) {
+      ConfigurableCardPanel.warn((Configurable)configurable, "init", time);
+      if (log) {
+        LOG.debug("cannot create configurable wrapper for " + configurable.getClass());
+      }
     }
     return configurable;
   }
@@ -87,7 +95,7 @@ public class ConfigurableWrapper implements SearchableConfigurable, Weighted {
             return null; // do not create configurable that cannot be cast to the specified type
           }
         }
-        else if (type == OptionalConfigurable.class) {
+        else if (type == Configurable.Assistant.class || type == OptionalConfigurable.class) {
           return null; // do not create configurable from ConfigurableProvider which replaces OptionalConfigurable
         }
       }
@@ -99,16 +107,18 @@ public class ConfigurableWrapper implements SearchableConfigurable, Weighted {
   }
 
   private final ConfigurableEP myEp;
+  int myWeight; // see ConfigurableExtensionPointUtil.getConfigurableToReplace
 
   private ConfigurableWrapper(@NotNull ConfigurableEP ep) {
     myEp = ep;
+    myWeight = ep.groupWeight;
   }
 
   private UnnamedConfigurable myConfigurable;
 
   public UnnamedConfigurable getConfigurable() {
     if (myConfigurable == null) {
-      myConfigurable = myEp.createConfigurable();
+      myConfigurable = createConfigurable(myEp, false);
       if (myConfigurable == null) {
         LOG.error("Can't instantiate configurable for " + myEp);
       }
@@ -121,7 +131,7 @@ public class ConfigurableWrapper implements SearchableConfigurable, Weighted {
 
   @Override
   public int getWeight() {
-    return myEp.groupWeight;
+    return myWeight;
   }
 
   @Nls
@@ -193,7 +203,7 @@ public class ConfigurableWrapper implements SearchableConfigurable, Weighted {
     if (configurable != null) {
       String id = configurable.getId();
       if (!loaded) {
-        LOG.warn("XML does not provide id for " + configurable.getClass());
+        LOG.debug("XML does not provide id for " + configurable.getClass());
       }
       return id;
     }

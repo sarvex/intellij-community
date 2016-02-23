@@ -45,10 +45,6 @@ public class SuppressExternalTest extends UsefulTestCase {
 
   private LanguageLevel myLanguageLevel;
 
-  public SuppressExternalTest() {
-    IdeaTestCase.initPlatformPrefix();
-  }
-
   @Override
   public void setUp() throws Exception {
     super.setUp();
@@ -88,9 +84,14 @@ public class SuppressExternalTest extends UsefulTestCase {
   @Override
   public void tearDown() throws Exception {
     LanguageLevelProjectExtension.getInstance(myFixture.getProject()).setLanguageLevel(myLanguageLevel);
-    myFixture.tearDown();
-    myFixture = null;
-    super.tearDown();
+
+    try {
+      myFixture.tearDown();
+    }
+    finally {
+      myFixture = null;
+      super.tearDown();
+    }
   }
 
 

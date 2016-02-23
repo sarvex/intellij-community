@@ -22,6 +22,7 @@ import com.intellij.execution.Location;
 import com.intellij.execution.configuration.AbstractRunConfiguration;
 import com.intellij.execution.configuration.EnvironmentVariablesComponent;
 import com.intellij.execution.configurations.*;
+import com.intellij.execution.testframework.AbstractTestProxy;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.module.ModuleType;
@@ -49,6 +50,7 @@ import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.File;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,8 +58,13 @@ import java.util.Map;
 /**
  * @author Leonid Shalupov
  */
-public abstract class AbstractPythonRunConfiguration<T extends AbstractRunConfiguration> extends AbstractRunConfiguration
+public abstract class AbstractPythonRunConfiguration<T extends AbstractPythonRunConfiguration> extends AbstractRunConfiguration
   implements LocatableConfiguration, AbstractPythonRunConfigurationParams, CommandLinePatcher {
+  /**
+   * When passing path to test to runners, you should join parts with this char.
+   * I.e.: file.py::PyClassTest::test_method
+   */
+  public static final String TEST_NAME_PARTS_SPLITTER = "::";
   private String myInterpreterOptions = "";
   private String myWorkingDirectory = "";
   private String mySdkHome = "";
@@ -66,6 +73,11 @@ public abstract class AbstractPythonRunConfiguration<T extends AbstractRunConfig
   private boolean myAddSourceRoots = true;
 
   protected PathMappingSettings myMappingSettings;
+  /**
+   * To prevent "double module saving" child may enable this flag
+   * and no module info would be saved
+   */
+  protected boolean mySkipModuleSerialization;
 
   public AbstractPythonRunConfiguration(Project project, final ConfigurationFactory factory) {
     super(project, factory);
@@ -227,8 +239,10 @@ public abstract class AbstractPythonRunConfiguration<T extends AbstractRunConfig
     final String addContentRoots = JDOMExternalizerUtil.readField(element, "ADD_CONTENT_ROOTS");
     myAddContentRoots = addContentRoots == null || Boolean.parseBoolean(addContentRoots);
     final String addSourceRoots = JDOMExternalizerUtil.readField(element, "ADD_SOURCE_ROOTS");
-    myAddSourceRoots = addSourceRoots == null|| Boolean.parseBoolean(addSourceRoots);
-    getConfigurationModule().readExternal(element);
+    myAddSourceRoots = addSourceRoots == null || Boolean.parseBoolean(addSourceRoots);
+    if ( !mySkipModuleSerialization) {
+      getConfigurationModule().readExternal(element);
+    }
 
     setMappingSettings(PathMappingSettings.readExternal(element));
     // extension settings:
@@ -252,7 +266,9 @@ public abstract class AbstractPythonRunConfiguration<T extends AbstractRunConfig
     JDOMExternalizerUtil.writeField(element, "IS_MODULE_SDK", Boolean.toString(myUseModuleSdk));
     JDOMExternalizerUtil.writeField(element, "ADD_CONTENT_ROOTS", Boolean.toString(myAddContentRoots));
     JDOMExternalizerUtil.writeField(element, "ADD_SOURCE_ROOTS", Boolean.toString(myAddSourceRoots));
-    getConfigurationModule().writeExternal(element);
+    if ( !mySkipModuleSerialization) {
+      getConfigurationModule().writeExternal(element);
+    }
 
     // extension settings:
     PythonRunConfigurationExtensionsManager.getInstance().writeExternal(this, element);
@@ -352,9 +368,9 @@ public abstract class AbstractPythonRunConfiguration<T extends AbstractRunConfig
    * Default implementation does nothing.
    *
    * @param commandLine
-   * @param sdk_home
+   * @param sdkHome
    */
-  protected void patchCommandLineFirst(GeneralCommandLine commandLine, String sdk_home) {
+  protected void patchCommandLineFirst(GeneralCommandLine commandLine, String sdkHome) {
     // override
   }
 
@@ -363,9 +379,9 @@ public abstract class AbstractPythonRunConfiguration<T extends AbstractRunConfig
    * Default implementation does nothing.
    *
    * @param commandLine
-   * @param sdk_home
+   * @param sdkHome
    */
-  protected void patchCommandLineLast(GeneralCommandLine commandLine, String sdk_home) {
+  protected void patchCommandLineLast(GeneralCommandLine commandLine, String sdkHome) {
     // override
   }
 
@@ -405,19 +421,52 @@ public abstract class AbstractPythonRunConfiguration<T extends AbstractRunConfig
     return true;
   }
 
-  public String getTestSpec(Location location) {
+  /**
+   * Create test spec (string to be passed to runner, probably glued with {@link #TEST_NAME_PARTS_SPLITTER})
+   * @param location test location as reported by runner
+   * @param failedTest failed test
+   * @return string spec or null if spec calculation is impossible
+   */
+  @Nullable
+  public String getTestSpec(@NotNull final Location<?> location, @NotNull final AbstractTestProxy failedTest) {
     PsiElement element = location.getPsiElement();
     PyClass pyClass = PsiTreeUtil.getParentOfType(element, PyClass.class, false);
     PyFunction pyFunction = PsiTreeUtil.getParentOfType(element, PyFunction.class, false);
     final VirtualFile virtualFile = location.getVirtualFile();
     if (virtualFile != null) {
       String path = virtualFile.getCanonicalPath();
-      if (pyClass != null)
-        path += "::" + pyClass.getName();
-      if (pyFunction != null)
-        path += "::" + pyFunction.getName();
+      if (pyClass != null) {
+        path += TEST_NAME_PARTS_SPLITTER + pyClass.getName();
+      }
+      if (pyFunction != null) {
+        path += TEST_NAME_PARTS_SPLITTER + pyFunction.getName();
+      }
       return path;
     }
     return null;
+  }
+
+  /**
+   * @return working directory to run, never null, does its best to return project dir if empty.
+   * Unlike {@link #getWorkingDirectory()} it does not simply take directory from config.
+   */
+  @NotNull
+  public String getWorkingDirectorySafe() {
+    final String result = StringUtil.isEmpty(myWorkingDirectory) ? getProject().getBasePath() : myWorkingDirectory;
+    if (result == null) {
+      return new File(".").getAbsolutePath();
+    }
+    return result;
+  }
+
+  @Override
+  public String getModuleName() {
+    Module module = getModule();
+    return module != null ? module.getName() : null;
+  }
+
+  @Override
+  public boolean isCompileBeforeLaunchAddedByDefault() {
+    return false;
   }
 }

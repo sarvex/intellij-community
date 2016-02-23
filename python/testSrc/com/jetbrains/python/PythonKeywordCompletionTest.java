@@ -163,6 +163,18 @@ public class PythonKeywordCompletionTest extends PyTestCase {
                             "except IOError <caret>").contains("as"));
   }
 
+  // PY-13323
+  public void testAsInComment() {
+    assertDoesntContain(
+      doTestByText(
+        "import foo\n" +
+        "# bar baz\n" +
+        "# <caret>"
+      ),
+      "as"
+    );
+  }
+
   public void testElseInFor() {  // PY-6755
     assertTrue(doTestByText("for item in range(10):\n" +
                             "    pass\n" +
@@ -233,7 +245,7 @@ public class PythonKeywordCompletionTest extends PyTestCase {
     List<String> variants = doTestByText("from ...<caret>");
     assertDoesntContain(variants, "import");
 
-    variants = doTestByText("from ... <caret>");
-    assertContainsElements(variants, "import");
+    assertNull(doTestByText("from ... <caret>"));
+    myFixture.checkResult("from ... import ");
   }
 }

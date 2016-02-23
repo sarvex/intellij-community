@@ -16,10 +16,7 @@
 package com.intellij.xml.impl.schema;
 
 import com.intellij.codeInsight.daemon.Validator;
-import com.intellij.psi.ElementManipulators;
-import com.intellij.psi.PsiElement;
-import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiReference;
+import com.intellij.psi.*;
 import com.intellij.psi.meta.PsiWritableMetaData;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.xml.*;
@@ -195,7 +192,7 @@ public class XmlElementDescriptorImpl extends XsdEnumerationDescriptor<XmlTag>
                                  myDescriptorTag.getNamespaceByPrefix(namespacePrefix);
         final String local = XmlUtil.findLocalNameByQualifiedName(substAttr);
         final XmlElementDescriptorImpl originalElement = (XmlElementDescriptorImpl)((XmlNSDescriptorImpl)getNSDescriptor()).getElementDescriptor(local, namespace);
-        if (originalElement != null) {
+        if (originalElement != null && originalElement != this) {
           type = originalElement.getType(context);
         }
       }
@@ -568,7 +565,14 @@ public class XmlElementDescriptorImpl extends XsdEnumerationDescriptor<XmlTag>
 
   @Override
   public String toString() {
-    return getName() + " (" + getNamespace() + ")";
+    String namespace;
+    try {
+      namespace = getNamespace();
+    }
+    catch (PsiInvalidElementAccessException e) {
+      namespace = "!!!Invalid!!!";
+    }
+    return getName() + " (" + namespace + ")";
   }
 
   @Override

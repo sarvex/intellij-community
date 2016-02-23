@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.intellij.codeInsight.CodeInsightSettings;
 import com.intellij.codeInsight.lookup.*;
 import com.intellij.codeInsight.lookup.impl.LookupImpl;
 import com.intellij.codeInsight.template.*;
+import com.intellij.diagnostic.AttachmentFactory;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
@@ -43,6 +44,7 @@ import com.intellij.openapi.editor.markup.RangeHighlighter;
 import com.intellij.openapi.editor.markup.TextAttributes;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.project.DumbService;
+import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.TextRange;
@@ -55,6 +57,7 @@ import com.intellij.psi.impl.source.codeStyle.CodeStyleManagerImpl;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.refactoring.rename.inplace.InplaceRefactoring;
 import com.intellij.util.IncorrectOperationException;
+import com.intellij.util.ObjectUtils;
 import com.intellij.util.PairProcessor;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.HashMap;
@@ -97,7 +100,7 @@ public class TemplateState implements Disposable {
   private boolean mySelectionCalculated = false;
   private boolean myStarted;
 
-  public TemplateState(@NotNull Project project, final Editor editor) {
+  TemplateState(@NotNull Project project, @NotNull final Editor editor) {
     myProject = project;
     myEditor = editor;
     myDocument = myEditor.getDocument();
@@ -116,12 +119,7 @@ public class TemplateState implements Disposable {
 
       @Override
       public void commandStarted(CommandEvent event) {
-        if (myEditor != null) {
-          final int offset = myEditor.getCaretModel().getOffset();
-          myDocumentChangesTerminateTemplate = myCurrentSegmentNumber >= 0 &&
-                                               (offset < mySegments.getSegmentStart(myCurrentSegmentNumber) ||
-                                                offset > mySegments.getSegmentEnd(myCurrentSegmentNumber));
-        }
+        myDocumentChangesTerminateTemplate = isCaretOutsideCurrentSegment();
         started = true;
       }
 
@@ -149,14 +147,14 @@ public class TemplateState implements Disposable {
       @Override
       public void caretAdded(CaretEvent e) {
         if (isMultiCaretMode()) {
-          finishTemplateEditing(false);
+          finishTemplateEditing();
         }
       }
 
       @Override
       public void caretRemoved(CaretEvent e) {
         if (isMultiCaretMode()) {
-          finishTemplateEditing(false);
+          finishTemplateEditing();
         }
       }
     };
@@ -166,6 +164,14 @@ public class TemplateState implements Disposable {
     }
     myDocument.addDocumentListener(myEditorDocumentListener, this);
     CommandProcessor.getInstance().addCommandListener(myCommandListener, this);
+  }
+
+  private boolean isCaretOutsideCurrentSegment() {
+    if (myEditor != null && myCurrentSegmentNumber >= 0) {
+      final int offset = myEditor.getCaretModel().getOffset();
+      return offset < mySegments.getSegmentStart(myCurrentSegmentNumber) || offset > mySegments.getSegmentEnd(myCurrentSegmentNumber);
+    }
+    return false;
   }
 
   private boolean isMultiCaretMode() {
@@ -186,6 +192,9 @@ public class TemplateState implements Disposable {
   }
 
   public boolean isToProcessTab() {
+    if (isCaretOutsideCurrentSegment()) {
+      return false;
+    }
     if (ourLookupShown) {
       final LookupImpl lookup = (LookupImpl)LookupManager.getActiveLookup(myEditor);
       if (lookup != null && !lookup.isFocused()) {
@@ -221,7 +230,7 @@ public class TemplateState implements Disposable {
     }
     CharSequence text = myDocument.getCharsSequence();
     int segmentNumber = myTemplate.getVariableSegmentNumber(variableName);
-    if (segmentNumber < 0) {
+    if (segmentNumber < 0 || mySegments.getSegmentsCount() <= segmentNumber) {
       return null;
     }
     int start = mySegments.getSegmentStart(segmentNumber);
@@ -257,7 +266,7 @@ public class TemplateState implements Disposable {
     return mySegments.getSegmentsCount();
   }
 
-  public TextRange getSegmentRange(int segment){
+  public TextRange getSegmentRange(int segment) {
     return new TextRange(mySegments.getSegmentStart(segment), mySegments.getSegmentEnd(segment));
   }
 
@@ -358,7 +367,6 @@ public class TemplateState implements Disposable {
       if (substituted != null) {
         template = substituted;
       }
-
     }
     return template;
   }
@@ -393,7 +401,7 @@ public class TemplateState implements Disposable {
         }
 
         if (nextVariableNumber == -1) {
-          finishTemplateEditing(false);
+          finishTemplateEditing();
         }
         else {
           setCurrentVariableNumber(nextVariableNumber);
@@ -402,7 +410,7 @@ public class TemplateState implements Disposable {
           focusCurrentExpression();
           currentVariableChanged(-1);
           if (isMultiCaretMode()) {
-            finishTemplateEditing(false);
+            finishTemplateEditing();
           }
         }
       }
@@ -514,7 +522,8 @@ public class TemplateState implements Disposable {
     String variableName = myTemplate.getVariableNameAt(myCurrentVariableNumber);
     int segmentNumber = myTemplate.getVariableSegmentNumber(variableName);
     if (segmentNumber < 0) {
-      LOG.error("No segment for variable: var=" + myCurrentVariableNumber + "; name=" + variableName + "; " + presentTemplate(myTemplate));
+      LOG.error("No segment for variable: var=" + myCurrentVariableNumber + "; name=" + variableName + "; " + presentTemplate(myTemplate) +
+                "; offset: " + myEditor.getCaretModel().getOffset(), AttachmentFactory.createAttachment(myDocument));
     }
     return segmentNumber;
   }
@@ -540,28 +549,43 @@ public class TemplateState implements Disposable {
       myEditor.getSelectionModel().setSelection(start, end);
     }
 
-    Expression expressionNode = getCurrentExpression();
-    final List<TemplateExpressionLookupElement> lookupItems = getCurrentExpressionLookupItems();
-    final PsiFile psiFile = getPsiFile();
-    if (!lookupItems.isEmpty()) {
-      if (((TemplateManagerImpl)TemplateManager.getInstance(myProject)).shouldSkipInTests()) {
-        insertSingleItem(lookupItems);
-      }
-      else {
-        for (LookupElement lookupItem : lookupItems) {
-          assert lookupItem != null : expressionNode;
+    DumbService.getInstance(myProject).withAlternativeResolveEnabled(new Runnable() {
+      @Override
+      public void run() {
+        Expression expressionNode = getCurrentExpression();
+        List<TemplateExpressionLookupElement> lookupItems;
+        try {
+          lookupItems = getCurrentExpressionLookupItems();
         }
+        catch (IndexNotReadyException e) {
+          lookupItems = Collections.emptyList();
+        }
+        final PsiFile psiFile = getPsiFile();
+        if (!lookupItems.isEmpty()) {
+          if (((TemplateManagerImpl)TemplateManager.getInstance(myProject)).shouldSkipInTests()) {
+            insertSingleItem(lookupItems);
+          }
+          else {
+            for (LookupElement lookupItem : lookupItems) {
+              assert lookupItem != null : expressionNode;
+            }
 
-        runLookup(lookupItems, expressionNode.getAdvertisingText());
+            runLookup(lookupItems, expressionNode.getAdvertisingText());
+          }
+        }
+        else {
+          try {
+            Result result = expressionNode.calculateResult(getCurrentExpressionContext());
+            if (result != null) {
+              result.handleFocused(psiFile, myDocument, mySegments.getSegmentStart(currentSegmentNumber),
+                                   mySegments.getSegmentEnd(currentSegmentNumber));
+            }
+          }
+          catch (IndexNotReadyException ignore) {
+          }
+        }
       }
-    }
-    else {
-      Result result = expressionNode.calculateResult(getCurrentExpressionContext());
-      if (result != null) {
-        result.handleFocused(psiFile, myDocument, mySegments.getSegmentStart(currentSegmentNumber),
-                             mySegments.getSegmentEnd(currentSegmentNumber));
-      }
-    }
+    });
     focusCurrentHighlighter(true);
   }
 
@@ -645,7 +669,7 @@ public class TemplateState implements Disposable {
       final TextResult value = getVariableValue(variableName);
       if (value != null && !value.getText().isEmpty()) {
         if (!myProcessor.process(variableName, value.getText())) {
-          finishTemplateEditing(false); // nextTab(); ?
+          finishTemplateEditing(); // nextTab(); ?
           return;
         }
       }
@@ -742,10 +766,21 @@ public class TemplateState implements Disposable {
 
     ExpressionContext context = createExpressionContext(start);
     Result result = isQuick ? expressionNode.calculateQuickResult(context) : expressionNode.calculateResult(context);
-    if (isQuick && isEmptyResult(result, element) && !oldValue.isEmpty()) {
+    if (isQuick && result == null) {
+      if (!oldValue.isEmpty()) {
+        return;
+      }
+    }
+
+    final boolean resultIsNullOrEmpty = result == null || result.equalsToText("", element);
+
+    // do not update default value of neighbour segment
+    if (resultIsNullOrEmpty && myCurrentSegmentNumber >= 0 &&
+        (mySegments.getSegmentStart(segmentNumber) == mySegments.getSegmentEnd(myCurrentSegmentNumber) ||
+         mySegments.getSegmentEnd(segmentNumber) == mySegments.getSegmentStart(myCurrentSegmentNumber))) {
       return;
     }
-    if (isEmptyResult(result, element) && defaultValue != null) {
+    if (defaultValue != null && resultIsNullOrEmpty) {
       result = defaultValue.calculateResult(context);
     }
     if (element != null) {
@@ -763,10 +798,6 @@ public class TemplateState implements Disposable {
         .handleRecalc(psiFile, myDocument, mySegments.getSegmentStart(segmentNumber), mySegments.getSegmentEnd(segmentNumber));
       restoreEmptyVariables(indices);
     }
-  }
-
-  private static boolean isEmptyResult(Result result, PsiElement context) {
-    return result == null || result.equalsToText("", context);
   }
 
   private void replaceString(String newValue, int start, int end, int segmentNumber) {
@@ -826,7 +857,7 @@ public class TemplateState implements Disposable {
           reformat(null);
         }
       });
-      finishTemplateEditing(false);
+      finishTemplateEditing();
       return;
     }
     focusCurrentHighlighter(false);
@@ -901,36 +932,39 @@ public class TemplateState implements Disposable {
 
   public void gotoEnd(boolean brokenOff) {
     if (myTemplate == null) return;
+    LookupManager.getInstance(myProject).hideActiveLookup();
     calcResults(false);
     if (!brokenOff) {
       doReformat(null);
     }
-    finishTemplateEditing(brokenOff);
+    setFinalEditorState(brokenOff);
+    cleanupTemplateState(brokenOff);
   }
 
   public void gotoEnd() {
     gotoEnd(true);
   }
 
+  /**
+   * @deprecated use this#gotoEnd(true)
+   */
   public void cancelTemplate() {
     if (myTemplate == null) return;
-
     LookupManager.getInstance(myProject).hideActiveLookup();
-
     cleanupTemplateState(true);
   }
 
-  private void finishTemplateEditing(boolean brokenOff) {
+  private void finishTemplateEditing() {
     if (myTemplate == null) return;
-
-
     LookupManager.getInstance(myProject).hideActiveLookup();
-
-    setFinalEditorState();
-    cleanupTemplateState(brokenOff);
+    setFinalEditorState(false);
+    cleanupTemplateState(false);
   }
 
-  private void setFinalEditorState() {
+  private void setFinalEditorState(boolean brokenOff) {
+    myEditor.getSelectionModel().removeSelection();
+    if (brokenOff && !((TemplateManagerImpl)TemplateManager.getInstance(myProject)).shouldSkipInTests()) return;
+
     int selectionSegment = myTemplate.getVariableSegmentNumber(TemplateImpl.SELECTION);
     int endSegmentNumber = selectionSegment >= 0 && getSelectionBeforeTemplate() == null ? selectionSegment : myTemplate.getEndSegmentNumber();
     int offset = -1;
@@ -952,7 +986,6 @@ public class TemplateState implements Disposable {
       myEditor.getScrollingModel().scrollToCaret(ScrollType.RELATIVE);
     }
 
-    myEditor.getSelectionModel().removeSelection();
     int selStart = myTemplate.getSelectionStartSegmentNumber();
     int selEnd = myTemplate.getSelectionEndSegmentNumber();
     if (selStart >= 0 && selEnd >= 0) {
@@ -967,10 +1000,10 @@ public class TemplateState implements Disposable {
   private void cleanupTemplateState(boolean brokenOff) {
     final Editor editor = myEditor;
     fireBeforeTemplateFinished();
-    int oldVar = myCurrentVariableNumber;
-    currentVariableChanged(oldVar);
     if (!isDisposed()) {
+      int oldVar = myCurrentVariableNumber;
       setCurrentVariableNumber(-1);
+      currentVariableChanged(oldVar);
       TemplateManagerImpl.clearTemplateState(editor);
       fireTemplateFinished(brokenOff);
     }
@@ -1201,7 +1234,7 @@ public class TemplateState implements Disposable {
       int selectionStart = myTemplate.getSegmentOffset(selectionSegment);
       selectionIndent = 0;
       String templateText = myTemplate.getTemplateText();
-      while (selectionStart > 0 && templateText.charAt(selectionStart-1) == ' ') {
+      while (selectionStart > 0 && templateText.charAt(selectionStart - 1) == ' ') {
         // TODO handle tabs
         selectionIndent++;
         selectionStart--;
@@ -1253,7 +1286,7 @@ public class TemplateState implements Disposable {
     if (myFinished) return;
     myFinished = true;
     for (TemplateEditingListener listener : myListeners) {
-      listener.templateFinished(myTemplate, brokenOff);
+      listener.templateFinished(ObjectUtils.chooseNotNull(myTemplate, myPrevTemplate), brokenOff);
     }
   }
 

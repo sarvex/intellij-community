@@ -4,11 +4,14 @@ import com.google.common.util.concurrent.SettableFuture;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.extensions.ExtensionPointName;
+import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.MessageType;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.vcs.ui.VcsBalloonProblemNotifier;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.PairFunction;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.vcs.log.*;
@@ -24,26 +27,20 @@ import com.intellij.vcs.log.ui.frame.MainFrame;
 import com.intellij.vcs.log.ui.frame.VcsLogGraphTable;
 import com.intellij.vcs.log.ui.tables.GraphTableModel;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-import javax.swing.table.TableModel;
-import java.awt.*;
+import javax.swing.*;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.concurrent.Future;
 
 public class VcsLogUiImpl implements VcsLogUi, Disposable {
-
-  public static final String POPUP_ACTION_GROUP = "Vcs.Log.ContextMenu";
-  public static final String TOOLBAR_ACTION_GROUP = "Vcs.Log.Toolbar";
-  public static final String VCS_LOG_TABLE_PLACE = "Vcs.Log.ContextMenu";
-  public static final String VCS_LOG_INTELLI_SORT_ACTION = "Vcs.Log.IntelliSortChooser";
-
   private static final Logger LOG = Logger.getInstance(VcsLogUiImpl.class);
+  public static final ExtensionPointName<VcsLogHighlighterFactory> LOG_HIGHLIGHTER_FACTORY_EP =
+    ExtensionPointName.create("com.intellij.logHighlighterFactory");
 
   @NotNull private final MainFrame myMainFrame;
-  @NotNull private final VcsLogDataHolder myLogDataHolder;
   @NotNull private final Project myProject;
+  @NotNull private final VcsLogSettings mySettings;
   @NotNull private final VcsLogColorManager myColorManager;
   @NotNull private final VcsLog myLog;
   @NotNull private final VcsLogUiProperties myUiProperties;
@@ -59,8 +56,8 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
                       @NotNull VcsLogColorManager manager,
                       @NotNull VcsLogUiProperties uiProperties,
                       @NotNull VcsLogFilterer filterer) {
-    myLogDataHolder = logDataHolder;
     myProject = project;
+    mySettings = settings;
     myColorManager = manager;
     myUiProperties = uiProperties;
     Disposer.register(logDataHolder, this);
@@ -69,29 +66,20 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
     myLog = new VcsLogImpl(logDataHolder, this);
     myVisiblePack = VisiblePack.EMPTY;
     myMainFrame = new MainFrame(logDataHolder, this, project, settings, uiProperties, myLog, myVisiblePack);
-    addHighlighter(new MyCommitsHighlighter(myLogDataHolder, myUiProperties));
+
+    for (VcsLogHighlighterFactory factory : Extensions.getExtensions(LOG_HIGHLIGHTER_FACTORY_EP, myProject)) {
+      getTable().addHighlighter(factory.createHighlighter(logDataHolder, this));
+    }
   }
 
   public void setVisiblePack(@NotNull VisiblePack pack) {
     ApplicationManager.getApplication().assertIsDispatchThread();
 
-    PermanentGraph<Integer> previousPermGraph = myVisiblePack.getPermanentGraph();
-    VcsLogGraphTable.Selection previousSelection = getTable().getSelection();
+    boolean permGraphChanged = myVisiblePack.getPermanentGraph() != pack.getPermanentGraph();
 
     myVisiblePack = pack;
-    boolean permGraphChanged = previousPermGraph != myVisiblePack.getPermanentGraph();
 
-    GraphTableModel currentModel = getModel();
-    if (currentModel == null) {
-      getTable().setModel(new GraphTableModel(myVisiblePack, myLogDataHolder, this));
-    }
-    else {
-      currentModel.setVisiblePack(myVisiblePack);
-      previousSelection.restore(myVisiblePack.getVisibleGraph());
-    }
-    getTable().setPaintBusy(false);
-
-    myMainFrame.updateDataPack(myVisiblePack);
+    myMainFrame.updateDataPack(myVisiblePack, permGraphChanged);
     setLongEdgeVisibility(myUiProperties.areLongEdgesVisible());
     fireFilterChangeEvent(myVisiblePack, permGraphChanged);
     repaintUI();
@@ -122,7 +110,7 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
                                      "\nAnswer:" +
                                      answer;
             updater.run();
-            getTable().handleAnswer(answer, true, null);
+            getTable().handleAnswer(answer, true, null, null);
           }
         });
       }
@@ -139,9 +127,15 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
                       "Collapsing " + (getBekType() == PermanentGraph.SortType.LinearBek ? "merges..." : "linear branches..."));
   }
 
+  @Override
   public void setLongEdgeVisibility(boolean visibility) {
     myVisiblePack.getVisibleGraph().getActionController().setLongEdgesHidden(!visibility);
     myUiProperties.setLongEdgesVisibility(visibility);
+  }
+
+  @Override
+  public boolean areLongEdgesVisible() {
+    return myUiProperties.areLongEdgesVisible();
   }
 
   @Override
@@ -166,13 +160,13 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
   }
 
   @Override
-  public boolean isHighlightMyCommits() {
-    return myUiProperties.isHighlightMyCommits();
+  public boolean isHighlighterEnabled(@NotNull String id) {
+    return myUiProperties.isHighlighterEnabled(id);
   }
 
   @Override
-  public void setHighlightMyCommits(boolean state) {
-    myUiProperties.setHighlightMyCommits(state);
+  public void setHighlighterEnabled(@NotNull String id, boolean enabled) {
+    myUiProperties.enableHighlighter(id, enabled);
     repaintUI();
   }
 
@@ -181,13 +175,24 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
     return myMainFrame.areGraphActionsEnabled();
   }
 
+  @Override
+  public boolean isShowDetails() {
+    return myUiProperties.isShowDetails();
+  }
+
+  @Override
+  public void setShowDetails(boolean showDetails) {
+    myMainFrame.showDetails(showDetails);
+    myUiProperties.setShowDetails(showDetails);
+  }
+
   @NotNull
-  public Future<Boolean> jumpToCommit(@NotNull Hash commitHash) {
+  public Future<Boolean> jumpToCommit(@NotNull Hash commitHash, @NotNull final VirtualFile root) {
     SettableFuture<Boolean> future = SettableFuture.create();
     jumpTo(commitHash, new PairFunction<GraphTableModel, Hash, Integer>() {
       @Override
       public Integer fun(GraphTableModel model, Hash hash) {
-        return model.getRowOfCommit(hash);
+        return model.getRowOfCommit(hash, root);
       }
     }, future);
     return future;
@@ -210,16 +215,7 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
                           @NotNull final SettableFuture<Boolean> future) {
     if (future.isCancelled()) return;
 
-    GraphTableModel model = getModel();
-    if (model == null) {
-      invokeOnChange(new Runnable() {
-        @Override
-        public void run() {
-          jumpTo(commitId, rowGetter, future);
-        }
-      });
-      return;
-    }
+    GraphTableModel model = getTable().getGraphTableModel();
 
     int row = rowGetter.fun(model, commitId);
     if (row >= 0) {
@@ -246,15 +242,6 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
       commitNotFound(commitId.toString());
       future.set(false);
     }
-  }
-
-  @Nullable
-  private GraphTableModel getModel() {
-    TableModel model = getTable().getModel();
-    if (model instanceof GraphTableModel) {
-      return (GraphTableModel)model;
-    }
-    return null;
   }
 
   private void showMessage(@NotNull MessageType messageType, @NotNull String message) {
@@ -304,9 +291,16 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
   @Override
   public void setBranchesPanelVisible(boolean visible) {
     myMainFrame.setBranchesPanelVisible(visible);
+    mySettings.setShowBranchesPanel(visible);
   }
 
-  public Component getToolbar() {
+  @Override
+  public boolean isBranchesPanelVisible() {
+    return mySettings.isShowBranchesPanel();
+  }
+
+  @NotNull
+  public JComponent getToolbar() {
     return myMainFrame.getToolbar();
   }
 
@@ -326,18 +320,6 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
   public VisiblePack getDataPack() {
     ApplicationManager.getApplication().assertIsDispatchThread();
     return myVisiblePack;
-  }
-
-  @Override
-  public void addHighlighter(@NotNull VcsLogHighlighter highlighter) {
-    getTable().addHighlighter(highlighter);
-    repaintUI();
-  }
-
-  @Override
-  public void removeHighlighter(@NotNull VcsLogHighlighter highlighter) {
-    getTable().removeHighlighter(highlighter);
-    repaintUI();
   }
 
   @Override
@@ -374,5 +356,6 @@ public class VcsLogUiImpl implements VcsLogUi, Disposable {
   @Override
   public void dispose() {
     getTable().removeAllHighlighters();
+    myVisiblePack = VisiblePack.EMPTY;
   }
 }

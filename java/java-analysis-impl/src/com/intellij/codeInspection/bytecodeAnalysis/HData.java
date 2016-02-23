@@ -19,9 +19,11 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Small size key, constructed by hashing method signature.
+ * 'H' in this and related class names stands for 'Hash'.
  * @see com.intellij.codeInspection.bytecodeAnalysis.BytecodeAnalysisConverter for details of construction.
  */
 final class HKey {
@@ -29,11 +31,13 @@ final class HKey {
   final byte[] key;
   final int dirKey;
   final boolean stable;
+  final boolean negated;
 
-  HKey(@NotNull byte[] key, int dirKey, boolean stable) {
+  HKey(@NotNull byte[] key, int dirKey, boolean stable, boolean negated) {
     this.key = key;
     this.dirKey = dirKey;
     this.stable = stable;
+    this.negated = negated;
   }
 
   @Override
@@ -43,6 +47,7 @@ final class HKey {
     HKey hKey = (HKey)o;
     if (dirKey != hKey.dirKey) return false;
     if (stable != hKey.stable) return false;
+    if (negated != hKey.negated) return false;
     if (!Arrays.equals(key, hKey.key)) return false;
     return true;
   }
@@ -52,30 +57,38 @@ final class HKey {
     int result = Arrays.hashCode(key);
     result = 31 * result + dirKey;
     result = 31 * result + (stable ? 1 : 0);
+    result = 31 * result + (negated ? 1 : 0);
     return result;
   }
 
-  HKey negate() {
-    return new HKey(key, dirKey, !stable);
+  HKey invertStability() {
+    return new HKey(key, dirKey, !stable, negated);
   }
 
   HKey mkStable() {
-    return stable ? this : new HKey(key, dirKey, true);
+    return stable ? this : new HKey(key, dirKey, true, negated);
   }
 
   HKey mkUnstable() {
-    return stable ? new HKey(key, dirKey, false) : this;
+    return stable ? new HKey(key, dirKey, false, negated) : this;
   }
 
   public HKey mkBase() {
-    return dirKey == 0 ? this : new HKey(key, 0, stable);
+    return dirKey == 0 ? this : new HKey(key, 0, stable, false);
   }
 
   HKey updateDirection(int newDirKey) {
-    return new HKey(key, newDirKey, stable);
+    return new HKey(key, newDirKey, stable, false);
+  }
+
+  HKey negate() {
+    return new HKey(key, dirKey, stable, true);
   }
 }
 
+/**
+ * Represents a lattice product of a constant {@link #value} and all {@link #ids}.
+ */
 final class HComponent {
   @NotNull Value value;
   @NotNull final HKey[] ids;
@@ -278,7 +291,7 @@ final class HFinal implements HResult {
 }
 
 final class HPending implements HResult {
-  @NotNull final HComponent[] delta;
+  @NotNull final HComponent[] delta; // sum
 
   HPending(@NotNull HComponent[] delta) {
     this.delta = delta;
@@ -306,5 +319,26 @@ final class HPending implements HResult {
 
     }
     return new HPending(delta1);
+  }
+}
+
+final class HEffects implements HResult {
+  @NotNull final Set<HEffectQuantum> effects;
+
+  HEffects(@NotNull Set<HEffectQuantum> effects) {
+    this.effects = effects;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (o == null || getClass() != o.getClass()) return false;
+    HEffects hEffects = (HEffects)o;
+    return effects.equals(hEffects.effects);
+  }
+
+  @Override
+  public int hashCode() {
+    return effects.hashCode();
   }
 }

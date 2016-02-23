@@ -1,3 +1,18 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.structuralsearch;
 
 import com.intellij.openapi.fileTypes.StdFileTypes;
@@ -17,7 +32,9 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
   @Override
   protected void setUp() throws Exception {
     super.setUp();
-    options.getMatchOptions().setFileType(StdFileTypes.JAVA);
+    final MatchOptions matchOptions = this.options.getMatchOptions();
+    matchOptions.setFileType(StdFileTypes.JAVA);
+    matchOptions.setLooseMatching(true);
   }
 
   public void testReplaceInLiterals() {
@@ -449,13 +466,24 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
                               "  aaa5();\n" +
                               "}\n";
 
-    actualResult = replacer.testReplace(s52,s53,s54,options);
+    options.getMatchOptions().setLooseMatching(false);
+    try {
+      actualResult = replacer.testReplace(s52, s53, s54, options);
+      assertEquals("Try/finally unwrapped with strict matching", expectedResult19, actualResult);
+    } finally {
+      options.getMatchOptions().setLooseMatching(true);
+    }
 
-    assertEquals(
-      "Try/ catch/ finally is replace with try/finally",
-      expectedResult19,
-      actualResult
-    );
+    String expectedResult19Loose = "aaa();\n" +
+                                   "aaa2();\n" +
+                                   "try {\n" +
+                                   "  aaa4();\n" +
+                                   "} catch(Exception ex) {\n" +
+                                   "  aaa5();\n" +
+                                   "}\n";
+    actualResult = replacer.testReplace(s52, s53, s54, options);
+    assertEquals("Try/finally unwrapped with loose matching", expectedResult19Loose, actualResult);
+
 
     String s55 = "for(Iterator<String> iterator = stringlist.iterator(); iterator.hasNext();) {\n" +
                  "      String str = iterator.next();\n" +
@@ -523,7 +551,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String s61 = "try { 1=1; } catch(Exception e) { 1=1; } catch(Throwable t) { 2=2; }";
     String s62 = "try { '_a; } catch(Exception e) { '_b; }";
     String s63 = "try { $a$; } catch(Exception1 e) { $b$; } catch(Exception2 e) { $b$; }";
-    String expectedResult22 = "try { 1=1; } catch(Exception1 e) { 1=1; } catch(Exception2 e) { 1=1; } catch (Throwable t) { 2=2; }";
+    String expectedResult22 = "try { 1=1; } catch(Exception1 e) { 1=1; } catch(Exception2 e) { 1=1; } catch(Throwable t) { 2=2; }";
 
     actualResult = replacer.testReplace(s61,s62,s63,options);
 
@@ -1106,13 +1134,13 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String s18_2 = "class $A$ { $Other$ }";
 
     actualResult = replacer.testReplace(s16,s17,s18,options);
-    String expectedResult6 = "public  class A { private Log log = LogFactory.createLog();  }\n" +
-                             "final  class B { private Log log = LogFactory.createLog();  }";
+    String expectedResult6 = "public class A { private Log log = LogFactory.createLog();  }\n" +
+                             "final class B { private Log log = LogFactory.createLog();  }";
     assertEquals("Modifier list for class",expectedResult6,actualResult);
 
     actualResult = replacer.testReplace(actualResult,s17_2,s18_2,options);
-    String expectedResult7 = "public   class A {  }\n" +
-                             "final   class B {  }";
+    String expectedResult7 = "public class A {  }\n" +
+                             "final class B {  }";
     assertEquals("Removing field",expectedResult7,actualResult);
 
     String s19 = "public class A extends Object implements Cloneable {}\n";
@@ -1120,7 +1148,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String s21 = "class $A$ { private Log log = LogFactory.createLog(); $Other$ }";
 
     actualResult = replacer.testReplace(s19,s20,s21,options);
-    String expectedResult8 = "public  class A extends Object implements Cloneable { private Log log = LogFactory.createLog();  }\n";
+    String expectedResult8 = "public class A extends Object implements Cloneable { private Log log = LogFactory.createLog();  }\n";
     assertEquals("Extends / implements list for class",expectedResult8,actualResult);
 
     String s22 = "public class A<T> { int Afield; }\n";
@@ -1128,7 +1156,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String s24 = "class $A$ { private Log log = LogFactory.createLog(); $Other$ }";
 
     actualResult = replacer.testReplace(s22,s23,s24,options);
-    String expectedResult9 = "public  class A<T> { private Log log = LogFactory.createLog(); int Afield; }\n";
+    String expectedResult9 = "public class A<T> { private Log log = LogFactory.createLog(); int Afield; }\n";
     assertEquals("Type parameters for the class",expectedResult9,actualResult);
 
     String s25 = "class A {\n" +
@@ -1139,7 +1167,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String s27 = "Object a;";
     String expectedResult10 = "class A {\n" +
                               "  // comment before\n" +
-                              "  protected  Object a; //  comment after\n" +
+                              "  protected Object a; //  comment after\n" +
                               "}";
 
     actualResult = replacer.testReplace(s25,s26,s27,options);
@@ -1271,7 +1299,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
 
     String expectedResult = "class A {\n" +
                             "  public int a = 1;\n" +
-                            "  public int b  ;\n" +
+                            "  public int b ;\n" +
                             "  private int c = 2;\n" +
                             "}";
 
@@ -1283,7 +1311,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
       actualResult
     );
   }
-  
+
   public void testClassReplacement5() {
     final String actualResult;
     String s1 = "public class X {\n" +
@@ -1308,7 +1336,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
                 "    void f(){}\n" +
                 "}";
 
-    String expectedResult = "public  class X {\n" +
+    String expectedResult = "public class X {\n" +
                             "    /**\n" +
                             "     * ppp\n" +
                             "     */\n" +
@@ -1357,11 +1385,11 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
                 "   void f($t$ $p$){$s$;}\n" +
                 "}";
 
-    String expectedResult = "public  class X {\n" +
+    String expectedResult = "public class X {\n" +
                             "   /**\n" +
                             "    * ppp\n" +
                             "    */\n" +
-                            "   private  void f(int i ){//s\n" +
+                            "   private void f(int i ){//s\n" +
                             "}\n" +
                             "}";
 
@@ -1373,11 +1401,11 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
       actualResult
     );
 
-    String expectedResult2 = "public  class X {\n" +
+    String expectedResult2 = "public class X {\n" +
                             "   /**\n" +
                             "    * ppp\n" +
                             "    */\n" +
-                            "   private  void f(int i ){int a = 1;\n" +
+                            "   private void f(int i ){int a = 1;\n" +
                             "       //s\n" +
                             "}\n" +
                             "}";
@@ -1425,7 +1453,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String expectedResult = "/**\n" +
                             "* by: cdr\n" +
                             "*/\n" +
-                            "public  class CC {\n" +
+                            "public class CC {\n" +
                             "  /** My Comment */ int a = 3; // aaa\n" +
                             "// bbb\n" +
                             "   long c = 2;\n" +
@@ -1557,8 +1585,6 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
   }
 
   public void testSavingAccessModifiersDuringClassReplacement() {
-    String actualResult;
-
     String s43 = "public @Deprecated class Foo implements Comparable<Foo> {\n  int x;\n  void m(){}\n }";
     String s44 = "class 'Class implements '_Interface { '_Content* }";
     String s45 = "@MyAnnotation\n" +
@@ -1567,12 +1593,24 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
                               "class Foo implements Comparable<Foo> {int x;\n" +
                               "void m(){}}";
 
-    actualResult = replacer.testReplace(s43,s44,s45,options, true);
+    String actualResult = replacer.testReplace(s43, s44, s45, options, true);
     assertEquals(
       "Preserving var modifiers and generic information in type during replacement",
       expectedResult16,
       actualResult
     );
+
+    String in1 = "public class A {" +
+                 "  public class B {}" +
+                 "}";
+    String what1 = "class '_A {" +
+                   "  class '_B {}" +
+                   "}";
+    String by1 = "class $A$ {" +
+                 "  private class $B$ {}" +
+                 "}";
+    String expected1 = "public class A {  private class B {}}";
+    assertEquals("No illegal modifier combinations during replacement", expected1, replacer.testReplace(in1, what1, by1, options));
   }
 
   public void testDontRequireSpecialVarsForUnmatchedContent() {
@@ -1805,7 +1843,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
                             "    { data = ResourceHelper.readResource(s); }\n" +
                             "    mime = MIMEHelper.MIME_MAP[i][1][0];\n" +
                             "    break; }\n" +
-                            "catch(final  Throwable e) { continue; }\n" +
+                            "catch(final Throwable e) { continue; }\n" +
                             "}";
 
     actualResult = replacer.testReplace(code,toFind,replacement,options);
@@ -1821,18 +1859,57 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     final String in = "class X {{ Math.abs(-1); }}";
     final String what = "Math.abs('a)";
     final String by = "Math.abs($a$)";
+    final boolean save = options.isToUseStaticImport();
     options.setToUseStaticImport(true);
+    try {
+      final String expected = "import static java.lang.Math.abs;class X {{ abs(-1); }}";
+      assertEquals("Replacing with static import", expected, replacer.testReplace(in, what, by, options, true));
 
-    final String expected = "import static java.lang.Math.abs;class X {{ abs(-1); }}";
-    assertEquals("Replacing with static import", expected, replacer.testReplace(in, what, by, options, true));
+      final String in2 = "class X { void m(java.util.Random r) { Math.abs(r.nextInt()); }}";
+      final String expected2 = "import static java.lang.Math.abs;class X { void m(java.util.Random r) { abs(r.nextInt()); }}";
+      assertEquals("don't add broken static imports", expected2, replacer.testReplace(in2, what, by, options, true));
 
-    final String in2 = "class X { void m(java.util.Random r) { Math.abs(r.nextInt()); }}";
-    final String expected2 = "import static java.lang.Math.abs;class X { void m(java.util.Random r) { abs(r.nextInt()); }}";
-    assertEquals("don't add broken static imports", expected2, replacer.testReplace(in2, what, by, options, true));
+      final String by2 = "new java.util.Map.Entry() {}";
+      final String expected3 = "import static java.util.Map.Entry;class X {{ new Entry() {}; }}";
+      assertEquals("", expected3, replacer.testReplace(in, what, by2, options, true));
 
-    final String by2 = "new java.util.AbstractMap.SimpleEntry(\"\", \"\")";
-    final String expected3 = "import static java.util.AbstractMap.SimpleEntry;class X {{ new SimpleEntry(\"\", \"\"); }}";
-    assertEquals("", expected3, replacer.testReplace(in, what, by2, options, true));
+      final String in3 = "import java.util.Collections;" +
+                         "class X {" +
+                         "  void m() {" +
+                         "    System.out.println(Collections.<String>emptyList());" +
+                         "  }" +
+                         "}";
+      final String what3 = "'_q.'_method:[regex( println )]('a)";
+      final String by3 = "$q$.$method$($a$)";
+      final String expected4 = "import java.util.Collections;" +
+                               "import static java.lang.System.out;" +
+                               "class X {" +
+                               "  void m() {" +
+                               "    out.println(Collections.<String>emptyList());" +
+                               "  }" +
+                               "}";
+      assertEquals("don't break references with type parameters", expected4, replacer.testReplace(in3, what3, by3, options, true));
+
+      final String in4 = "import java.util.Collections;\n" +
+                         "public class X {\n" +
+                         "    void some() {\n" +
+                         "        System.out.println(1);\n" +
+                         "        boolean b = Collections.eq(null, null);\n" +
+                         "    }\n" +
+                         "}";
+      final String what4 = "System.out.println(1);";
+      final String by4 = "System.out.println(2);";
+      final String expected5 = "import java.util.Collections;import static java.lang.System.out;\n" +
+                               "public class X {\n" +
+                               "    void some() {\n" +
+                               "        out.println(2);\n" +
+                               "        boolean b = Collections.eq(null, null);\n" +
+                               "    }\n" +
+                               "}";
+      assertEquals("don't add static import to inaccessible members", expected5, replacer.testReplace(in4, what4, by4, options, true));
+    } finally {
+      options.setToUseStaticImport(save);
+    }
   }
 
   public void testUseStaticStarImport() {
@@ -1843,15 +1920,20 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
                       "}}";
     final String what = "Math.'m('_a*)";
     final String by = "Math.$m$($a$)";
+    final boolean save = options.isToUseStaticImport();
     options.setToUseStaticImport(true);
+    try {
 
-    // depends on default setting being equal to 3 for names count to use import on demand
-    final String expected = "import static java.lang.Math.*;class ImportTest {{\n" +
-                            "    abs(-0.5);\n" +
-                            "    sin(0.5);\n" +
-                            "    max(1,2);\n" +
-                            "}}";
-    assertEquals("Replacing with static star import", expected, replacer.testReplace(in, what, by, options, true));
+      // depends on default setting being equal to 3 for names count to use import on demand
+      final String expected = "import static java.lang.Math.*;class ImportTest {{\n" +
+                              "    abs(-0.5);\n" +
+                              "    sin(0.5);\n" +
+                              "    max(1,2);\n" +
+                              "}}";
+      assertEquals("Replacing with static star import", expected, replacer.testReplace(in, what, by, options, true));
+    } finally {
+      options.setToUseStaticImport(save);
+    }
   }
 
   public void testReformatAndShortenClassRefPerformance() throws IOException {
@@ -1862,15 +1944,17 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     options.setToReformatAccordingToStyle(true);
     options.setToShortenFQN(true);
 
-    PlatformTestUtil.startPerformanceTest("SSR should work fast", 3500, new ThrowableRunnable() {
-        public void run() {
-          doTest(testName, ext, message);
-        }
-      }
-    ).cpuBound().assertTiming();
-
-    options.setToReformatAccordingToStyle(false);
-    options.setToShortenFQN(false);
+    try {
+      PlatformTestUtil.startPerformanceTest("SSR should work fast", 3500, new ThrowableRunnable() {
+                                              public void run() {
+                                                doTest(testName, ext, message);
+                                              }
+                                            }
+      ).cpuBound().useLegacyScaling().assertTiming();
+    } finally {
+      options.setToReformatAccordingToStyle(false);
+      options.setToShortenFQN(false);
+    }
   }
 
   private void doTest(final String testName, final String ext, final String message) {
@@ -1971,6 +2055,61 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
       expected,
       actualResult
     );
+
+    final String in1 = "try {\n" +
+                       "  System.out.println(1);\n" +
+                       "} catch (RuntimeException e) {\n" +
+                       "  System.out.println(2);\n" +
+                       "} finally {\n" +
+                       "  System.out.println(3);\n" +
+                       "}\n";
+    final String what1 = "try {\n" +
+                         "  '_Statement1;\n" +
+                         "} finally {\n" +
+                         "  '_Statement2;\n" +
+                         "}";
+    final String by1 = "try {\n" +
+                       "  // comment1\n" +
+                       "  $Statement1$;\n" +
+                       "} finally {\n" +
+                       "  // comment2\n" +
+                       "  $Statement2$;\n" +
+                       "}";
+    final String expected1 = "try {\n" +
+                             "  // comment1\n" +
+                             "  System.out.println(1);\n" +
+                             "} catch (RuntimeException e) {\n" +
+                             "  System.out.println(2);\n" +
+                             "} finally {\n" +
+                             "  // comment2\n" +
+                             "  System.out.println(3);\n" +
+                             "}\n";
+    final String actualResult1 = replacer.testReplace(in1, what1, by1, options);
+    assertEquals("Replacing try/finally should leave unmatched catch sections alone", expected1, actualResult1);
+
+    final String in2 = "try (AutoCloseable a = null) {" +
+                       "  System.out.println(1);" +
+                       "} catch (Exception e) {" +
+                       "  System.out.println(2);" +
+                       "} finally {" +
+                       "  System.out.println(3);" +
+                       "}";
+    final String what2 = "try {" +
+                         "  '_Statement*;" +
+                         "}";
+    final String by2 = "try {" +
+                       "  /* comment */" +
+                       "  $Statement$;" +
+                       "}";
+    final String expected2 = "try (AutoCloseable a = null) {" +
+                             "  /* comment */  System.out.println(1);" +
+                             "} catch (Exception e) {" +
+                             "  System.out.println(2);" +
+                             "} finally {" +
+                             "  System.out.println(3);" +
+                             "}";
+    final String actualResult2 = replacer.testReplace(in2, what2, by2, options);
+    assertEquals("Replacing try/finally should also keep unmatched resource lists and finally blocks", expected2, actualResult2);
   }
 
   public void testReplaceExtraSemicolon() {
@@ -2000,7 +2139,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String expected_2 = "if (args == null) return ;\n" +
                   "    while(true) return ;\n" +
                   "    System.out.println(\"blah2\");";
-    
+
     actualResult = replacer.testReplace(s1_2,s2,replacement,options);
 
     assertEquals(
@@ -2098,7 +2237,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String s3_2 = "$st$;\n" +
                   "int $c$ = $i$;";
     String expected_2 = "a = 2;\nint b = 1;\nb2 = 3;";
-    
+
     actualResult = replacer.testReplace(s1,s2_2,s3_2,options);
 
     assertEquals(
@@ -2125,7 +2264,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String source = "abstract class MyClass implements java.util.List {\n  private String a, b;\n}";
     String search = "class 'Name implements java.util.List {\n  '_ClassContent*\n}";
     String replace = "class $Name$ {\n  $ClassContent$\n}";
-    String expectedResult = "abstract  class MyClass {\n  private String a,b;\n}";
+    String expectedResult = "abstract class MyClass {\n  private String a,b;\n}";
 
     String actualResult = replacer.testReplace(source, search, replace, options, true);
 
@@ -2143,7 +2282,7 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
     String replace = "class $TestCase$ implements $others$ {\n    $MyClassContent$\n}";
     String expectedResult = "import java.io.Externalizable;\n" +
                             "import java.io.Serializable;\n" +
-                            "abstract  class MyClass implements Externalizable,Serializable {\n    \n}";
+                            "abstract class MyClass implements Externalizable,Serializable {\n    \n}";
 
     String actualResult = replacer.testReplace(source, search, replace, options, true);
     assertEquals(
@@ -2181,14 +2320,130 @@ public class StructuralReplaceTest extends StructuralReplaceTestCase {
 
   public void testReplaceAnnotation() {
     String in = "@SuppressWarnings(\"ALL\")\n" +
-                "class A {}";
+                "public class A {}";
     String what = "@SuppressWarnings(\"ALL\")";
 
     final String by1 = "";
-    assertEquals("class A {}", replacer.testReplace(in, what, by1, options, false));
+    assertEquals("public class A {}", replacer.testReplace(in, what, by1, options, false));
 
     final String by2 = "@SuppressWarnings(\"NONE\") @Deprecated";
     assertEquals("@SuppressWarnings(\"NONE\") @Deprecated\n" +
-                 "class A {}", replacer.testReplace(in, what, by2, options, false));
+                 "public class A {}", replacer.testReplace(in, what, by2, options, false));
+  }
+
+  public void testReplacePolyadicExpression() {
+    final String in1 = "class A {" +
+                      "  int i = 1 + 2 + 3;" +
+                      "}";
+    final String what1 = "1 + '_a+";
+
+    final String by1 = "4";
+    assertEquals("class A {  int i = 4;}", replacer.testReplace(in1, what1, by1, options, false));
+
+    final String by2 = "$a$";
+    assertEquals("class A {  int i = 2+3;}", replacer.testReplace(in1, what1, by2, options, false));
+
+    final String by3 = "$a$+4";
+    assertEquals("class A {  int i = 2+3+4;}", replacer.testReplace(in1, what1, by3, options, false));
+
+    final String what2 = "1 + 2 + 3 + '_a*";
+    final String by4 = "1 + 3 + $a$";
+    assertEquals("class A {  int i = 1 + 3;}", replacer.testReplace(in1, what2, by4, options, false));
+
+    final String by5 = "$a$ + 1 + 3";
+    assertEquals("class A {  int i = 1 + 3;}", replacer.testReplace(in1, what2, by5, options, false));
+
+    final String by6 = "1 + $a$ + 3";
+    assertEquals("class A {  int i = 1  + 3;}", replacer.testReplace(in1, what2, by6, options, false));
+
+    final String in2 = "class A {" +
+                       "  boolean b = true && true;" +
+                       "}";
+    final String what3 = "true && true && '_a*";
+    final String by7 = "true && true && $a$";
+    assertEquals("class A {  boolean b = true && true;}", replacer.testReplace(in2, what3, by7, options, false));
+
+    final String by8 = "$a$ && true && true";
+    assertEquals("class A {  boolean b = true && true;}", replacer.testReplace(in2, what3, by8, options, false));
+
+  }
+
+  public void testReplaceAssert() {
+    final String in = "class A {" +
+                      "  void m(int i) {" +
+                      "    assert 10 > i;" +
+                      "  }" +
+                      "}";
+
+    final String what = "assert '_a > '_b : '_c?;";
+    final String by = "assert $b$ < $a$ : $c$;";
+    assertEquals("class A {  void m(int i) {    assert i < 10 ;  }}", replacer.testReplace(in, what, by, options, false));
+  }
+
+  public void testReplaceMultipleVariablesInOneDeclaration() {
+    final String in = "class A {" +
+                      "  private int i, j, k;" +
+                      "  void m() {" +
+                      "    int i,j,k;" +
+                      "  }" +
+                      "}";
+    final String what1 = "int '_i+;";
+    final String by1 = "float $i$;";
+    assertEquals("class A {  private float i,j,k;  void m() {    float i,j,k;  }}", replacer.testReplace(in, what1, by1, options));
+
+    final String what2 = "int '_a, '_b, '_c = '_d?;";
+    final String by2 = "float $a$, $b$, $c$ = $d$;";
+    assertEquals("class A {  private float i, j, k ;  void m() {    float i, j, k ;  }}", replacer.testReplace(in, what2, by2, options));
+  }
+
+  public void testReplaceWithScriptedVariable() {
+    final String in = "class A {\n" +
+                      "  void method(Object... os) {}\n" +
+                      "  void f(Object a, Object b, Object c) {\n" +
+                      "    method(a, b, c, \"one\" + \"two\");\n" +
+                      "    method(a);\n" +
+                      "  }\n" +
+                      "}";
+    final String what = "method('_arg+)";
+    final String by = "method($newarg$)";
+    final ReplacementVariableDefinition variable = new ReplacementVariableDefinition();
+    variable.setName("newarg");
+    variable.setScriptCodeConstraint("arg.collect { \"(String)\" + it.getText() }.join(',')");
+    options.addVariableDefinition(variable);
+
+    final String expected = "class A {\n" +
+                            "  void method(Object... os) {}\n" +
+                            "  void f(Object a, Object b, Object c) {\n" +
+                            "    method((String)a,(String)b,(String)c,(String)\"one\" + \"two\");\n" +
+                            "    method((String)a);\n" +
+                            "  }\n" +
+                            "}";
+    assertEquals(expected, replacer.testReplace(in, what, by, options));
+
+    options.clearVariableDefinitions();
+  }
+
+  public void testMethodContentReplacement() {
+    final String in = "class A extends TestCase {\n" +
+                      "  void testOne() {\n" +
+                      "    System.out.println();\n" +
+                      "  }\n" +
+                      "}\n";
+    final String what = "class '_A { void '_b:[regex( test.* )](); }";
+    final String by = "class $A$ {\n  @java.lang.Override void $b$();\n}";
+    assertEquals("class A extends TestCase {\n" +
+                 "  @Override void testOne(){\n" +
+                 "    System.out.println();\n" +
+                 "  }\n" +
+                 "}\n", replacer.testReplace(in, what, by, options));
+
+    final String what2 = "void '_a:[regex( test.* )]();";
+    final String by2 = "@org.junit.Test void $a$();";
+    assertEquals("class A extends TestCase {\n" +
+                 "  @org.junit.Test void testOne(){\n" +
+                 "    System.out.println();\n" +
+                 "  }\n" +
+                 "}\n",
+                 replacer.testReplace(in, what2, by2, options));
   }
 }

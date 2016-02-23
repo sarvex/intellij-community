@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,17 +36,15 @@ import com.intellij.execution.process.ProcessOutputTypes;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.editor.Document;
-import com.intellij.openapi.projectRoots.ProjectJdkTable;
-import com.intellij.openapi.projectRoots.Sdk;
-import com.intellij.openapi.projectRoots.impl.JavaAwareProjectJdkTableImpl;
-import com.intellij.openapi.projectRoots.impl.ProjectJdkImpl;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
-import com.intellij.testFramework.CompositeException;
+import com.intellij.testFramework.ThreadTracker;
 import com.intellij.ui.classFilter.ClassFilter;
 import com.intellij.util.IJSwingUtilities;
+import com.intellij.util.SmartList;
 import com.intellij.util.TimeoutUtil;
+import com.intellij.util.lang.CompoundRuntimeException;
 import com.intellij.util.ui.UIUtil;
 import com.sun.jdi.Method;
 import com.sun.jdi.ThreadReference;
@@ -55,19 +53,20 @@ import javax.swing.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.StringTokenizer;
+import java.util.concurrent.TimeUnit;
 
 public abstract class ExecutionWithDebuggerToolsTestCase extends ExecutionTestCase {
-  private DebugProcessListener myPauseScriptListener = null;
+  private DebugProcessListener myPauseScriptListener;
   private final List<SuspendContextRunnable> myScriptRunnables = new ArrayList<SuspendContextRunnable>();
   private final SynchronizationBasedSemaphore myScriptRunnablesSema = new SynchronizationBasedSemaphore();
   protected static final int RATHER_LATER_INVOKES_N = 10;
-  public DebugProcessImpl myDebugProcess = null;
-  private final CompositeException myException = new CompositeException();
+  public DebugProcessImpl myDebugProcess;
+  private final List<Throwable> myException = new SmartList<Throwable>();
 
-  private class InvokeRatherLaterRequest {
+  private static class InvokeRatherLaterRequest {
     private final DebuggerCommandImpl myDebuggerCommand;
     private final DebugProcessImpl myDebugProcess;
-    int invokesN = 0;
+    int invokesN;
 
     public InvokeRatherLaterRequest(DebuggerCommandImpl debuggerCommand, DebugProcessImpl debugProcess) {
       myDebuggerCommand = debuggerCommand;
@@ -75,7 +74,7 @@ public abstract class ExecutionWithDebuggerToolsTestCase extends ExecutionTestCa
     }
   }
 
-  public List<InvokeRatherLaterRequest> myRatherLaterRequests = new ArrayList<InvokeRatherLaterRequest>();
+  public final List<InvokeRatherLaterRequest> myRatherLaterRequests = new ArrayList<InvokeRatherLaterRequest>();
 
   protected DebugProcessImpl getDebugProcess() {
     return myDebugProcess;
@@ -91,7 +90,17 @@ public abstract class ExecutionWithDebuggerToolsTestCase extends ExecutionTestCa
 
   protected void resume(SuspendContextImpl context) {
     DebugProcessImpl debugProcess = context.getDebugProcess();
-    debugProcess.getManagerThread().schedule(debugProcess.createResumeCommand(context, PrioritizedTask.Priority.LOW));
+    debugProcess.getManagerThread().schedule(debugProcess.createResumeCommand(context, PrioritizedTask.Priority.LOWEST));
+  }
+
+  protected void stepInto(SuspendContextImpl context) {
+    DebugProcessImpl debugProcess = context.getDebugProcess();
+    debugProcess.getManagerThread().schedule(debugProcess.createStepIntoCommand(context, false, null));
+  }
+
+  protected void stepOver(SuspendContextImpl context) {
+    DebugProcessImpl debugProcess = context.getDebugProcess();
+    debugProcess.getManagerThread().schedule(debugProcess.createStepOverCommand(context, false));
   }
 
   protected void waitBreakpoints() {
@@ -106,18 +115,46 @@ public abstract class ExecutionWithDebuggerToolsTestCase extends ExecutionTestCa
 
   @Override
   protected void tearDown() throws Exception {
-    super.tearDown();
+    ThreadTracker.awaitThreadTerminationWithParentParentGroup("JDI main", 100, TimeUnit.SECONDS);
+    try {
+      super.tearDown();
+    }
+    finally {
+      throwExceptionsIfAny();
+    }
+  }
+
+  protected void throwExceptionsIfAny() {
     synchronized (myException) {
-      if (!myException.isEmpty()) throw myException;
+      CompoundRuntimeException.throwIfNotEmpty(myException);
     }
   }
 
   protected void onBreakpoint(SuspendContextRunnable runnable) {
+    addDefaultBreakpointListener();
+    myScriptRunnables.add(runnable);
+  }
+
+  protected void doWhenPausedThenResume(final SuspendContextRunnable runnable) {
+    onBreakpoint(new SuspendContextRunnable() {
+      @Override
+      public void run(SuspendContextImpl suspendContext) throws Exception {
+        try {
+          runnable.run(suspendContext);
+        }
+        finally {
+          resume(suspendContext);
+        }
+      }
+    });
+  }
+
+  protected void addDefaultBreakpointListener() {
     if (myPauseScriptListener == null) {
       final DebugProcessImpl debugProcess = getDebugProcess();
-      
+
       assertTrue("Debug process was not started", debugProcess != null);
-      
+
       myPauseScriptListener = new DelayedEventsProcessListener(
         new DebugProcessAdapterImpl() {
           @Override
@@ -138,6 +175,7 @@ public abstract class ExecutionWithDebuggerToolsTestCase extends ExecutionTestCa
             }
             catch (AssertionError e) {
               addException(e);
+              resume(suspendContext);
             }
 
             if (myScriptRunnables.isEmpty()) {
@@ -162,7 +200,6 @@ public abstract class ExecutionWithDebuggerToolsTestCase extends ExecutionTestCa
       );
       debugProcess.addDebugProcessListener(myPauseScriptListener);
     }
-    myScriptRunnables.add(runnable);
   }
 
   protected void printFrameProxy(StackFrameProxyImpl frameProxy) throws EvaluateException {
@@ -179,6 +216,33 @@ public abstract class ExecutionWithDebuggerToolsTestCase extends ExecutionTestCa
         if (context.getFrameProxy() != null) {
           SourcePosition sourcePosition = PositionUtil.getSourcePosition(context);
           println(sourcePosition.getFile().getVirtualFile().getName() + ":" + sourcePosition.getLine(), ProcessOutputTypes.SYSTEM);
+        }
+        else {
+          println("Context thread is null", ProcessOutputTypes.SYSTEM);
+        }
+      }
+    });
+  }
+
+  protected void printContextWithText(final StackFrameContext context) {
+    ApplicationManager.getApplication().runReadAction(new Runnable() {
+      @Override
+      public void run() {
+        if (context.getFrameProxy() != null) {
+          SourcePosition sourcePosition = PositionUtil.getSourcePosition(context);
+          int offset = sourcePosition.getOffset();
+          Document document = PsiDocumentManager.getInstance(myProject).getDocument(sourcePosition.getFile());
+          CharSequence text = document.getImmutableCharSequence();
+          String positionText = "";
+          if (offset > -1) {
+            positionText = StringUtil.escapeLineBreak(" [" + text.subSequence(Math.max(0, offset - 20), offset) + "<*>"
+            + text.subSequence(offset, Math.min(offset + 20, text.length())) + "]");
+          }
+
+          println(sourcePosition.getFile().getVirtualFile().getName()
+                  + ":" + sourcePosition.getLine()
+                  + positionText,
+                  ProcessOutputTypes.SYSTEM);
         }
         else {
           println("Context thread is null", ProcessOutputTypes.SYSTEM);
@@ -372,33 +436,7 @@ public abstract class ExecutionWithDebuggerToolsTestCase extends ExecutionTestCa
     }
   }
 
-  private Sdk getTestJdk() {
-    try {
-      ProjectJdkImpl jdk = (ProjectJdkImpl)JavaAwareProjectJdkTableImpl.getInstanceEx().getInternalJdk().clone();
-      jdk.setName("JDK");
-      return jdk;
-    }
-    catch (CloneNotSupportedException e) {
-      LOG.error(e);
-      return null;
-    }
-  }
-
-  protected void setTestJDK() {
-    ApplicationManager.getApplication().runWriteAction(new Runnable() {
-      @Override
-      public void run() {
-        Sdk jdk = ProjectJdkTable.getInstance().findJdk("JDK");
-        if (jdk != null) {
-          ProjectJdkTable.getInstance().removeJdk(jdk);
-        }
-
-        ProjectJdkTable.getInstance().addJdk(getTestJdk());
-      }
-    });
-  }
-
-  private class DelayedEventsProcessListener implements DebugProcessListener {
+  private static class DelayedEventsProcessListener implements DebugProcessListener {
     private final DebugProcessAdapterImpl myTarget;
 
     public DelayedEventsProcessListener(DebugProcessAdapterImpl target) {
@@ -445,7 +483,7 @@ public abstract class ExecutionWithDebuggerToolsTestCase extends ExecutionTestCa
       myTarget.attachException(state, exception, remoteConnection);
     }
 
-    private void pauseExecution() {
+    private static void pauseExecution() {
       TimeoutUtil.sleep(10);
     }
   }

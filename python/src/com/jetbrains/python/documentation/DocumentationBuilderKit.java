@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package com.jetbrains.python.documentation;
 
-import com.intellij.codeInsight.documentation.DocumentationManager;
+import com.intellij.codeInsight.documentation.DocumentationManagerProtocol;
 import com.intellij.xml.util.XmlStringUtil;
 import com.jetbrains.python.psi.PyExpression;
 import com.jetbrains.python.psi.PyUtil;
@@ -27,7 +27,7 @@ import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
-public class DocumentationBuilderKit {
+class DocumentationBuilderKit {
   static final TagWrapper TagBold = new TagWrapper("b");
   static final TagWrapper TagItalic = new TagWrapper("i");
   static final TagWrapper TagSmall = new TagWrapper("small");
@@ -72,11 +72,11 @@ public class DocumentationBuilderKit {
   }
 
   static <T> Iterable<T> interleave(Iterable<T> source, T filler) {
-    List<T> ret = new LinkedList<T>();
-    boolean is_next = false;
+    final List<T> ret = new LinkedList<T>();
+    boolean isNext = false;
     for (T what : source) {
-      if (is_next) ret.add(filler);
-      else is_next = true;
+      if (isNext) ret.add(filler);
+      else isNext = true;
       ret.add(what);
     }
     return ret;
@@ -97,7 +97,7 @@ public class DocumentationBuilderKit {
   }
 
   static class LinkWrapper implements FP.Lambda1<Iterable<String>, Iterable<String>> {
-    private String myLink;
+    private final String myLink;
 
     LinkWrapper(String link) {
       myLink = link;
@@ -105,7 +105,7 @@ public class DocumentationBuilderKit {
 
     public Iterable<String> apply(Iterable<String> contents) {
       return new ChainIterable<String>()
-        .addItem("<a href=\"").addItem(DocumentationManager.PSI_ELEMENT_PROTOCOL).addItem(myLink).addItem("\">")
+        .addItem("<a href=\"").addItem(DocumentationManagerProtocol.PSI_ELEMENT_PROTOCOL).addItem(myLink).addItem("\">")
         .add(contents).addItem("</a>")
       ;
     }

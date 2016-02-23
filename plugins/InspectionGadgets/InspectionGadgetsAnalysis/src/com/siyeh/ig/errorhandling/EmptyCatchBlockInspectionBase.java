@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2013 Dave Griffith, Bas Leijdekkers
+ * Copyright 2003-2015 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,12 @@ import com.intellij.codeInspection.ui.MultipleCheckboxOptionsPanel;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
 import com.intellij.psi.util.FileTypeUtils;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
 import com.siyeh.InspectionGadgetsBundle;
 import com.siyeh.ig.BaseInspection;
 import com.siyeh.ig.BaseInspectionVisitor;
 import com.siyeh.ig.InspectionGadgetsFix;
-import com.siyeh.ig.psiutils.TestUtils;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -114,6 +114,11 @@ public class EmptyCatchBlockInspectionBase extends BaseInspection {
   }
 
   @Override
+  public boolean shouldInspect(PsiFile file) {
+    return !FileTypeUtils.isInServerPageFile(file);
+  }
+
+  @Override
   public BaseInspectionVisitor buildVisitor() {
     return new EmptyCatchBlockVisitor();
   }
@@ -123,9 +128,6 @@ public class EmptyCatchBlockInspectionBase extends BaseInspection {
     @Override
     public void visitTryStatement(@NotNull PsiTryStatement statement) {
       super.visitTryStatement(statement);
-      if (FileTypeUtils.isInServerPageFile(statement.getContainingFile())) {
-        return;
-      }
       final PsiCatchSection[] catchSections = statement.getCatchSections();
       for (final PsiCatchSection section : catchSections) {
         checkCatchSection(section);
@@ -159,22 +161,18 @@ public class EmptyCatchBlockInspectionBase extends BaseInspection {
     private boolean isEmpty(PsiElement element) {
       if (!m_includeComments && element instanceof PsiComment) {
         return true;
-      } else if (element instanceof PsiEmptyStatement) {
-        if (m_includeComments) {
-          final PsiElement[] children = element.getChildren();
-          for (PsiElement child : children) {
-            if (child instanceof PsiComment) {
-              return false;
-            }
-          }
-        }
+      }
+      else if (element instanceof PsiEmptyStatement) {
+        return !m_includeComments || PsiTreeUtil.getChildOfType(element, PsiComment.class) == null;
+      }
+      else if (element instanceof PsiWhiteSpace) {
         return true;
-      } else if (element instanceof PsiWhiteSpace) {
-        return true;
-      } else if (element instanceof PsiBlockStatement) {
+      }
+      else if (element instanceof PsiBlockStatement) {
         final PsiBlockStatement block = (PsiBlockStatement)element;
         return isEmpty(block.getCodeBlock());
-      } else if (element instanceof PsiCodeBlock) {
+      }
+      else if (element instanceof PsiCodeBlock) {
         final PsiCodeBlock codeBlock = (PsiCodeBlock)element;
         PsiElement bodyElement = codeBlock.getFirstBodyElement();
         final PsiElement lastBodyElement = codeBlock.getLastBodyElement();

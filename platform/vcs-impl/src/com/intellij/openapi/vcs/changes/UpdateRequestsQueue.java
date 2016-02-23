@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,11 +27,14 @@ import com.intellij.openapi.vcs.ProjectLevelVcsManager;
 import com.intellij.util.Consumer;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.io.storage.HeavyProcessLatch;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import javax.swing.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -46,7 +49,8 @@ public class UpdateRequestsQueue {
   private final Logger LOG = Logger.getInstance("#com.intellij.openapi.vcs.changes.UpdateRequestsQueue");
   private static final String ourHeavyLatchOptimization = "vcs.local.changes.track.heavy.latch";
   private final Project myProject;
-  private final AtomicReference<ScheduledExecutorService> myExecutor;
+  private final AtomicReference<Future> myFuture;
+  private final ScheduledExecutorService myExecutor;
   private final Runnable myDelegate;
   private final Object myLock;
   private volatile boolean myStarted;
@@ -63,8 +67,9 @@ public class UpdateRequestsQueue {
   private final boolean myTrackHeavyLatch;
   private final Getter<Boolean> myIsStoppedGetter;
 
-  public UpdateRequestsQueue(final Project project, final AtomicReference<ScheduledExecutorService> executor, final Runnable delegate) {
+  public UpdateRequestsQueue(final Project project, final AtomicReference<Future> future, @NotNull ScheduledExecutorService executor, final Runnable delegate) {
     myProject = project;
+    myFuture = future;
     myExecutor = executor;
     myTrackHeavyLatch = Boolean.parseBoolean(System.getProperty(ourHeavyLatchOptimization));
 
@@ -105,7 +110,7 @@ public class UpdateRequestsQueue {
         if (! myRequestSubmitted) {
           final MyRunnable runnable = new MyRunnable();
           myRequestSubmitted = true;
-          myExecutor.get().schedule(runnable, 300, TimeUnit.MILLISECONDS);
+          myFuture.set(myExecutor.schedule(runnable, 300, TimeUnit.MILLISECONDS));
           LOG.debug("Scheduled for project: " + myProject.getName() + ", runnable: " + runnable.hashCode());
         }
       }
@@ -150,12 +155,17 @@ public class UpdateRequestsQueue {
     LOG.debug("Stop finished for project: " + myProject.getName());
   }
 
+  @TestOnly
   public void waitUntilRefreshed() {
     while (true) {
       final Semaphore semaphore = new Semaphore();
       synchronized (myLock) {
         if (!myRequestSubmitted && !myRequestRunning) {
           return;
+        }
+
+        if (!myRequestRunning) {
+          myFuture.set(myExecutor.submit(new MyRunnable()));
         }
 
         semaphore.down();
@@ -182,15 +192,11 @@ public class UpdateRequestsQueue {
     LOG.debug("invokeAfterUpdate for project: " + myProject.getName());
     final CallbackData data = CallbackData.create(afterUpdate, title, state, mode, myProject);
 
-    VcsDirtyScopeManagerProxy managerProxy = null;
     if (dirtyScopeManagerFiller != null) {
-      managerProxy  = new VcsDirtyScopeManagerProxy();
-      dirtyScopeManagerFiller.consume(managerProxy);
-    }
+      VcsDirtyScopeManagerProxy managerProxy = new VcsDirtyScopeManagerProxy();
 
-    // can ask stopped without a lock
-    if (! myStopped) {
-      if (managerProxy != null) {
+      dirtyScopeManagerFiller.consume(managerProxy);
+      if (!myProject.isDisposed()) {
         managerProxy.callRealManager(VcsDirtyScopeManager.getInstance(myProject));
       }
     }
@@ -236,6 +242,8 @@ public class UpdateRequestsQueue {
       final List<Runnable> copy = new ArrayList<Runnable>(myWaitingUpdateCompletionQueue.size());
       try {
         synchronized (myLock) {
+          if (!myRequestSubmitted) return;
+          
           LOG.assertTrue(!myRequestRunning);
           myRequestRunning = true;
           if (myStopped) {
@@ -259,7 +267,8 @@ public class UpdateRequestsQueue {
         LOG.debug("MyRunnable: INVOKE, project: " + myProject.getName() + ", runnable: " + hashCode());
         myDelegate.run();
         LOG.debug("MyRunnable: invokeD, project: " + myProject.getName() + ", runnable: " + hashCode());
-      } finally {
+      }
+      finally {
         synchronized (myLock) {
           myRequestRunning = false;
           LOG.debug("MyRunnable: delete executed, project: " + myProject.getName() + ", runnable: " + hashCode());
@@ -278,6 +287,11 @@ public class UpdateRequestsQueue {
         freeSemaphores();
         LOG.debug("MyRunnable: Runnables executed, project: " + myProject.getName() + ", runnable: " + hashCode());
       }
+    }
+
+    @Override
+    public String toString() {
+      return "UpdateRequestQueue delegate: "+myDelegate;
     }
   }
 

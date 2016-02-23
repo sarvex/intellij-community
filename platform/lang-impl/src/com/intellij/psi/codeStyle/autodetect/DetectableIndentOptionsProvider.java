@@ -16,14 +16,18 @@
 package com.intellij.psi.codeStyle.autodetect;
 
 import com.intellij.ide.actions.ShowSettingsUtilImpl;
+import com.intellij.lang.LanguageFormatting;
 import com.intellij.openapi.application.ApplicationBundle;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.fileEditor.FileEditor;
 import com.intellij.openapi.fileEditor.TextEditor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.psi.PsiCompiledFile;
+import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.codeStyle.*;
 import com.intellij.testFramework.LightVirtualFile;
@@ -35,12 +39,12 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.List;
 
-import static com.intellij.psi.codeStyle.EditorNotificationInfo.*;
+import static com.intellij.psi.codeStyle.EditorNotificationInfo.ActionLabelData;
 
 /**
  * @author Rustam Vishnyakov
  */
-public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
+public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider implements ProviderForCommittedDocument {
   private boolean myIsEnabledInTest;
   private final List<VirtualFile> myAcceptedFiles = new WeakList<VirtualFile>();
   private final List<VirtualFile> myDisabledFiles = new WeakList<VirtualFile>();
@@ -48,7 +52,15 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
   @Nullable
   @Override
   public CommonCodeStyleSettings.IndentOptions getIndentOptions(@NotNull CodeStyleSettings settings, @NotNull PsiFile file) {
-    return isEnabled(settings, file) ? new IndentOptionsDetectorImpl(file).getIndentOptions() : null;
+    return isDocumentCommitted(file) && isEnabled(settings, file)
+           ? new IndentOptionsDetectorImpl(file).getIndentOptions()
+           : null;
+  }
+
+  private static boolean isDocumentCommitted(@NotNull PsiFile file) {
+    PsiDocumentManager manager = PsiDocumentManager.getInstance(file.getProject());
+    Document document = manager.getDocument(file);
+    return document != null && manager.isCommitted(document);
   }
 
   @Override
@@ -62,12 +74,13 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
   }
 
   private boolean isEnabled(@NotNull CodeStyleSettings settings, @NotNull PsiFile file) {
+    if (file instanceof PsiCompiledFile) return false;
     if (ApplicationManager.getApplication().isUnitTestMode()) {
       return myIsEnabledInTest;
     }
     VirtualFile vFile = file.getVirtualFile();
     if (vFile == null || vFile instanceof LightVirtualFile || myDisabledFiles.contains(vFile)) return false;
-    return settings.AUTODETECT_INDENTS;
+    return LanguageFormatting.INSTANCE.forContext(file) != null && settings.AUTODETECT_INDENTS;
   }
 
   @TestOnly
@@ -116,8 +129,7 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
       new Runnable() {
         @Override
         public void run() {
-          ShowSettingsUtilImpl.showSettingsDialog(project, "preferences.sourceCode",
-                                                  ApplicationBundle.message("settings.code.style.general.autodetect.indents"));
+          ShowSettingsUtilImpl.showSettingsDialog(project, "preferences.sourceCode", "detect indent");
         }
       }
     );
@@ -171,8 +183,8 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
   }
 
   @Override
-  public boolean isAcceptedWithoutWarning(@NotNull VirtualFile file) {
-    return myAcceptedFiles.contains(file);
+  public boolean isAcceptedWithoutWarning(@Nullable Project project, @NotNull VirtualFile file) {
+    return !FileIndentOptionsProvider.isShowNotification() || myAcceptedFiles.contains(file);
   }
 
   private static class NotificationLabels {

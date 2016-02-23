@@ -29,6 +29,7 @@ import com.intellij.openapi.vfs.newvfs.NewVirtualFile;
 import com.intellij.util.*;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.Convertor;
+import com.intellij.util.io.URLUtil;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -46,9 +47,6 @@ import java.util.*;
 
 public class VfsUtil extends VfsUtilCore {
   private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.vfs.VfsUtil");
-
-  /** @deprecated incorrect name, use {@link #VFS_SEPARATOR_CHAR} (to be removed in IDEA 15) */
-  public static final char VFS_PATH_SEPARATOR = VFS_SEPARATOR_CHAR;
 
   public static void saveText(@NotNull VirtualFile file, @NotNull String text) throws IOException {
     Charset charset = file.getCharset();
@@ -93,7 +91,7 @@ public class VfsUtil extends VfsUtilCore {
    *
    * @param file to copy to
    * @param resourceUrl url of the resource to be copied
-   * @throws java.io.IOException if resource not found or copying failed
+   * @throws IOException if resource not found or copying failed
    */
   public static void copyFromResource(@NotNull VirtualFile file, @NonNls @NotNull String resourceUrl) throws IOException {
     InputStream out = VfsUtil.class.getResourceAsStream(resourceUrl);
@@ -216,11 +214,13 @@ public class VfsUtil extends VfsUtilCore {
    * @param url the URL to find file by
    * @return <code>{@link VirtualFile}</code> if the file was found, <code>null</code> otherwise
    */
+  @Nullable
   public static VirtualFile findFileByURL(@NotNull URL url) {
     VirtualFileManager virtualFileManager = VirtualFileManager.getInstance();
     return findFileByURL(url, virtualFileManager);
   }
 
+  @Nullable
   public static VirtualFile findFileByURL(@NotNull URL url, @NotNull VirtualFileManager virtualFileManager) {
     String vfUrl = convertFromUrl(url);
     return virtualFileManager.findFileByUrl(vfUrl);
@@ -234,19 +234,6 @@ public class VfsUtil extends VfsUtilCore {
       virtualFile = fileSystem.refreshAndFindFileByIoFile(file);
     }
     return virtualFile;
-  }
-
-  /**
-   * Converts VsfUrl info java.net.URL.
-   *
-   * @param vfsUrl VFS url (as constructed by VfsFile.getUrl())
-   * @return converted URL or null if error has occured
-   * @deprecated Use {@link VfsUtilCore#convertToURL(String)} instead. To be removed in IDEA 16.
-   */
-  @SuppressWarnings("MethodOverridesStaticMethodOfSuperclass")
-  @Nullable
-  public static URL convertToURL(@NotNull String vfsUrl) {
-    return VfsUtilCore.convertToURL(vfsUrl);
   }
 
   public static VirtualFile copyFileRelative(Object requestor, @NotNull VirtualFile file, @NotNull VirtualFile toDir, @NotNull String relativePath) throws IOException {
@@ -280,13 +267,17 @@ public class VfsUtil extends VfsUtilCore {
   public static URI toUri(@NotNull VirtualFile file) {
     String path = file.getPath();
     try {
+      String protocol = file.getFileSystem().getProtocol();
       if (file.isInLocalFileSystem()) {
         if (SystemInfo.isWindows && path.charAt(0) != '/') {
           path = '/' + path;
         }
-        return new URI(file.getFileSystem().getProtocol(), "", path, null, null);
+        return new URI(protocol, "", path, null, null);
       }
-      return new URI(file.getFileSystem().getProtocol(), path, null);
+      if (URLUtil.HTTP_PROTOCOL.equals(protocol)) {
+        return new URI(URLUtil.HTTP_PROTOCOL + URLUtil.SCHEME_SEPARATOR + path);
+      }
+      return new URI(protocol, path, null);
     }
     catch (URISyntaxException e) {
       throw new IllegalArgumentException(e);
@@ -428,7 +419,7 @@ public class VfsUtil extends VfsUtilCore {
   public static VirtualFile createDirectories(@NotNull final String directoryPath) throws IOException {
     return new WriteAction<VirtualFile>() {
       @Override
-      protected void run(Result<VirtualFile> result) throws Throwable {
+      protected void run(@NotNull Result<VirtualFile> result) throws Throwable {
         VirtualFile res = createDirectoryIfMissing(directoryPath);
         result.setResult(res);
       }
@@ -536,6 +527,18 @@ public class VfsUtil extends VfsUtilCore {
     return children == null ? VirtualFile.EMPTY_ARRAY : children;
   }
 
+  @NotNull
+  public static List<VirtualFile> getChildren(@NotNull VirtualFile dir, @NotNull VirtualFileFilter filter) {
+    List<VirtualFile> result = null;
+    for (VirtualFile child : dir.getChildren()) {
+      if (filter.accept(child)) {
+        if (result == null) result = ContainerUtil.newSmartList();
+        result.add(child);
+      }
+    }
+    return result != null ? result : ContainerUtil.<VirtualFile>emptyList();
+  }
+
   /**
    * @param url Url for virtual file
    * @return url for parent directory of virtual file
@@ -545,7 +548,7 @@ public class VfsUtil extends VfsUtilCore {
     if (url == null) {
       return null;
     }
-    final int index = url.lastIndexOf(VfsUtil.VFS_SEPARATOR_CHAR);
+    final int index = url.lastIndexOf(VfsUtilCore.VFS_SEPARATOR_CHAR);
     return index < 0 ? null : url.substring(0, index);
   }
 
@@ -558,7 +561,7 @@ public class VfsUtil extends VfsUtilCore {
     if (urlOrPath == null) {
       return null;
     }
-    final int index = urlOrPath.lastIndexOf(VfsUtil.VFS_SEPARATOR_CHAR);
+    final int index = urlOrPath.lastIndexOf(VfsUtilCore.VFS_SEPARATOR_CHAR);
     return index < 0 ? null : urlOrPath.substring(index+1);
   }
 
@@ -590,5 +593,15 @@ public class VfsUtil extends VfsUtilCore {
     List<VirtualFile> list = markDirty(recursive, reloadChildren, files);
     if (list.isEmpty()) return;
     LocalFileSystem.getInstance().refreshFiles(list, async, recursive, null);
+  }
+
+  @NotNull
+  public static VirtualFile getRootFile(@NotNull VirtualFile file) {
+    while (true) {
+      VirtualFile parent = file.getParent();
+      if (parent == null) break;
+      file = parent;
+    }
+    return file;
   }
 }

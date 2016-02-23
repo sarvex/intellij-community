@@ -16,10 +16,15 @@
 package com.intellij.codeInsight.actions;
 
 import com.intellij.lang.LanguageFormatting;
+import com.intellij.lang.LanguageImportStatements;
+import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.components.impl.ComponentManagerImpl;
 import com.intellij.openapi.fileTypes.PlainTextLanguage;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.vcs.FilePathImpl;
+import com.intellij.openapi.vcs.FilePath;
+import com.intellij.openapi.vcs.actions.VcsContextFactory;
 import com.intellij.openapi.vcs.changes.Change;
 import com.intellij.openapi.vcs.changes.ChangeListManager;
 import com.intellij.openapi.vcs.changes.ContentRevision;
@@ -28,9 +33,11 @@ import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.codeStyle.CodeStyleManager;
 import com.intellij.testFramework.LightPlatformTestCase;
-import com.intellij.testFramework.PlatformTestCase;
+import com.intellij.testFramework.TestActionEvent;
 import com.intellij.testFramework.vcs.MockChangeListManager;
+import com.intellij.testFramework.vcs.MockVcsContextFactory;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NotNull;
 import org.picocontainer.MutablePicoContainer;
 
@@ -46,9 +53,11 @@ public class ReformatOnlyVcsChangedTextTest extends LightPlatformTestCase {
   private MockChangeListManager myMockChangeListManager;
   private MockCodeStyleManager myMockCodeStyleManager;
   private MockPlainTextFormattingModelBuilder myMockPlainTextFormattingModelBuilder;
+  private MockPlainTextImportOptimizer myMockPlainTextImportOptimizer;
 
   private ChangeListManager myRealChangeListManager;
   private CodeStyleManager myRealCodeStyleManger;
+  private VcsContextFactory myRealVcsContextFactory;
 
   private final static String COMMITTED =
     "class Test {\n" +
@@ -72,7 +81,6 @@ public class ReformatOnlyVcsChangedTextTest extends LightPlatformTestCase {
 
   @Override
   public void setUp() throws Exception {
-    PlatformTestCase.initPlatformLangPrefix();
     super.setUp();
     myWorkingDirectory = TestFileStructure.createDirectory(getProject(), getSourceRoot(), TEMP_DIR_NAME);
 
@@ -84,18 +92,29 @@ public class ReformatOnlyVcsChangedTextTest extends LightPlatformTestCase {
     myMockCodeStyleManager = new MockCodeStyleManager();
     registerCodeStyleManager(myMockCodeStyleManager);
 
+    myRealVcsContextFactory = ServiceManager.getService(VcsContextFactory.class);
+    registerVcsContextFactory(new MockVcsContextFactory(getSourceRoot().getFileSystem()));
+
     myMockPlainTextFormattingModelBuilder = new MockPlainTextFormattingModelBuilder();
     LanguageFormatting.INSTANCE.addExplicitExtension(PlainTextLanguage.INSTANCE, myMockPlainTextFormattingModelBuilder);
+    
+    myMockPlainTextImportOptimizer = new MockPlainTextImportOptimizer();
+    LanguageImportStatements.INSTANCE.addExplicitExtension(PlainTextLanguage.INSTANCE, myMockPlainTextImportOptimizer);
   }
 
   @Override
   public void tearDown() throws Exception {
-    registerChangeListManager(myRealChangeListManager);
-    registerCodeStyleManager(myRealCodeStyleManger);
-    LanguageFormatting.INSTANCE.removeExplicitExtension(PlainTextLanguage.INSTANCE, myMockPlainTextFormattingModelBuilder);
+    try {
+      registerChangeListManager(myRealChangeListManager);
+      registerCodeStyleManager(myRealCodeStyleManger);
+      registerVcsContextFactory(myRealVcsContextFactory);
+      LanguageFormatting.INSTANCE.removeExplicitExtension(PlainTextLanguage.INSTANCE, myMockPlainTextFormattingModelBuilder);
+      LanguageImportStatements.INSTANCE.removeExplicitExtension(PlainTextLanguage.INSTANCE, myMockPlainTextImportOptimizer);
 
-    TestFileStructure.delete(myWorkingDirectory.getVirtualFile());
-    super.tearDown();
+      TestFileStructure.delete(myWorkingDirectory.getVirtualFile());
+    } finally {
+      super.tearDown();
+    }
   }
 
   public void testInsertion() throws IOException {
@@ -268,6 +287,39 @@ public class ReformatOnlyVcsChangedTextTest extends LightPlatformTestCase {
     assertFormattedLines(NO_CHANGED_LINES, modified11, modified12);
   }
 
+  public void testOptimizeImportsInModule() throws IOException {
+    ChangedFilesStructure fs = new ChangedFilesStructure(myWorkingDirectory);
+
+    String initialFile = "initial file";
+    PsiFile toModify = fs.createFile("Modified.txt", initialFile, initialFile  + " + unused import");
+    PsiFile toModify2 = fs.createFile("Modified2.txt", initialFile, initialFile + " + another unused import");
+
+    PsiFile toKeep = fs.createFile("NonModified.txt", initialFile, initialFile);
+    PsiFile toKeep2 = fs.createFile("NonModified2.txt", initialFile, initialFile);
+
+    OptimizeImportsAction optimizeImports = new OptimizeImportsAction();
+    OptimizeImportsAction.setProcessVcsChangedFilesInTests(true);
+    try {
+      optimizeImports.actionPerformed(new TestActionEvent(dataId -> {
+        if (CommonDataKeys.PROJECT.is(dataId)) {
+          return getProject();
+        }
+        if (LangDataKeys.MODULE_CONTEXT.is(dataId)) {
+          return getModule();
+        }
+        return null;
+      }));
+    }
+    finally {
+      OptimizeImportsAction.setProcessVcsChangedFilesInTests(false);
+    }
+    
+    assertTrue(isImportsOptimized(toModify));
+    assertTrue(isImportsOptimized(toModify2));
+    assertTrue(!isImportsOptimized(toKeep));
+    assertTrue(!isImportsOptimized(toKeep2));
+  }
+
   private static void registerChangeListManager(@NotNull ChangeListManager manager) {
     Project project = getProject();
     assert (project instanceof ComponentManagerImpl);
@@ -280,6 +332,13 @@ public class ReformatOnlyVcsChangedTextTest extends LightPlatformTestCase {
     MutablePicoContainer container = (MutablePicoContainer)getProject().getPicoContainer();
     container.unregisterComponent(componentKey);
     container.registerComponentInstance(componentKey, manager);
+  }
+
+  private static void registerVcsContextFactory(@NotNull VcsContextFactory factory) {
+    String key = VcsContextFactory.class.getName();
+    MutablePicoContainer container = (MutablePicoContainer)ApplicationManager.getApplication().getPicoContainer();
+    container.unregisterComponent(key);
+    container.registerComponentInstance(key, factory);
   }
 
   private void doTest(@NotNull String committed, @NotNull String modified, @NotNull ChangedLines... lines) throws IOException {
@@ -307,6 +366,10 @@ public class ReformatOnlyVcsChangedTextTest extends LightPlatformTestCase {
     Arrays.sort(formatted, cmp);
 
     assertTrue(getErrorMessage(expected, formatted), Arrays.equals(expected, formatted));
+  }
+  
+  private boolean isImportsOptimized(@NotNull PsiFile file) {
+    return myMockPlainTextImportOptimizer.getProcessedFiles().contains(file);
   }
 
   @NotNull
@@ -364,7 +427,7 @@ public class ReformatOnlyVcsChangedTextTest extends LightPlatformTestCase {
 
     @NotNull
     private Change createChange(@NotNull String committed, @NotNull PsiFile file) {
-      FilePathImpl filePath = new FilePathImpl(file.getVirtualFile());
+      FilePath filePath = VcsUtil.getFilePath(file.getVirtualFile());
       ContentRevision before = new SimpleContentRevision(committed, filePath, "");
       ContentRevision after = new SimpleContentRevision("", filePath, "");
       return new Change(before, after);

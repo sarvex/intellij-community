@@ -19,9 +19,12 @@ package com.intellij.openapi.vcs.changes.ui;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.changes.Change;
 import com.intellij.openapi.vcs.changes.CommitSession;
+import com.intellij.openapi.wm.ex.IdeFocusTraversalPolicy;
 import com.intellij.util.Alarm;
+import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -29,6 +32,9 @@ import java.awt.*;
 import java.util.List;
 
 public class SessionDialog extends DialogWrapper {
+
+  @NonNls public static final String VCS_CONFIGURATION_UI_TITLE = "Vcs.SessionDialog.title";
+
   private final CommitSession mySession;
   private final List<Change> myChanges;
 
@@ -40,17 +46,28 @@ public class SessionDialog extends DialogWrapper {
 
   public SessionDialog(String title, Project project,
                        CommitSession session, List<Change> changes,
-                       String commitMessage) {
+                       String commitMessage, @Nullable JComponent configurationComponent) {
     super(project, true);
     mySession = session;
     myChanges = changes;
     myCommitMessage = commitMessage;
-    myConfigurationComponent = createConfigurationUI(mySession, myChanges, myCommitMessage);
-    setTitle(CommitChangeListDialog.trimEllipsis(title));
+    myConfigurationComponent =
+      configurationComponent == null ? createConfigurationUI(mySession, myChanges, myCommitMessage) : configurationComponent;
+    String configurationComponentName =
+      myConfigurationComponent != null ? (String)myConfigurationComponent.getClientProperty(VCS_CONFIGURATION_UI_TITLE) : null;
+    setTitle(StringUtil.isEmptyOrSpaces(configurationComponentName)
+             ? CommitChangeListDialog.trimEllipsis(title) : configurationComponentName);
     init();
     updateButtons();
   }
 
+  public SessionDialog(String title, Project project,
+                       CommitSession session, List<Change> changes,
+                       String commitMessage) {
+    this(title, project, session, changes, commitMessage, null);
+  }
+
+  @Nullable
   public static JComponent createConfigurationUI(final CommitSession session, final List<Change> changes, final String commitMessage) {
     try {
       return session.getAdditionalConfigurationUI(changes, commitMessage);
@@ -68,7 +85,7 @@ public class SessionDialog extends DialogWrapper {
 
   @Override
   public JComponent getPreferredFocusedComponent() {
-    return myConfigurationComponent;
+    return IdeFocusTraversalPolicy.getPreferredFocusedComponent(myConfigurationComponent);
   }
 
   private void updateButtons() {

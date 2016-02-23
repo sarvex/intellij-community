@@ -67,20 +67,20 @@ class PycharmTestCommand(Command):
 
   def handle(self, *test_labels, **options):
     # handle south migration in tests
-    management.get_commands()
+    commands = management.get_commands()
     if hasattr(settings, "SOUTH_TESTS_MIGRATE") and not settings.SOUTH_TESTS_MIGRATE:
       # point at the core syncdb command when creating tests
       # tests should always be up to date with the most recent model structure
-      management._commands['syncdb'] = 'django.core'
+      commands['syncdb'] = 'django.core'
     elif 'south' in settings.INSTALLED_APPS:
       try:
         from south.management.commands import MigrateAndSyncCommand
-        management._commands['syncdb'] = MigrateAndSyncCommand()
+        commands['syncdb'] = MigrateAndSyncCommand()
         from south.hacks import hacks
         if hasattr(hacks, "patch_flush_during_test_db_creation"):
           hacks.patch_flush_during_test_db_creation()
       except ImportError:
-        management._commands['syncdb'] = 'django.core'
+        commands['syncdb'] = 'django.core'
 
     verbosity = int(options.get('verbosity', 1))
     interactive = options.get('interactive', True)
@@ -88,7 +88,9 @@ class PycharmTestCommand(Command):
     TestRunner = self.get_runner()
 
     if not inspect.ismethod(TestRunner):
-      failures = TestRunner(test_labels, verbosity=verbosity, interactive=interactive, failfast=failfast, keepdb='--keepdb' in sys.argv)
+      our_options = {"verbosity" : int(verbosity), "interactive" : interactive, "failfast" : failfast}
+      options.update(our_options)
+      failures = TestRunner(test_labels, **options)
     else:
       test_runner = TestRunner(verbosity=verbosity, interactive=interactive, failfast=failfast)
       failures = test_runner.run_tests(test_labels)

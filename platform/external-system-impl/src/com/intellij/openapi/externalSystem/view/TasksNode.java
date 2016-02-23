@@ -68,7 +68,7 @@ public class TasksNode extends ExternalSystemNode {
 
   @Override
   public boolean isVisible() {
-    return hasChildren() && super.isVisible();
+    return super.isVisible() && hasChildren();
   }
 
   @SuppressWarnings("unchecked")
@@ -91,6 +91,11 @@ public class TasksNode extends ExternalSystemNode {
           @Override
           public String getName() {
             return group;
+          }
+
+          @Override
+          public boolean isVisible() {
+            return super.isVisible() && hasChildren();
           }
 
           @Override

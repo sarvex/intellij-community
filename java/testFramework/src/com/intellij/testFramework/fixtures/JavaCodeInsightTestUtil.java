@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2010 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package com.intellij.testFramework.fixtures;
 
-import com.intellij.codeInsight.TargetElementUtilBase;
+import com.intellij.codeInsight.TargetElementUtil;
 import com.intellij.openapi.application.Result;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Editor;
@@ -30,7 +30,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class JavaCodeInsightTestUtil {
   private static final int TARGET_FOR_INLINE_FLAGS =
-    TargetElementUtilBase.ELEMENT_NAME_ACCEPTED | TargetElementUtilBase.REFERENCED_ELEMENT_ACCEPTED;
+    TargetElementUtil.ELEMENT_NAME_ACCEPTED | TargetElementUtil.REFERENCED_ELEMENT_ACCEPTED;
 
   private JavaCodeInsightTestUtil() { }
 
@@ -39,9 +39,9 @@ public class JavaCodeInsightTestUtil {
     fixture.configureByFile(before);
     new WriteCommandAction(fixture.getProject()) {
       @Override
-      protected void run(final Result result) throws Throwable {
+      protected void run(@NotNull final Result result) throws Throwable {
         final Editor editor = fixture.getEditor();
-        final PsiElement element = TargetElementUtilBase.findTargetElement(editor, TARGET_FOR_INLINE_FLAGS);
+        final PsiElement element = TargetElementUtil.findTargetElement(editor, TARGET_FOR_INLINE_FLAGS);
         assert element instanceof PsiLocalVariable : element;
         InlineLocalHandler.invoke(fixture.getProject(), editor, (PsiLocalVariable)element, null);
       }
@@ -54,9 +54,9 @@ public class JavaCodeInsightTestUtil {
     fixture.configureByFile(before);
     new WriteCommandAction(fixture.getProject()) {
       @Override
-      protected void run(final Result result) throws Throwable {
+      protected void run(@NotNull final Result result) throws Throwable {
         final Editor editor = fixture.getEditor();
-        final PsiElement element = TargetElementUtilBase.findTargetElement(editor, TARGET_FOR_INLINE_FLAGS);
+        final PsiElement element = TargetElementUtil.findTargetElement(editor, TARGET_FOR_INLINE_FLAGS);
         assert element instanceof PsiParameter : element;
         new InlineParameterHandler().inlineElement(getProject(), editor, element);
       }
@@ -69,9 +69,9 @@ public class JavaCodeInsightTestUtil {
     fixture.configureByFile(before);
     new WriteCommandAction(fixture.getProject()) {
       @Override
-      protected void run(final Result result) throws Throwable {
+      protected void run(@NotNull final Result result) throws Throwable {
         final Editor editor = fixture.getEditor();
-        final PsiElement element = TargetElementUtilBase.findTargetElement(editor, TARGET_FOR_INLINE_FLAGS);
+        final PsiElement element = TargetElementUtil.findTargetElement(editor, TARGET_FOR_INLINE_FLAGS);
         assert element instanceof PsiMethod : element;
 
         final PsiReference ref = fixture.getFile().findReferenceAt(editor.getCaretModel().getOffset());
@@ -90,9 +90,9 @@ public class JavaCodeInsightTestUtil {
     fixture.configureByFile(before);
     new WriteCommandAction(fixture.getProject()) {
       @Override
-      protected void run(final Result result) throws Throwable {
+      protected void run(@NotNull final Result result) throws Throwable {
         final Editor editor = fixture.getEditor();
-        final PsiElement element = TargetElementUtilBase.findTargetElement(editor, TARGET_FOR_INLINE_FLAGS);
+        final PsiElement element = TargetElementUtil.findTargetElement(editor, TARGET_FOR_INLINE_FLAGS);
         assert element instanceof PsiField : element;
 
         final PsiReference ref = fixture.getFile().findReferenceAt(editor.getCaretModel().getOffset());

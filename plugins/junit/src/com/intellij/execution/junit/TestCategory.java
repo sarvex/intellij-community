@@ -23,6 +23,7 @@ import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.util.JavaParametersUtil;
 import com.intellij.execution.util.ProgramParametersUtil;
 import com.intellij.psi.*;
+import com.intellij.refactoring.listeners.RefactoringElementListener;
 
 /**
 * User: anna
@@ -35,13 +36,14 @@ class TestCategory extends TestPackage {
 
   @Override
   public void checkConfiguration() throws RuntimeConfigurationException {
-    JavaParametersUtil.checkAlternativeJRE(myConfiguration);
-    ProgramParametersUtil.checkWorkingDirectoryExist(myConfiguration, myConfiguration.getProject(), myConfiguration.getConfigurationModule().getModule());
-    final String category = myConfiguration.getPersistentData().getCategory();
+    JavaParametersUtil.checkAlternativeJRE(getConfiguration());
+    ProgramParametersUtil.checkWorkingDirectoryExist(
+      getConfiguration(), getConfiguration().getProject(), getConfiguration().getConfigurationModule().getModule());
+    final String category = getConfiguration().getPersistentData().getCategory();
     if (category == null || category.isEmpty()) {
       throw new RuntimeConfigurationError("Category is not specified");
     }
-    final JavaRunConfigurationModule configurationModule = myConfiguration.getConfigurationModule();
+    final JavaRunConfigurationModule configurationModule = getConfiguration().getConfigurationModule();
     if (getSourceScope() == null) {
       configurationModule.checkForWarning();
     }
@@ -50,7 +52,12 @@ class TestCategory extends TestPackage {
 
   @Override
   protected PsiPackage getPackage(JUnitConfiguration.Data data) throws CantRunException {
-    return JavaPsiFacade.getInstance(myEnvironment.getProject()).findPackage("");
+    return JavaPsiFacade.getInstance(getConfiguration().getProject()).findPackage("");
+  }
+
+  @Override
+  public String suggestActionName() {
+    return "Tests of " + getConfiguration().getPersistentData().getCategory();
   }
 
   @Override
@@ -60,5 +67,10 @@ class TestCategory extends TestPackage {
                                        PsiPackage testPackage,
                                        PsiDirectory testDir) {
     return false;
+  }
+
+  @Override
+  public RefactoringElementListener getListener(final PsiElement element, final JUnitConfiguration configuration) {
+    return RefactoringListeners.getClassOrPackageListener(element, configuration.myCategory);
   }
 }

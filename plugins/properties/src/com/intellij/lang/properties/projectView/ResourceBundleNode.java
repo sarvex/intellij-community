@@ -25,7 +25,9 @@ import com.intellij.ide.projectView.ProjectViewNode;
 import com.intellij.ide.projectView.ViewSettings;
 import com.intellij.ide.projectView.impl.nodes.PsiFileNode;
 import com.intellij.ide.util.treeView.AbstractTreeNode;
+import com.intellij.ide.util.treeView.ValidateableNode;
 import com.intellij.lang.properties.*;
+import com.intellij.lang.properties.ResourceBundle;
 import com.intellij.lang.properties.editor.ResourceBundleAsVirtualFile;
 import com.intellij.lang.properties.psi.PropertiesFile;
 import com.intellij.openapi.fileEditor.FileEditorManager;
@@ -42,7 +44,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-public class ResourceBundleNode extends ProjectViewNode<ResourceBundle>{
+public class ResourceBundleNode extends ProjectViewNode<ResourceBundle> implements ValidateableNode{
   public ResourceBundleNode(Project project, ResourceBundle resourceBundle, final ViewSettings settings) {
     super(project, resourceBundle, settings);
   }
@@ -104,6 +106,16 @@ public class ResourceBundleNode extends ProjectViewNode<ResourceBundle>{
     if (!super.validate()) {
       return false;
     }
-    return Comparing.equal(getValue().getDefaultPropertiesFile().getResourceBundle(), getValue());
+    final ResourceBundle newBundle = getValue().getDefaultPropertiesFile().getResourceBundle();
+    final ResourceBundle currentBundle = getValue();
+    if (!Comparing.equal(newBundle, currentBundle)) {
+      return false;
+    }
+    return !(currentBundle instanceof ResourceBundleImpl) || ((ResourceBundleImpl)currentBundle).isValid();
+  }
+
+  @Override
+  public boolean isValid() {
+    return getValue().getDefaultPropertiesFile().getContainingFile().isValid();
   }
 }

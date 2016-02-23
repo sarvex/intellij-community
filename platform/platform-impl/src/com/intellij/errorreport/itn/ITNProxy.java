@@ -15,6 +15,8 @@
  */
 package com.intellij.errorreport.itn;
 
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
 import com.intellij.diagnostic.DiagnosticBundle;
 import com.intellij.errorreport.bean.ErrorBean;
 import com.intellij.errorreport.error.InternalEAPException;
@@ -32,14 +34,16 @@ import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.updateSettings.impl.UpdateSettings;
+import com.intellij.openapi.util.BuildNumber;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.security.CompositeX509TrustManager;
 import com.intellij.util.Consumer;
 import com.intellij.util.SystemProperties;
-import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.net.NetUtils;
 import com.intellij.util.net.ssl.CertificateUtil;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import javax.net.ssl.*;
 import java.io.*;
@@ -48,14 +52,14 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
-import java.security.cert.CertificateException;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Calendar;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * @author stathik
@@ -66,12 +70,12 @@ public class ITNProxy {
   private static final String NEW_THREAD_POST_URL = "https://ea-report.jetbrains.com/trackerRpc/idea/createScr";
   private static final String ENCODING = "UTF8";
 
-  public static void sendError(Project project,
+  public static void sendError(@Nullable Project project,
                                final String login,
                                final String password,
-                               final ErrorBean error,
-                               final Consumer<Integer> callback,
-                               final Consumer<Exception> errback) {
+                               @NotNull final ErrorBean error,
+                               @NotNull final Consumer<Integer> callback,
+                               @NotNull final Consumer<Exception> errback) {
     if (StringUtil.isEmpty(login)) {
       return;
     }
@@ -97,18 +101,19 @@ public class ITNProxy {
     }
   }
 
+  @NotNull
   public static String getBrowseUrl(int threadId) {
     return NEW_THREAD_VIEW_URL + threadId;
   }
 
   private static SSLContext ourSslContext;
 
-  private static int postNewThread(String login, String password, ErrorBean error) throws Exception {
+  private static int postNewThread(String login, String password, @NotNull ErrorBean error) throws Exception {
     if (ourSslContext == null) {
       ourSslContext = initContext();
     }
 
-    Map<String, String> params = createParameters(login, password, error);
+    Multimap<String, String> params = createParameters(login, password, error);
     HttpURLConnection connection = post(new URL(NEW_THREAD_POST_URL), join(params));
     int responseCode = connection.getResponseCode();
     if (responseCode != HttpURLConnection.HTTP_OK) {
@@ -143,8 +148,9 @@ public class ITNProxy {
     }
   }
 
-  private static Map<String, String> createParameters(String login, String password, ErrorBean error) {
-    Map<String, String> params = ContainerUtil.newLinkedHashMap(40);
+  @NotNull
+  private static Multimap<String, String> createParameters(String login, String password, @NotNull ErrorBean error) {
+    Multimap<String, String> params = ArrayListMultimap.create(40, 1);
 
     params.put("protocol.version", "1");
 
@@ -170,6 +176,14 @@ public class ITNProxy {
     params.put("app.build.date.release", format(appInfo.getMajorReleaseBuildDate()));
     params.put("app.compilation.timestamp", IdeaLogger.getOurCompilationTimestamp());
 
+    BuildNumber build = appInfo.getBuild();
+    String buildNumberWithAllDetails = build.asStringWithAllDetails();
+    params.put("app.product.code", build.getProductCode());
+    if (StringUtil.startsWith(buildNumberWithAllDetails, build.getProductCode() + "-")) {
+      buildNumberWithAllDetails = buildNumberWithAllDetails.substring(build.getProductCode().length() + 1);
+    }
+    params.put("app.build.number", buildNumberWithAllDetails);
+
     UpdateSettings updateSettings = UpdateSettings.getInstance();
     params.put("update.channel.status", updateSettings.getSelectedChannelStatus().getCode());
     params.put("update.ignored.builds", StringUtil.join(updateSettings.getIgnoredBuildNumbers(), ","));
@@ -194,13 +208,14 @@ public class ITNProxy {
     return params;
   }
 
-  private static String format(Calendar calendar) {
+  @Nullable
+  private static String format(@Nullable Calendar calendar) {
     return calendar == null ?  null : Long.toString(calendar.getTime().getTime());
   }
 
-  private static byte[] join(Map<String, String> params) throws UnsupportedEncodingException {
+  private static byte[] join(@NotNull Multimap<String, String> params) throws UnsupportedEncodingException {
     StringBuilder builder = new StringBuilder();
-    for (Map.Entry<String, String> param : params.entrySet()) {
+    for (Map.Entry<String, String> param : params.entries()) {
       if (StringUtil.isEmpty(param.getKey())) {
         throw new IllegalArgumentException(param.toString());
       }
@@ -214,12 +229,13 @@ public class ITNProxy {
     return builder.toString().getBytes(ENCODING);
   }
 
-  private static HttpURLConnection post(URL url, byte[] bytes) throws IOException {
+  @NotNull
+  private static HttpURLConnection post(@NotNull URL url, @NotNull byte[] bytes) throws IOException {
     HttpsURLConnection connection = (HttpsURLConnection)url.openConnection();
 
     connection.setSSLSocketFactory(ourSslContext.getSocketFactory());
     if (!NetUtils.isSniEnabled()) {
-      connection.setHostnameVerifier(new EaHostnameVerifier(url.getHost(), "ftp.intellij.net"));
+      connection.setHostnameVerifier(new EaHostnameVerifier());
     }
 
     connection.setRequestMethod("POST");
@@ -258,66 +274,36 @@ public class ITNProxy {
   }
 
   private static class EaHostnameVerifier implements HostnameVerifier {
-    private final Set<String> myAllowedHosts;
-
-    public EaHostnameVerifier(@NotNull String... allowedHosts) {
-      myAllowedHosts = ContainerUtil.newHashSet(allowedHosts);
-    }
-
     @Override
-    public boolean verify(String hostname, SSLSession session) {
+    public boolean verify(String hostname, @NotNull SSLSession session) {
       try {
         Certificate[] certificates = session.getPeerCertificates();
-        if (certificates.length > 0) {
+        if (certificates.length > 1) {
           Certificate certificate = certificates[0];
           if (certificate instanceof X509Certificate) {
             String cn = CertificateUtil.getCommonName((X509Certificate)certificate);
-            return myAllowedHosts.contains(cn);
+            if (cn.endsWith(".jetbrains.com") || cn.endsWith(".intellij.net")) {
+              return true;
+            }
+          }
+
+          Certificate ca = certificates[certificates.length - 1];
+          if (ca instanceof X509Certificate) {
+            String cn = CertificateUtil.getCommonName((X509Certificate)ca);
+            byte[] digest = MessageDigest.getInstance("SHA-1").digest(ca.getEncoded());
+            StringBuilder fp = new StringBuilder(2 * digest.length);
+            for (byte b : digest) fp.append(Integer.toHexString(b & 0xFF));
+            if (JB_CA_CN.equals(cn) && JB_CA_FP.equals(fp.toString())) {
+              return true;
+            }
           }
         }
       }
       catch (SSLPeerUnverifiedException ignored) { }
+      catch (NoSuchAlgorithmException ignored) { }
+      catch (CertificateEncodingException ignored) { }
+
       return false;
-    }
-  }
-
-  private static class CompositeX509TrustManager implements X509TrustManager {
-    private final List<X509TrustManager> myManagers = ContainerUtil.newArrayList();
-
-    public CompositeX509TrustManager(TrustManager[]... managerSets) {
-      for (TrustManager[] set : managerSets) {
-        for (TrustManager manager : set) {
-          if (manager instanceof X509TrustManager) {
-            myManagers.add((X509TrustManager)manager);
-          }
-        }
-      }
-    }
-
-    @Override
-    public void checkClientTrusted(X509Certificate[] certificates, String s) throws CertificateException {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void checkServerTrusted(X509Certificate[] certificates, String s) throws CertificateException {
-      for (X509TrustManager manager : myManagers) {
-        try {
-          manager.checkServerTrusted(certificates, s);
-          return;
-        }
-        catch (CertificateException ignored) { }
-      }
-      throw new CertificateException("No trusting managers found for " + s);
-    }
-
-    @Override
-    public X509Certificate[] getAcceptedIssuers() {
-      List<X509Certificate> result = ContainerUtil.newArrayList();
-      for (X509TrustManager manager : myManagers) {
-        ContainerUtil.addAll(result, manager.getAcceptedIssuers());
-      }
-      return result.toArray(new X509Certificate[result.size()]);
     }
   }
 
@@ -355,4 +341,7 @@ public class ITNProxy {
     "wg13S9Hjy3VYq8y0krRYLEGLctd4vnxWGzJzUNSnqezwHZRl4v4Ejp3dQUZP+5sY\n" +
     "1F81Vj1G264YnZAcWp5x3GTI4K6+k9Xx3pwUPcKOYdlpZQ==\n" +
     "-----END CERTIFICATE-----\n";
+
+  private static final String JB_CA_CN = "JetBrains Enterprise CA";
+  private static final String JB_CA_FP = "604d3c703a13a3be2d452f14442be11b37e186f";
 }

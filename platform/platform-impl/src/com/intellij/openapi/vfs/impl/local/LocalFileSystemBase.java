@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,16 +32,17 @@ import com.intellij.openapi.vfs.newvfs.RefreshQueue;
 import com.intellij.openapi.vfs.newvfs.VfsImplUtil;
 import com.intellij.openapi.vfs.newvfs.impl.FakeVirtualFile;
 import com.intellij.util.ArrayUtil;
+import com.intellij.util.PathUtilRt;
 import com.intellij.util.Processor;
 import com.intellij.util.ThrowableConsumer;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.io.SafeFileOutputStream;
-import com.intellij.util.io.fs.IFile;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -75,16 +76,8 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
 
   @Override
   public VirtualFile findFileByIoFile(@NotNull File file) {
-    String path = file.getAbsolutePath();
-    return findFileByPath(path.replace(File.separatorChar, '/'));
-  }
-
-  @Override
-  @Nullable
-  public VirtualFile findFileByIoFile(@NotNull final IFile file) {
-    String path = file.getPath();
-    if (path == null) return null;
-    return findFileByPath(path.replace(File.separatorChar, '/'));
+    String path = FileUtil.toSystemIndependentName(file.getAbsolutePath());
+    return findFileByPath(path);
   }
 
   @NotNull
@@ -151,12 +144,6 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
   }
 
   @Override
-  public boolean isSpecialFile(@NotNull final VirtualFile file) {
-    final FileAttributes attributes = getAttributes(file);
-    return attributes != null && attributes.isSpecial();
-  }
-
-  @Override
   @NotNull
   public String[] list(@NotNull final VirtualFile file) {
     if (file.getParent() == null) {
@@ -172,9 +159,7 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
         final String[] names = new String[roots.length];
         for (int i = 0; i < names.length; i++) {
           String name = roots[i].getPath();
-          if (name.endsWith(File.separator)) {
-            name = name.substring(0, name.length() - File.separator.length());
-          }
+          name = StringUtil.trimEnd(name, File.separator);
           names[i] = name;
         }
         return names;
@@ -212,13 +197,11 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
         path = path.substring(1);  // hack over new File(path).toURI().toURL().getFile()
       }
 
-      if (path.contains("~")) {
-        try {
-          path = new File(FileUtil.toSystemDependentName(path)).getCanonicalPath();
-        }
-        catch (IOException e) {
-          return null;
-        }
+      try {
+        path = FileUtil.resolveShortWindowsName(path);
+      }
+      catch (IOException e) {
+        return null;
       }
     }
 
@@ -230,7 +213,7 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
     return FileUtil.normalize(path);
   }
 
-  private static boolean isAbsoluteFileOrDriveLetter(File file) {
+  private static boolean isAbsoluteFileOrDriveLetter(@NotNull File file) {
     String path = file.getPath();
     if (SystemInfo.isWindows && path.length() == 2 && path.charAt(1) == ':') {
       // just drive letter.
@@ -242,16 +225,8 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
 
   @Override
   public VirtualFile refreshAndFindFileByIoFile(@NotNull File file) {
-    String path = file.getAbsolutePath();
-    return refreshAndFindFileByPath(path.replace(File.separatorChar, '/'));
-  }
-
-  @Override
-  @Nullable
-  public VirtualFile refreshAndFindFileByIoFile(@NotNull final IFile ioFile) {
-    String path = ioFile.getPath();
-    if (path == null) return null;
-    return refreshAndFindFileByPath(path.replace(File.separatorChar, '/'));
+    String path = FileUtil.toSystemIndependentName(file.getAbsolutePath());
+    return refreshAndFindFileByPath(path);
   }
 
   @Override
@@ -378,7 +353,7 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
   @Override
   @NotNull
   public VirtualFile createChildDirectory(Object requestor, @NotNull final VirtualFile parent, @NotNull final String dir) throws IOException {
-    if (!VirtualFile.isValidName(dir)) {
+    if (!isValidName(dir)) {
       throw new IOException(VfsBundle.message("directory.invalid.name.error", dir));
     }
 
@@ -414,7 +389,7 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
   @NotNull
   @Override
   public VirtualFile createChildFile(Object requestor, @NotNull final VirtualFile parent, @NotNull final String file) throws IOException {
-    if (!VirtualFile.isValidName(file)) {
+    if (!isValidName(file)) {
       throw new IOException(VfsBundle.message("file.invalid.name.error", file));
     }
 
@@ -474,6 +449,11 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
   }
 
   @Override
+  public boolean isValidName(@NotNull String name) {
+    return PathUtilRt.isValidFileName(name, false);
+  }
+
+  @Override
   @NotNull
   public InputStream getInputStream(@NotNull final VirtualFile file) throws IOException {
     return new BufferedInputStream(new FileInputStream(convertToIOFileAndCheck(file)));
@@ -482,17 +462,35 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
   @Override
   @NotNull
   public byte[] contentsToByteArray(@NotNull final VirtualFile file) throws IOException {
-    final FileInputStream stream = new FileInputStream(convertToIOFileAndCheck(file));
+    final InputStream stream = new FileInputStream(convertToIOFileAndCheck(file));
     try {
       long l = file.getLength();
       if (l > Integer.MAX_VALUE) throw new IOException("File is too large: " + l + ", " + file);
       final int length = (int)l;
       if (length < 0) throw new IOException("Invalid file length: " + length + ", " + file);
-      return FileUtil.loadBytes(stream, length);
+      // io_util.c#readBytes allocates custom native stack buffer for io operation with malloc if io request > 8K
+      // so let's do buffered requests with buffer size 8192 that will use stack allocated buffer
+      return loadBytes(length <= 8192 ? stream : new BufferedInputStream(stream), length);
     }
     finally {
       stream.close();
     }
+  }
+
+  @NotNull
+  private static byte[] loadBytes(@NotNull InputStream stream, int length) throws IOException {
+    byte[] bytes = new byte[length];
+    int count = 0;
+    while (count < length) {
+      int n = stream.read(bytes, count, length - count);
+      if (n <= 0) break;
+      count += n;
+    }
+    if (count < length) {
+      // this may happen with encrypted files, see IDEA-143773
+      return Arrays.copyOf(bytes, count);
+    }
+    return bytes;
   }
 
   @Override
@@ -537,7 +535,7 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
     }
 
     File ioFile = convertToIOFile(file);
-    if (!ioFile.exists()) {
+    if (FileSystemUtil.getAttributes(ioFile) == null) {
       throw new FileNotFoundException(VfsBundle.message("file.not.exist.error", ioFile.getPath()));
     }
     File ioParent = convertToIOFile(newParent);
@@ -565,7 +563,7 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
 
   @Override
   public void renameFile(Object requestor, @NotNull final VirtualFile file, @NotNull final String newName) throws IOException {
-    if (!VirtualFile.isValidName(newName)) {
+    if (!isValidName(newName)) {
       throw new IOException(VfsBundle.message("file.invalid.name.error", newName));
     }
 
@@ -592,7 +590,7 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
     }
 
     if (!auxRename(file, newName)) {
-      if (!ioFile.renameTo(ioTarget)) {
+      if (!FileUtil.rename(ioFile, newName)) {
         throw new IOException(VfsBundle.message("rename.failed.error", ioFile.getPath(), newName));
       }
     }
@@ -611,7 +609,7 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
                               @NotNull final VirtualFile file,
                               @NotNull final VirtualFile newParent,
                               @NotNull final String copyName) throws IOException {
-    if (!VirtualFile.isValidName(copyName)) {
+    if (!isValidName(copyName)) {
       throw new IOException(VfsBundle.message("file.invalid.name.error", copyName));
     }
 
@@ -644,12 +642,7 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
     if (!auxCopy(file, newParent, copyName)) {
       try {
         File ioFile = convertToIOFile(file);
-        if (attributes.isDirectory()) {
-          FileUtil.copyDir(ioFile, ioTarget);
-        }
-        else {
-          FileUtil.copy(ioFile, ioTarget);
-        }
+        FileUtil.copyFileOrDir(ioFile, ioTarget, attributes.isDirectory());
       }
       catch (IOException e) {
         FileUtil.delete(ioTarget);
@@ -676,11 +669,11 @@ public abstract class LocalFileSystemBase extends LocalFileSystem {
   }
 
   @Override
-  public void setWritable(@NotNull final VirtualFile file, final boolean writableFlag) throws IOException {
-    FileUtil.setReadOnlyAttribute(file.getPath(), !writableFlag);
-    final File ioFile = convertToIOFile(file);
-    if (ioFile.canWrite() != writableFlag) {
-      throw new IOException("Failed to change read-only flag for " + ioFile.getPath());
+  public void setWritable(@NotNull VirtualFile file, boolean writableFlag) throws IOException {
+    String path = FileUtil.toSystemDependentName(file.getPath());
+    FileUtil.setReadOnlyAttribute(path, !writableFlag);
+    if (FileUtil.canWrite(path) != writableFlag) {
+      throw new IOException("Failed to change read-only flag for " + path);
     }
   }
 

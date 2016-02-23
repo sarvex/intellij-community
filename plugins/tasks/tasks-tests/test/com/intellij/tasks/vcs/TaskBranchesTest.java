@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -206,6 +206,17 @@ public abstract class TaskBranchesTest extends PlatformTestCase {
     assertEquals(2, getNumberOfBranches(repository));
   }
 
+  public void testSuggestBranchName() {
+    initRepositories("community", "idea");
+    VcsTaskHandler[] handlers = VcsTaskHandler.getAllHandlers(getProject());
+    assertEquals(1, handlers.length);
+    VcsTaskHandler handler = handlers[0];
+    String startName = "-Hello, this is long name with : and $";
+    assertFalse(handler.isBranchNameValid(startName));
+    String cleanUpBranchName = handler.cleanUpBranchName(startName);
+    assertTrue(handler.isBranchNameValid(cleanUpBranchName));
+  }
+
   public void _testCurrentTasks() throws Exception {
     initRepositories("foo", "bar");
     VcsTaskHandler handler = VcsTaskHandler.getAllHandlers(getProject())[0];
@@ -238,9 +249,7 @@ public abstract class TaskBranchesTest extends PlatformTestCase {
     super.setUp();
     myTaskManager = (TaskManagerImpl)TaskManager.getManager(getProject());
     myChangeListManager = (ChangeListManagerImpl)ChangeListManager.getInstance(getProject());
-    myChangeListManager.projectOpened();
     myDirtyScopeManager = ((VcsDirtyScopeManagerImpl)VcsDirtyScopeManager.getInstance(getProject()));
-    myDirtyScopeManager.projectOpened();
   }
 
   @NotNull

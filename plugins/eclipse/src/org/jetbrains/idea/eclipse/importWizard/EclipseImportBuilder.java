@@ -31,6 +31,7 @@ import com.intellij.openapi.module.StdModuleTypes;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.impl.ProjectMacrosUtil;
 import com.intellij.openapi.roots.ModifiableRootModel;
@@ -396,16 +397,12 @@ public class EclipseImportBuilder extends ProjectImportBuilder<String> implement
         descriptor.setTitle(getTitle());
         final VirtualFile selectedFile = FileChooser.chooseFile(descriptor, project, project.getBaseDir());
         if (selectedFile != null) {
-          ApplicationManager.getApplication().runWriteAction(new Runnable() {
-            public void run() {
-              try {
-                EclipseUserLibrariesHelper.readProjectLibrariesContent(new File(selectedFile.getPath()), project, unknownLibraries);
-              }
-              catch (Exception e) {
-                LOG.error(e);
-              }
-            }
-          });
+          try {
+            EclipseUserLibrariesHelper.readProjectLibrariesContent(selectedFile, project, unknownLibraries);
+          }
+          catch (Exception e) {
+            LOG.error(e);
+          }
         }
       }
     }
@@ -422,10 +419,10 @@ public class EclipseImportBuilder extends ProjectImportBuilder<String> implement
     if (module2NatureNames.size() == 0) {
       return;
     }
-    ApplicationManager.getApplication().invokeLater(new Runnable() {
+    StartupManager.getInstance(project).runWhenProjectIsInitialized(new Runnable() {
       @Override
       public void run() {
-        StartupManager.getInstance(project).runWhenProjectIsInitialized(new Runnable() {
+        DumbService.getInstance(project).smartInvokeLater(new Runnable() {
           @Override
           public void run() {
             for (EclipseNatureImporter importer : EclipseNatureImporter.EP_NAME.getExtensions()) {

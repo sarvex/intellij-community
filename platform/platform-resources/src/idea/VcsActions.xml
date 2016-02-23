@@ -1,6 +1,8 @@
-<component>
+<idea-plugin>
   <actions>
     <action id="Vcs.ShowTabbedFileHistory" class="com.intellij.openapi.vcs.actions.TabbedShowHistoryAction"
+            icon="AllIcons.Vcs.History"/>
+    <action id="Vcs.ShowHistoryForRevision" class="com.intellij.openapi.vcs.actions.TabbedShowHistoryForRevisionAction"
             icon="AllIcons.Vcs.History"/>
 
     <action id="CheckinProject" class="com.intellij.openapi.vcs.actions.CommonCheckinProjectAction" icon="AllIcons.Actions.Commit">
@@ -11,6 +13,10 @@
     <action id="CheckStatusForFiles" class="com.intellij.openapi.vcs.update.CommonStatusFileOrDirectoryAction"/>
     <action id="IntegrateFiles" class="com.intellij.openapi.vcs.update.CommonIntegrateFileOrDirectoryAction"/>
     <action id="Annotate" class="com.intellij.openapi.vcs.actions.AnnotateToggleAction"/>
+    <action id="AnnotateDiffViewer" class="com.intellij.openapi.vcs.actions.AnnotateDiffViewerAction">
+      <add-to-group group-id="Diff.EditorPopupMenu"/>
+      <add-to-group group-id="Diff.EditorGutterPopupMenu"/>
+    </action>
     <action id="Show.Current.Revision" class="com.intellij.openapi.vcs.actions.ShowBaseRevisionAction" text="Show Current Revision"/>
     <action id="Compare.SameVersion" class="com.intellij.openapi.vcs.actions.CompareWithTheSameVersionAction" icon="AllIcons.Actions.Diff"/>
     <action id="Compare.LastVersion" class="com.intellij.openapi.vcs.actions.CompareWithLastVersion"/>
@@ -47,7 +53,6 @@
         <action id="Vcs.QuickListPopupAction"
                 class = "com.intellij.openapi.vcs.actions.VcsQuickListPopupAction"
                 text = "VCS Operations Popup..." description="Context aware popup with list of commonly used VCS actions"/>
-        <action id="Vcs.ChangesView" class="com.intellij.openapi.vcs.changes.ShowChangesViewAction"/>
         <reference ref="CheckinProject"/>
         <action id="Vcs.UpdateProject" class="com.intellij.openapi.vcs.update.CommonUpdateProjectAction" icon="AllIcons.Actions.CheckOut">
           <keyboard-shortcut first-keystroke="control T" keymap="$default"/>
@@ -88,7 +93,7 @@
       <action id="ChangesView.Move" class="com.intellij.openapi.vcs.changes.actions.MoveChangesToAnotherListAction"
               icon="AllIcons.Actions.MoveToAnotherChangelist"/>
       <action id="ChangesView.Diff" class="com.intellij.openapi.vcs.changes.actions.diff.ShowDiffAction"
-              icon="AllIcons.Actions.Diff"/>
+              icon="AllIcons.Actions.Diff" use-shortcut-of="Diff.ShowDiff"/>
     </group>
 
     <group id="AlienCommitChangesDialog.AdditionalActions"/>
@@ -131,13 +136,12 @@
       <reference ref="ChangesView.Ignore"/>
     </group>
 
-    <group id="ShelvedChangesPopupMenu">
-      <action id="ShelvedChanges.Unshelve" class="com.intellij.openapi.vcs.changes.shelf.UnshelveChangesAction"/>
+    <group id="ShelvedChangesPopupMenu" popup="true">
       <action id="ShelveChanges.UnshelveWithDialog" class="com.intellij.openapi.vcs.changes.shelf.UnshelveWithDialogAction"
               text="Unshelve..." description="Correct paths where to apply patches and unshelve"/>
       <action id="ShelvedChanges.Restore" class="com.intellij.openapi.vcs.changes.shelf.RestoreShelvedChange"/>
       <action id="ShelvedChanges.Diff" class="com.intellij.openapi.vcs.changes.shelf.DiffShelvedChangesAction"
-          icon="AllIcons.Actions.Diff"/>
+          icon="AllIcons.Actions.Diff" use-shortcut-of="Diff.ShowDiff"/>
       <action id="ChangesView.CreatePatchFromChanges" class="com.intellij.openapi.vcs.changes.actions.CreatePatchFromChangesAction"
               icon="AllIcons.Actions.CreatePatch"/>
       <action id="ShelvedChanges.ImportPatches" class="com.intellij.openapi.vcs.changes.shelf.ImportIntoShelfAction"/>
@@ -146,17 +150,18 @@
               use-shortcut-of="RenameElement"/>
       <reference ref="$Delete"/>
       <separator/>
-      <action id="ShelvedChanges.ShowHideDeleted" class="com.intellij.openapi.vcs.changes.shelf.ShowHideRecycledAction" />
+      <action id="ShelvedChanges.ShowHideDeleted" class="com.intellij.openapi.vcs.changes.shelf.ShowHideRecycledAction"
+              description="Show/Hide Already Unshelved"/>
       <action id="ShelvedChanges.DeleteDeleted" class="com.intellij.openapi.vcs.changes.shelf.DeleteAlreadyUnshelvedAction"/>
     </group>
 
     <group id="ShelvedChangesToolbar">
       <reference ref="ShelvedChanges.Diff"/>
       <reference ref="ChangesView.CreatePatchFromChanges"/>
+      <reference ref="ShelvedChanges.ShowHideDeleted" />
     </group>
 
     <group id="ShelvedChangesToolbarGear" popup="true" icon="AllIcons.General.SecondaryGroup">
-      <reference ref="ShelvedChanges.Unshelve"/>
       <reference ref="ShelveChanges.UnshelveWithDialog"/>
       <reference ref="ShelvedChanges.Restore"/>
       <reference ref="ShelvedChanges.ImportPatches"/>
@@ -164,7 +169,6 @@
       <reference ref="ShelvedChanges.Rename" />
       <reference ref="$Delete" />
       <separator/>
-      <reference ref="ShelvedChanges.ShowHideDeleted" />
       <reference ref="ShelvedChanges.DeleteDeleted" />
     </group>
 
@@ -185,6 +189,7 @@
     </group>
 
     <group id="RepositoryChangesBrowserToolbar">
+      <reference ref="Vcs.ShowHistoryForRevision"/>
     </group>
 
     <group id="IncomingChangesToolbar">
@@ -229,7 +234,7 @@
       <reference ref="EditSource"/>
       <reference ref="$Delete"/>
       <action id="Diff.UpdatedFiles" class="com.intellij.openapi.vcs.update.ShowUpdatedDiffAction"
-              use-shortcut-of="CompareTwoFiles" icon="AllIcons.Actions.Diff"/>
+              use-shortcut-of="Diff.ShowDiff" icon="AllIcons.Actions.Diff"/>
     </group>
 
     <group id="Vcs.MessageActionGroup">
@@ -283,7 +288,6 @@
 
     <group id="Shelve.KeymapGroup" text="Shelve">
       <reference ref="ChangesView.Shelve"/>
-      <reference ref="ShelvedChanges.Unshelve"/>
       <reference ref="ShelveChanges.UnshelveWithDialog"/>
       <reference ref="ShelvedChanges.Restore"/>
       <reference ref="ShelvedChanges.ImportPatches"/>
@@ -321,7 +325,6 @@
       <separator/>
       <reference ref="Start.Use.Vcs"/>
       <reference ref="Vcs.QuickListPopupAction"/>
-      <reference ref="Vcs.ChangesView"/>
       <reference ref="Vcs.UpdateProject"/>
       <reference ref="Vcs.IntegrateProject"/>
       <reference ref="Vcs.RefreshStatuses"/>
@@ -377,5 +380,11 @@
 
       <add-to-group group-id="Diff.KeymapGroup"/>
     </group>
+
+    <group id="Vcs.Show.Toolwindow.Tab">
+      <add-to-group group-id="VcsGeneral.KeymapGroup"/>
+      <action id="Vcs.Show.Local.Changes" class="com.intellij.vcs.VcsShowLocalChangesAction" text="Show Local Changes"/>
+      <action id="Vcs.Show.Shelf" class="com.intellij.vcs.VcsShowShelfAction" text="Show Shelf"/>
+    </group>
   </actions>
-</component>
+</idea-plugin>

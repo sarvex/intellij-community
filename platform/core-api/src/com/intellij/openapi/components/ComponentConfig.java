@@ -22,8 +22,8 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.xmlb.annotations.MapAnnotation;
 import com.intellij.util.xmlb.annotations.Property;
 import com.intellij.util.xmlb.annotations.Transient;
+import org.jetbrains.annotations.Nullable;
 
-import java.util.HashMap;
 import java.util.Map;
 
 public class ComponentConfig {
@@ -39,7 +39,8 @@ public class ComponentConfig {
 
   @Property(surroundWithTag = false)
   @MapAnnotation(surroundWithTag = false, entryTagName = "option", keyAttributeName = "name", valueAttributeName = "value")
-  public Map<String,String> options = new HashMap<String, String>();
+  @Nullable
+  public Map<String, String> options;
 
   @Transient
   public PluginDescriptor pluginDescriptor;
@@ -100,5 +101,17 @@ public class ComponentConfig {
 
   public void setLoadForDefaultProject(boolean loadForDefaultProject) {
     this.loadForDefaultProject = loadForDefaultProject;
+  }
+
+  @Override
+  public String toString() {
+    return "ComponentConfig{" +
+           "implementationClass='" + implementationClass + '\'' +
+           ", interfaceClass='" + interfaceClass + '\'' +
+           ", headlessImplementationClass='" + headlessImplementationClass + '\'' +
+           ", loadForDefaultProject=" + loadForDefaultProject +
+           ", options=" + options +
+           ", pluginDescriptor=" + pluginDescriptor +
+           '}';
   }
 }

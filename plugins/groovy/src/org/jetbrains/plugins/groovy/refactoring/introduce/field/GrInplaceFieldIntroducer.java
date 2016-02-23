@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -252,8 +252,11 @@ public class GrInplaceFieldIntroducer extends GrAbstractInplaceIntroducer<GrIntr
   }
 
   private EnumSet<GrIntroduceFieldSettings.Init> getApplicableInitPlaces() {
-    GrIntroduceContext context = getContext();
-    PsiElement[] occurrences = getOccurrences();
+    return getApplicableInitPlaces(getContext(), isReplaceAllOccurrences());
+  }
+
+  public static EnumSet<GrIntroduceFieldSettings.Init> getApplicableInitPlaces(GrIntroduceContext context,
+                                                                               boolean replaceAllOccurrences) {
     EnumSet<GrIntroduceFieldSettings.Init> result = EnumSet.noneOf(GrIntroduceFieldSettings.Init.class);
 
     if (context.getExpression() != null ||
@@ -268,10 +271,11 @@ public class GrInplaceFieldIntroducer extends GrAbstractInplaceIntroducer<GrIntr
 
     PsiElement scope = context.getScope();
 
-    if (isReplaceAllOccurrences()) {
+    if (replaceAllOccurrences || context.getExpression() != null) {
+      PsiElement[] occurrences = replaceAllOccurrences ? context.getOccurrences() : new PsiElement[]{context.getExpression()};
       PsiElement parent = PsiTreeUtil.findCommonParent(occurrences);
       PsiElement container = GrIntroduceHandlerBase.getEnclosingContainer(parent);
-      if (container != null) {
+      if (container != null && PsiTreeUtil.isAncestor(scope, container, false)) {
         PsiElement anchor = GrIntroduceHandlerBase.findAnchor(occurrences, container);
         if (anchor != null) {
           result.add(GrIntroduceFieldSettings.Init.CUR_METHOD);
@@ -305,7 +309,7 @@ public class GrInplaceFieldIntroducer extends GrAbstractInplaceIntroducer<GrIntr
         public void actionPerformed(ActionEvent e) {
           new WriteCommandAction(myProject, getCommandName(), getCommandName()) {
             @Override
-            protected void run(Result result) throws Throwable {
+            protected void run(@NotNull Result result) throws Throwable {
               PsiDocumentManager.getInstance(myProject).commitDocument(myEditor.getDocument());
               final GrVariable variable = getVariable();
               if (variable != null) {

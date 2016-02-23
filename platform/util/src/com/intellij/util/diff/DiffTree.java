@@ -17,6 +17,7 @@ package com.intellij.util.diff;
 
 import com.intellij.openapi.util.Ref;
 import com.intellij.util.ThreeState;
+import com.intellij.util.text.CharArrayUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
@@ -33,21 +34,31 @@ public class DiffTree<OT, NT> {
   private final ShallowNodeComparator<OT, NT> myComparator;
   private final List<Ref<OT[]>> myOldChildrenLists = new ArrayList<Ref<OT[]>>();
   private final List<Ref<NT[]>> myNewChildrenLists = new ArrayList<Ref<NT[]>>();
+  private final CharSequence myOldText;
+  private final CharSequence myNewText;
+  private final int myOldTreeStart;
+  private final int myNewTreeStart;
 
   private DiffTree(@NotNull FlyweightCapableTreeStructure<OT> oldTree,
                    @NotNull FlyweightCapableTreeStructure<NT> newTree,
-                   @NotNull ShallowNodeComparator<OT, NT> comparator) {
+                   @NotNull ShallowNodeComparator<OT, NT> comparator,
+                   @NotNull CharSequence oldText) {
     myOldTree = oldTree;
     myNewTree = newTree;
     myComparator = comparator;
+    myOldText = oldText;
+    myOldTreeStart = oldTree.getStartOffset(oldTree.getRoot());
+    myNewText = newTree.toString(newTree.getRoot());
+    myNewTreeStart = newTree.getStartOffset(newTree.getRoot());
   }
 
   public static <OT, NT> void diff(@NotNull FlyweightCapableTreeStructure<OT> oldTree,
                                    @NotNull FlyweightCapableTreeStructure<NT> newTree,
                                    @NotNull ShallowNodeComparator<OT, NT> comparator,
-                                   @NotNull DiffTreeChangeBuilder<OT, NT> consumer) {
-    final DiffTree<OT, NT> tree = new DiffTree<OT, NT>(oldTree, newTree, comparator);
-    tree.build(oldTree.getRoot(), newTree.getRoot(), 0, Integer.MAX_VALUE, consumer);
+                                   @NotNull DiffTreeChangeBuilder<OT, NT> consumer,
+                                   @NotNull CharSequence oldText) {
+    final DiffTree<OT, NT> tree = new DiffTree<OT, NT>(oldTree, newTree, comparator, oldText);
+    tree.build(oldTree.getRoot(), newTree.getRoot(), 0, consumer);
   }
 
   private enum CompareResult {
@@ -80,9 +91,7 @@ public class DiffTree<OT, NT> {
   };
 
   @NotNull
-  private CompareResult build(@NotNull OT oldN, @NotNull NT newN, int level, int maxLevel, @NotNull DiffTreeChangeBuilder<OT, NT> consumer) {
-    if (level == maxLevel) return CompareResult.NOT_EQUAL; // too deep, abort
-
+  private CompareResult build(@NotNull OT oldN, @NotNull NT newN, int level, @NotNull DiffTreeChangeBuilder<OT, NT> consumer) {
     OT oldNode = myOldTree.prepareForGetChildren(oldN);
     NT newNode = myNewTree.prepareForGetChildren(newN);
 
@@ -117,84 +126,84 @@ public class DiffTree<OT, NT> {
       final ShallowNodeComparator<OT, NT> comparator = myComparator;
 
       int minSize = Math.min(oldChildrenSize, newChildrenSize);
-      int newMaxLevel = Math.min(maxLevel, level+4); // try not to descend recursively too deep
-      int suffixLength = match(oldChildren, oldChildrenSize - 1, newChildren, newChildrenSize - 1, level, -1, minSize, newMaxLevel);
-      int prefixLength = oldChildrenSize == 1 && newChildrenSize == 1 ? 0 : match(oldChildren, 0, newChildren, 0, level, 1, minSize-suffixLength, newMaxLevel);
+      int suffixLength = match(oldChildren, oldChildrenSize - 1, newChildren, newChildrenSize - 1, level, -1, minSize);
+      // for equal size old and new children we have to compare one element less because it was already checked in (unsuccessful) suffix match
+      int maxPrefixLength = minSize - suffixLength - (oldChildrenSize == newChildrenSize && suffixLength < minSize ? 1 : 0);
+      int prefixLength = match(oldChildren, 0, newChildren, 0, level, 1, maxPrefixLength);
 
       if (oldChildrenSize == newChildrenSize && suffixLength + prefixLength == oldChildrenSize) {
         result = CompareResult.EQUAL;
       }
-      else if (consumer == emptyConsumer()){
+      else if (consumer == emptyConsumer()) {
         result = CompareResult.NOT_EQUAL;
       }
       else {
-        int oldIndex = oldChildrenSize - suffixLength - 1;
-        int newIndex = newChildrenSize - suffixLength - 1;
-        while (oldIndex >= prefixLength || newIndex >= prefixLength) {
-          OT oldChild1 = oldIndex >= prefixLength ? oldChildren[oldIndex] : null;
-          OT oldChild2 = oldIndex >= prefixLength + 1 ? oldChildren[oldIndex - 1] : null;
-          OT oldChild3 = oldIndex >= prefixLength + 2 ? oldChildren[oldIndex - 2] : null;
-          NT newChild1 = newIndex >= prefixLength ? newChildren[newIndex] : null;
-          NT newChild2 = newIndex >= prefixLength + 1 ? newChildren[newIndex - 1] : null;
-          NT newChild3 = newIndex >= prefixLength + 2 ? newChildren[newIndex - 2] : null;
+        int oldIndex = prefixLength;
+        int newIndex = prefixLength;
+        while (oldIndex < oldChildrenSize - suffixLength || newIndex < newChildrenSize - suffixLength) {
+          OT oldChild1 = oldIndex < oldChildrenSize - suffixLength ? oldChildren[oldIndex] : null;
+          OT oldChild2 = oldIndex < oldChildrenSize - suffixLength - 1 ? oldChildren[oldIndex + 1] : null;
+          OT oldChild3 = oldIndex < oldChildrenSize - suffixLength - 2 ? oldChildren[oldIndex + 2] : null;
+          NT newChild1 = newIndex < newChildrenSize - suffixLength ? newChildren[newIndex] : null;
+          NT newChild2 = newIndex < newChildrenSize - suffixLength - 1 ? newChildren[newIndex + 1] : null;
+          NT newChild3 = newIndex < newChildrenSize - suffixLength - 2 ? newChildren[newIndex + 2] : null;
 
           CompareResult c11 = looksEqual(comparator, oldChild1, newChild1);
           if (c11 == CompareResult.EQUAL || c11 == CompareResult.DRILL_DOWN_NEEDED) {
             if (c11 == CompareResult.DRILL_DOWN_NEEDED) {
-              build(oldChild1, newChild1, level + 1, maxLevel, consumer);
+              build(oldChild1, newChild1, level + 1, consumer);
             }
-            oldIndex--;
-            newIndex--;
+            oldIndex++;
+            newIndex++;
             continue;
           }
           if (c11 == CompareResult.TYPE_ONLY) {
             CompareResult c21 = looksEqual(comparator, oldChild2, newChild1);
             if (c21 == CompareResult.EQUAL || c21 == CompareResult.DRILL_DOWN_NEEDED) {
               consumer.nodeDeleted(oldNode, oldChild1);
-              oldIndex--;
+              oldIndex++;
               continue;
             }
             CompareResult c12 = looksEqual(comparator, oldChild1, newChild2);
             if (c12 == CompareResult.EQUAL || c12 == CompareResult.DRILL_DOWN_NEEDED) {
-              consumer.nodeInserted(oldNode, newChild1, oldIndex + 1);
-              newIndex--;
+              consumer.nodeInserted(oldNode, newChild1, newIndex);
+              newIndex++;
               continue;
             }
             consumer.nodeReplaced(oldChild1, newChild1);
-            oldIndex--;
-            newIndex--;
+            oldIndex++;
+            newIndex++;
             continue;
           }
 
           CompareResult c12 = looksEqual(comparator, oldChild1, newChild2);
           if (c12 == CompareResult.EQUAL || c12 == CompareResult.DRILL_DOWN_NEEDED) {
-            consumer.nodeInserted(oldNode, newChild1, oldIndex + 1);
-            newIndex--;
+            consumer.nodeInserted(oldNode, newChild1, newIndex);
+            newIndex++;
             continue;
           }
 
           CompareResult c21 = looksEqual(comparator, oldChild2, newChild1);
           if (c21 == CompareResult.EQUAL || c21 == CompareResult.DRILL_DOWN_NEEDED || c21 == CompareResult.TYPE_ONLY) {
             consumer.nodeDeleted(oldNode, oldChild1);
-            oldIndex--;
+            oldIndex++;
             continue;
           }
 
           if (c12 == CompareResult.TYPE_ONLY) {
-            consumer.nodeInserted(oldNode, newChild1, oldIndex + 1);
-            newIndex--;
+            consumer.nodeInserted(oldNode, newChild1, newIndex);
+            newIndex++;
             continue;
           }
 
           if (oldChild1 == null) {
-            //consumer.nodeInserted(oldNode, newChild1, newIndex);
-            consumer.nodeInserted(oldNode, newChild1, oldIndex+1);
-            newIndex--;
+            consumer.nodeInserted(oldNode, newChild1, newIndex);
+            newIndex++;
             continue;
           }
           if (newChild1 == null) {
             consumer.nodeDeleted(oldNode, oldChild1);
-            oldIndex--;
+            oldIndex++;
             continue;
           }
 
@@ -203,40 +212,40 @@ public class DiffTree<OT, NT> {
           if (oldChild3 != null || newChild3 != null) {
             CompareResult c13 = looksEqual(comparator, oldChild1, newChild3);
             if (c13 == CompareResult.EQUAL || c13 == CompareResult.DRILL_DOWN_NEEDED || c13 == CompareResult.TYPE_ONLY) {
-              consumer.nodeInserted(oldNode, newChild1, oldIndex + 1);
-              consumer.nodeInserted(oldNode, newChild2, oldIndex+1);
-              newIndex--;
-              newIndex--;
+              consumer.nodeInserted(oldNode, newChild1, newIndex);
+              newIndex++;
+              consumer.nodeInserted(oldNode, newChild2, newIndex);
+              newIndex++;
               continue;
             }
             CompareResult c31 = looksEqual(comparator, oldChild3, newChild1);
             if (c31 == CompareResult.EQUAL || c31 == CompareResult.DRILL_DOWN_NEEDED || c31 == CompareResult.TYPE_ONLY) {
               consumer.nodeDeleted(oldNode, oldChild1);
               consumer.nodeDeleted(oldNode, oldChild2);
-              oldIndex--;
-              oldIndex--;
+              oldIndex++;
+              oldIndex++;
               continue;
             }
           }
 
-          // last resort: maybe the first elements are more similar?
-          OT oldFirstChild = oldIndex >= prefixLength ? oldChildren[prefixLength] : null;
-          NT newFirstChild = newIndex >= prefixLength ? newChildren[prefixLength] : null;
-          CompareResult c = oldFirstChild == null || newFirstChild == null ? CompareResult.NOT_EQUAL : looksEqual(comparator, oldFirstChild, newFirstChild);
+          // last resort: maybe the last elements are more similar?
+          OT oldLastChild = oldIndex < oldChildrenSize - suffixLength ? oldChildren[oldChildrenSize - suffixLength - 1] : null;
+          NT newLastChild = newIndex < newChildrenSize - suffixLength ? newChildren[newChildrenSize - suffixLength - 1] : null;
+          CompareResult c = oldLastChild == null || newLastChild == null ? CompareResult.NOT_EQUAL : looksEqual(comparator, oldLastChild, newLastChild);
           if (c == CompareResult.EQUAL || c == CompareResult.TYPE_ONLY || c == CompareResult.DRILL_DOWN_NEEDED) {
             if (c == CompareResult.DRILL_DOWN_NEEDED) {
-              build(oldFirstChild, newFirstChild, level + 1, maxLevel, consumer);
+              build(oldLastChild, newLastChild, level + 1, consumer);
             }
             else {
-              consumer.nodeReplaced(oldFirstChild, newFirstChild);
+              consumer.nodeReplaced(oldLastChild, newLastChild);
             }
-            prefixLength++;
+            suffixLength++;
             continue;
           }
 
           consumer.nodeReplaced(oldChild1, newChild1);
-          oldIndex--;
-          newIndex--;
+          oldIndex++;
+          newIndex++;
         }
         result = CompareResult.NOT_EQUAL;
       }
@@ -254,8 +263,7 @@ public class DiffTree<OT, NT> {
                     int newIndex,
                     int level,
                     int step, // 1 if we go from the start to the end; -1 if we go from the end to the start
-                    int maxLength,
-                    int maxLevel) {
+                    int maxLength) {
     int delta = 0;
     while (delta != maxLength*step) {
       OT oldChild = oldChildren[oldIndex + delta];
@@ -264,9 +272,9 @@ public class DiffTree<OT, NT> {
       CompareResult c11 = looksEqual(myComparator, oldChild, newChild);
 
       if (c11 == CompareResult.DRILL_DOWN_NEEDED) {
-        c11 = build(oldChild, newChild, level + 1, maxLevel, DiffTree.<OT, NT>emptyConsumer());
+        c11 = textMatch(oldChild, newChild) ? build(oldChild, newChild, level + 1, DiffTree.<OT, NT>emptyConsumer()) : CompareResult.NOT_EQUAL;
+        assert c11 != CompareResult.DRILL_DOWN_NEEDED;
       }
-      assert c11 != CompareResult.DRILL_DOWN_NEEDED;
       if (c11 != CompareResult.EQUAL) {
         break;
       }
@@ -275,8 +283,17 @@ public class DiffTree<OT, NT> {
     return delta*step;
   }
 
+  private boolean textMatch(OT oldChild, NT newChild) {
+    int oldStart = myOldTree.getStartOffset(oldChild) - myOldTreeStart;
+    int oldEnd = myOldTree.getEndOffset(oldChild) - myOldTreeStart;
+    int newStart = myNewTree.getStartOffset(newChild) - myNewTreeStart;
+    int newEnd = myNewTree.getEndOffset(newChild) - myNewTreeStart;
+    // drill down only if node texts match, but when they do, match all the way down unconditionally
+    return CharArrayUtil.regionMatches(myOldText, oldStart, oldEnd, myNewText, newStart, newEnd);
+  }
+
   @NotNull
-  private static <OT, NT> CompareResult looksEqual(@NotNull ShallowNodeComparator<OT, NT> comparator, OT oldChild1, NT newChild1) {
+  private CompareResult looksEqual(@NotNull ShallowNodeComparator<OT, NT> comparator, OT oldChild1, NT newChild1) {
     if (oldChild1 == null || newChild1 == null) {
       return oldChild1 == newChild1 ? CompareResult.EQUAL : CompareResult.NOT_EQUAL;
     }

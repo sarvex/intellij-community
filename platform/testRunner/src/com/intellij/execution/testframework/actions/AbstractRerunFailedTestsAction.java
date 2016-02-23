@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -12,11 +12,6 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
-
-/*
- * User: anna
- * Date: 24-Dec-2008
  */
 package com.intellij.execution.testframework.actions;
 
@@ -46,12 +41,14 @@ import com.intellij.openapi.ui.popup.JBPopupFactory;
 import com.intellij.openapi.util.Getter;
 import com.intellij.openapi.util.InvalidDataException;
 import com.intellij.openapi.util.WriteExternalException;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.ui.components.JBList;
 import com.intellij.util.ui.UIUtil;
 import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import javax.swing.*;
 import java.awt.*;
@@ -62,6 +59,10 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 
+/**
+ * @author anna
+ * @since 24-Dec-2008
+ */
 public class AbstractRerunFailedTestsAction extends AnAction implements AnAction.TransparentUpdate {
   private static final Logger LOG = Logger.getInstance(AbstractRerunFailedTestsAction.class);
 
@@ -112,24 +113,28 @@ public class AbstractRerunFailedTestsAction extends AnAction implements AnAction
   }
 
   @NotNull
-  protected List<AbstractTestProxy> getFailedTests(Project project) {
+  protected List<AbstractTestProxy> getFailedTests(@NotNull Project project) {
     TestFrameworkRunningModel model = getModel();
+    if (model == null) return Collections.emptyList();
     //noinspection unchecked
-    return getFilter(project, model != null ? model.getProperties().getScope() : GlobalSearchScope.allScope(project)).select(model != null
-                                                                                                                             ? model.getRoot().getAllTests()
-                                                                                                                             : Collections.<AbstractTestProxy>emptyList());
+    return getFilter(project, model.getProperties().getScope()).select(model.getRoot().getAllTests());
   }
 
   @NotNull
-  protected Filter getFilter(Project project, GlobalSearchScope searchScope) {
+  protected Filter getFilter(@NotNull Project project, @NotNull GlobalSearchScope searchScope) {
     return getFailuresFilter();
   }
 
   protected Filter<?> getFailuresFilter() {
-    if (TestConsoleProperties.INCLUDE_NON_STARTED_IN_RERUN_FAILED.value(myConsoleProperties)) {
-      return Filter.NOT_PASSED.and(Filter.IGNORED.not()).or(Filter.FAILED_OR_INTERRUPTED);
+    return getFailuresFilter(myConsoleProperties);
+  }
+
+  @TestOnly
+  public static Filter<?> getFailuresFilter(TestConsoleProperties consoleProperties) {
+    if (TestConsoleProperties.INCLUDE_NON_STARTED_IN_RERUN_FAILED.value(consoleProperties)) {
+      return Filter.NOT_PASSED.or(Filter.FAILED_OR_INTERRUPTED).and(Filter.IGNORED.not());
     }
-    return Filter.FAILED_OR_INTERRUPTED;
+    return Filter.FAILED_OR_INTERRUPTED.and(Filter.IGNORED.not());
   }
 
   @Override
@@ -139,6 +144,10 @@ public class AbstractRerunFailedTestsAction extends AnAction implements AnAction
       return;
     }
 
+    execute(e, environment);
+  }
+
+  void execute(@NotNull AnActionEvent e, @NotNull ExecutionEnvironment environment) {
     MyRunProfile profile = getRunProfile(environment);
     if (profile == null) {
       return;
@@ -326,5 +335,10 @@ public class AbstractRerunFailedTestsAction extends AnAction implements AnAction
     public ArrayList<LogFileOptions> getLogFiles() {
       return myConfiguration.getLogFiles();
     }
+  }
+
+  @Override
+  public boolean isDumbAware() {
+    return Registry.is("dumb.aware.run.configurations");
   }
 }

@@ -32,10 +32,13 @@ addtoken
 addusersitepackages
 addval
 adpcm
+aenter
+aexit
 afterfork
 aggr
 aifc
 aiff
+aiter
 alaw
 algor
 aliasmbcs
@@ -46,6 +49,7 @@ altsep
 amost
 amper
 amperequal
+anext
 anyobject
 apilevel
 appbundle
@@ -919,6 +923,7 @@ ihave
 ilog
 imagetext
 imagnumber
+imatmul
 imode
 impls
 importfile
@@ -1242,6 +1247,7 @@ mapdict
 mapstar
 markedsectionclose
 markobject
+matmul
 maxamount
 maxbinsize
 maxcache
@@ -1702,6 +1708,7 @@ ripemd
 rlecoderengine
 rledecoderengine
 rlshift
+rmatmul
 rmcolorizer
 rmenu
 rmod

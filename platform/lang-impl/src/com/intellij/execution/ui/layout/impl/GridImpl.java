@@ -27,6 +27,7 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.ui.components.panels.Wrapper;
 import com.intellij.ui.content.Content;
 import com.intellij.ui.switcher.SwitchTarget;
+import com.intellij.ui.tabs.JBTabsPresentation;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.Nullable;
 
@@ -244,9 +245,23 @@ public class GridImpl extends Wrapper implements Grid, Disposable, DataProvider 
             setContent(myContent);
             myContent = null;
           }
-          return new ActionCallback.Done();
+          return ActionCallback.DONE;
         }
       };
+    }
+
+    @Override
+    public void doLayout() {
+      super.doLayout();
+      Component child = getComponentCount() == 1 ? getComponent(0) : null;
+      if (child instanceof JBTabsPresentation) {
+        if (!((JBTabsPresentation)child).isHideTabs()) {
+          Rectangle bounds = child.getBounds();
+          bounds.y --;
+          bounds.height ++;
+          child.setBounds(bounds);
+        }
+      }
     }
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,10 @@
  */
 package com.intellij.lang.ant.config.execution;
 
-import com.intellij.ide.CopyProvider;
 import com.intellij.ide.DataManager;
 import com.intellij.ide.OccurenceNavigator;
 import com.intellij.ide.OccurenceNavigatorSupport;
+import com.intellij.ide.TextCopyProvider;
 import com.intellij.lang.ant.AntBundle;
 import com.intellij.lang.ant.config.AntBuildFile;
 import com.intellij.lang.ant.config.AntBuildModelBase;
@@ -28,7 +28,6 @@ import com.intellij.lang.ant.config.impl.BuildTask;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
-import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Computable;
@@ -41,20 +40,17 @@ import com.intellij.ui.treeStructure.Tree;
 import com.intellij.util.EditSourceOnDoubleClickHandler;
 import com.intellij.util.OpenSourceUtil;
 import com.intellij.util.StringBuilderSpinAllocator;
+import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.tree.TreeUtil;
 import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.tree.*;
 import java.awt.*;
-import java.awt.datatransfer.StringSelection;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
-import java.util.ArrayList;
-import java.util.Enumeration;
-import java.util.StringTokenizer;
+import java.util.*;
 
 public final class TreeView implements AntOutputView, OccurenceNavigator {
   private Tree myTree;
@@ -154,11 +150,7 @@ public final class TreeView implements AntOutputView, OccurenceNavigator {
       }
     };
 
-    JPanel panel = new JPanel(new BorderLayout());
-
-    JScrollPane scrollPane = MessageTreeRenderer.install(myTree);
-    panel.add(scrollPane, BorderLayout.CENTER);
-    return panel;
+    return JBUI.Panels.simplePanel(MessageTreeRenderer.install(myTree));
   }
 
   private void createModel() {
@@ -606,31 +598,17 @@ public final class TreeView implements AntOutputView, OccurenceNavigator {
 
     public Object getData(String dataId) {
       if (PlatformDataKeys.COPY_PROVIDER.is(dataId)) {
-        return new CopyProvider() {
-          public boolean isCopyEnabled(@NotNull DataContext dataContext) {
-            return getSelectionPath() != null;
-          }
-
-          public boolean isCopyVisible(@NotNull DataContext dataContext) {
-            return true;
-          }
-
-          public void performCopy(@NotNull DataContext dataContext) {
+        return new TextCopyProvider() {
+          @Nullable
+          @Override
+          public Collection<String> getTextLinesToCopy() {
             TreePath selection = getSelectionPath();
-            Object value = selection.getLastPathComponent();
-            String text;
+            Object value = selection == null ? null : selection.getLastPathComponent();
             if (value instanceof MessageNode) {
               MessageNode messageNode = ((MessageNode)value);
-              String[] lines = messageNode.getText();
-              text = "";
-              for (String line : lines) {
-                text += line + "\n";
-              }
+              return Arrays.asList(messageNode.getText());
             }
-            else {
-              text = value.toString();
-            }
-            CopyPasteManager.getInstance().setContents(new StringSelection(text));
+            return value == null ? null : Collections.singleton(value.toString());
           }
         };
       }

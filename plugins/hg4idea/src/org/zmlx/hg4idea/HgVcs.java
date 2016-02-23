@@ -12,6 +12,7 @@
 // limitations under the License.
 package org.zmlx.hg4idea;
 
+import com.intellij.execution.ui.ConsoleViewContentType;
 import com.intellij.ide.BrowserUtil;
 import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationListener;
@@ -21,7 +22,6 @@ import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.diff.impl.patch.formove.FilePathComparator;
-import com.intellij.openapi.editor.markup.TextAttributes;
 import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.options.ShowSettingsUtil;
@@ -53,6 +53,7 @@ import org.zmlx.hg4idea.provider.annotate.HgAnnotationProvider;
 import org.zmlx.hg4idea.provider.commit.HgCheckinEnvironment;
 import org.zmlx.hg4idea.provider.commit.HgCloseBranchExecutor;
 import org.zmlx.hg4idea.provider.commit.HgCommitAndPushExecutor;
+import org.zmlx.hg4idea.provider.commit.HgMQNewExecutor;
 import org.zmlx.hg4idea.provider.update.HgUpdateEnvironment;
 import org.zmlx.hg4idea.roots.HgIntegrationEnabler;
 import org.zmlx.hg4idea.status.HgRemoteStatusUpdater;
@@ -64,6 +65,7 @@ import org.zmlx.hg4idea.util.HgVersion;
 
 import javax.swing.event.HyperlinkEvent;
 import java.io.File;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -103,6 +105,7 @@ public class HgVcs extends AbstractVcs<CommittedChangeList> {
   private final Object myExecutableValidatorLock = new Object();
   private File myPromptHooksExtensionFile;
   private final CommitExecutor myCommitAndPushExecutor;
+  private final CommitExecutor myMqNewExecutor;
   private final HgCloseBranchExecutor myCloseBranchExecutor;
 
   private HgRemoteStatusUpdater myHgRemoteStatusUpdater;
@@ -129,6 +132,7 @@ public class HgVcs extends AbstractVcs<CommittedChangeList> {
     committedChangesProvider = new HgCachingCommittedChangesProvider(project, this);
     myMergeProvider = new HgMergeProvider(myProject);
     myCommitAndPushExecutor = new HgCommitAndPushExecutor(checkinEnvironment);
+    myMqNewExecutor = new HgMQNewExecutor(checkinEnvironment);
     myCloseBranchExecutor = new HgCloseBranchExecutor(checkinEnvironment);
   }
 
@@ -359,11 +363,11 @@ public class HgVcs extends AbstractVcs<CommittedChangeList> {
     return globalSettings;
   }
 
-  public void showMessageInConsole(String message, final TextAttributes style) {
+  public void showMessageInConsole(@NotNull String message, @NotNull ConsoleViewContentType contentType) {
     if (message.length() > MAX_CONSOLE_OUTPUT_SIZE) {
       message = message.substring(0, MAX_CONSOLE_OUTPUT_SIZE);
     }
-    myVcsManager.addMessageToConsoleWindow(message, style);
+    myVcsManager.addMessageToConsoleWindow(message, contentType);
   }
 
   public HgExecutableValidator getExecutableValidator() {
@@ -382,7 +386,7 @@ public class HgVcs extends AbstractVcs<CommittedChangeList> {
 
   @Override
   public List<CommitExecutor> getCommitExecutors() {
-    return Collections.singletonList(myCommitAndPushExecutor);
+    return Arrays.asList(myCommitAndPushExecutor, myMqNewExecutor);
   }
 
   @NotNull

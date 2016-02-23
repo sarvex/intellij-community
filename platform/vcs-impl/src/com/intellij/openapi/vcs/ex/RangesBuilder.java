@@ -15,6 +15,7 @@
  */
 package com.intellij.openapi.vcs.ex;
 
+import com.intellij.diff.util.DiffUtil;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.util.text.StringUtil;
@@ -25,91 +26,51 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedList;
 import java.util.List;
-
-/**
- * author: lesya
- */
 
 public class RangesBuilder {
   private static final Logger LOG = Logger.getInstance(RangesBuilder.class);
 
-  @NotNull private final List<Range> myRanges;
-
-  public RangesBuilder(@NotNull Document current,
-                       @NotNull Document vcs) throws FilesTooBigForDiffException {
-    this(current, vcs, LineStatusTracker.Mode.DEFAULT);
-  }
-
-  public RangesBuilder(@NotNull Document current,
-                       @NotNull Document vcs,
-                       @NotNull LineStatusTracker.Mode mode)
-    throws FilesTooBigForDiffException {
-    this(new DocumentWrapper(current).getLines(), new DocumentWrapper(vcs).getLines(), 0, 0, mode);
-  }
-
-  public RangesBuilder(@NotNull List<String> current,
-                       @NotNull List<String> vcs,
-                       int shift,
-                       int vcsShift,
-                       @NotNull LineStatusTracker.Mode mode)
-    throws FilesTooBigForDiffException {
-    myRanges = new LinkedList<Range>();
-
-    switch (mode) {
-      case DEFAULT:
-        processDefault(current, vcs, shift, vcsShift);
-        break;
-      case SMART:
-        processSmart(current, vcs, shift, vcsShift);
-        break;
-      default:
-        throw new IllegalStateException();
-    }
+  @NotNull
+  public static List<Range> createRanges(@NotNull Document current, @NotNull Document vcs) throws FilesTooBigForDiffException {
+    return createRanges(current, vcs, false);
   }
 
   @NotNull
-  public List<Range> getRanges() {
-    return myRanges;
+  public static List<Range> createRanges(@NotNull Document current, @NotNull Document vcs, boolean innerWhitespaceChanges)
+    throws FilesTooBigForDiffException {
+    return createRanges(DiffUtil.getLines(current), DiffUtil.getLines(vcs), 0, 0, innerWhitespaceChanges);
   }
 
-  private void processDefault(@NotNull List<String> current,
-                              @NotNull List<String> vcs,
-                              int shift,
-                              int vcsShift) throws FilesTooBigForDiffException {
+  @NotNull
+  public static List<Range> createRanges(@NotNull List<String> current,
+                                         @NotNull List<String> vcs,
+                                         int shift,
+                                         int vcsShift,
+                                         boolean innerWhitespaceChanges) throws FilesTooBigForDiffException {
     Diff.Change ch = Diff.buildChanges(ArrayUtil.toStringArray(vcs), ArrayUtil.toStringArray(current));
 
+    List<Range> result = new ArrayList<Range>();
     while (ch != null) {
-      Range range = createOn(ch, shift, vcsShift);
-      myRanges.add(range);
+      if (innerWhitespaceChanges) {
+        result.add(createOnSmart(ch, shift, vcsShift, current, vcs));
+      }
+      else {
+        result.add(createOn(ch, shift, vcsShift));
+      }
       ch = ch.link;
     }
-  }
-
-  private void processSmart(@NotNull List<String> current,
-                            @NotNull List<String> vcs,
-                            int shift,
-                            int vcsShift) throws FilesTooBigForDiffException {
-    Diff.Change ch = Diff.buildChanges(ArrayUtil.toStringArray(vcs), ArrayUtil.toStringArray(current));
-
-    while (ch != null) {
-      Range range = createOnSmart(ch, shift, vcsShift, current, vcs);
-      myRanges.add(range);
-      ch = ch.link;
-    }
+    return result;
   }
 
   private static Range createOn(@NotNull Diff.Change change, int shift, int vcsShift) {
-    byte type = getChangeType(change);
-
     int offset1 = shift + change.line1;
     int offset2 = offset1 + change.inserted;
 
     int uOffset1 = vcsShift + change.line0;
     int uOffset2 = uOffset1 + change.deleted;
 
-    return new Range(offset1, offset2, uOffset1, uOffset2, type);
+    return new Range(offset1, offset2, uOffset1, uOffset2);
   }
 
   private static Range createOnSmart(@NotNull Diff.Change change,
@@ -126,7 +87,7 @@ public class RangesBuilder {
     int uOffset2 = uOffset1 + change.deleted;
 
     if (type != Range.MODIFIED) {
-      return new Range(offset1, offset2, uOffset1, uOffset2, type, Collections.singletonList(new Range.InnerRange(offset1, offset2, type)));
+      return new Range(offset1, offset2, uOffset1, uOffset2, Collections.singletonList(new Range.InnerRange(offset1, offset2, type)));
     }
 
     LineWrapper[] lines1 = new LineWrapper[change.deleted];
@@ -169,7 +130,7 @@ public class RangesBuilder {
       inner.add(new Range.InnerRange(innerStart, innerEnd, innerType));
     }
 
-    return new Range(offset1, offset2, uOffset1, uOffset2, type, inner);
+    return new Range(offset1, offset2, uOffset1, uOffset2, inner);
   }
 
   private static byte getChangeType(@NotNull Diff.Change change) {

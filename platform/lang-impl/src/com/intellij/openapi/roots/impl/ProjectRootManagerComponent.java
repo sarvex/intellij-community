@@ -16,10 +16,12 @@
 package com.intellij.openapi.roots.impl;
 
 import com.intellij.ProjectTopics;
-import com.intellij.ide.caches.CacheUpdater;
 import com.intellij.openapi.application.ApplicationAdapter;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.components.ProjectComponent;
+import com.intellij.openapi.components.ServiceKt;
 import com.intellij.openapi.components.impl.stores.BatchUpdateListener;
+import com.intellij.openapi.components.impl.stores.IProjectStore;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.fileTypes.FileTypeEvent;
@@ -38,8 +40,10 @@ import com.intellij.openapi.vfs.*;
 import com.intellij.openapi.vfs.ex.VirtualFileManagerAdapter;
 import com.intellij.openapi.vfs.pointers.VirtualFilePointer;
 import com.intellij.openapi.vfs.pointers.VirtualFilePointerListener;
-import com.intellij.util.SystemProperties;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.HashSet;
+import com.intellij.util.indexing.FileBasedIndex;
+import com.intellij.util.indexing.FileBasedIndexImpl;
 import com.intellij.util.indexing.FileBasedIndexProjectHandler;
 import com.intellij.util.indexing.UnindexedFilesUpdater;
 import com.intellij.util.messages.MessageBusConnection;
@@ -48,27 +52,19 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.List;
 import java.util.Set;
 
 /**
  * ProjectRootManager extended with ability to watch events.
  */
-public class ProjectRootManagerComponent extends ProjectRootManagerImpl {
-  private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.roots.impl.ProjectManagerComponent");
-
-  private static final boolean ourScheduleCacheUpdateInDumbMode =
-    SystemProperties.getBooleanProperty("idea.schedule.cache.update.in.dumb.mode", true);
+public class ProjectRootManagerComponent extends ProjectRootManagerImpl implements ProjectComponent {
+  private static final Logger LOG = Logger.getInstance(ProjectRootManagerComponent.class);
 
   private boolean myPointerChangesDetected = false;
   private int myInsideRefresh = 0;
   private final BatchUpdateListener myHandler;
   private final MessageBusConnection myConnection;
-
-  @SuppressWarnings("deprecation") protected final List<CacheUpdater> myRootsChangeUpdaters = new ArrayList<CacheUpdater>();
-  @SuppressWarnings("deprecation") protected final List<CacheUpdater> myRefreshCacheUpdaters = new ArrayList<CacheUpdater>();
 
   private Set<LocalFileSystem.WatchRequest> myRootsToWatch = new THashSet<LocalFileSystem.WatchRequest>();
   private final boolean myDoLogCachesUpdate;
@@ -121,45 +117,29 @@ public class ProjectRootManagerComponent extends ProjectRootManagerImpl {
     myDoLogCachesUpdate = ApplicationManager.getApplication().isInternal() && !ApplicationManager.getApplication().isUnitTestMode();
   }
 
-  @SuppressWarnings({"deprecation", "unused"})
-  public void registerRootsChangeUpdater(CacheUpdater updater) {
-    myRootsChangeUpdaters.add(updater);
+  @Override
+  public void disposeComponent() {
   }
 
-  @SuppressWarnings({"deprecation", "unused"})
-  public void unregisterRootsChangeUpdater(CacheUpdater updater) {
-    boolean removed = myRootsChangeUpdaters.remove(updater);
-    LOG.assertTrue(removed);
-  }
-
-  @SuppressWarnings({"deprecation", "unused"})
-  public void registerRefreshUpdater(CacheUpdater updater) {
-    myRefreshCacheUpdaters.add(updater);
-  }
-
-  @SuppressWarnings({"deprecation", "unused"})
-  public void unregisterRefreshUpdater(CacheUpdater updater) {
-    boolean removed = myRefreshCacheUpdaters.remove(updater);
-    LOG.assertTrue(removed);
+  @NotNull
+  @Override
+  public String getComponentName() {
+    return "ProjectRootManager";
   }
 
   @Override
   public void initComponent() {
-    super.initComponent();
     myConnection.subscribe(BatchUpdateListener.TOPIC, myHandler);
   }
 
   @Override
   public void projectOpened() {
-    super.projectOpened();
     addRootsToWatch();
-    AppListener applicationListener = new AppListener();
-    ApplicationManager.getApplication().addApplicationListener(applicationListener, myProject);
+    ApplicationManager.getApplication().addApplicationListener(new AppListener(), myProject);
   }
 
   @Override
   public void projectClosed() {
-    super.projectClosed();
     LocalFileSystem.getInstance().removeWatchedRoots(myRootsToWatch);
   }
 
@@ -187,22 +167,11 @@ public class ProjectRootManagerComponent extends ProjectRootManagerImpl {
       return;
     }
 
-    if (myDoLogCachesUpdate) LOG.info("refresh");
+    if (myDoLogCachesUpdate) LOG.debug("refresh");
     DumbServiceImpl dumbService = DumbServiceImpl.getInstance(myProject);
     DumbModeTask task = FileBasedIndexProjectHandler.createChangedFilesIndexingTask(myProject);
     if (task != null) {
       dumbService.queueTask(task);
-    }
-
-    if (myRefreshCacheUpdaters.size() == 0) {
-      return;
-    }
-
-    if (ourScheduleCacheUpdateInDumbMode) {
-      dumbService.queueCacheUpdateInDumbMode(myRefreshCacheUpdaters);
-    }
-    else {
-      dumbService.queueCacheUpdate(myRefreshCacheUpdaters);
     }
   }
 
@@ -260,16 +229,14 @@ public class ProjectRootManagerComponent extends ProjectRootManagerImpl {
     final Set<String> flat = new HashSet<String>();
 
     final String projectFilePath = myProject.getProjectFilePath();
-    final File projectDirFile = new File(projectFilePath).getParentFile();
+    final File projectDirFile = projectFilePath == null ? null : new File(projectFilePath).getParentFile();
     if (projectDirFile != null && projectDirFile.getName().equals(Project.DIRECTORY_STORE_FOLDER)) {
       recursive.add(projectDirFile.getAbsolutePath());
     }
     else {
       flat.add(projectFilePath);
-      final VirtualFile workspaceFile = myProject.getWorkspaceFile();
-      if (workspaceFile != null) {
-        flat.add(workspaceFile.getPath());
-      }
+      // may be not existing yet
+      ContainerUtil.addIfNotNull(flat, ((IProjectStore)ServiceKt.getStateStore(myProject)).getWorkspaceFilePath());
     }
 
     for (WatchedRootsProvider extension : Extensions.getExtensions(WatchedRootsProvider.EP_NAME, myProject)) {
@@ -323,18 +290,12 @@ public class ProjectRootManagerComponent extends ProjectRootManagerImpl {
   protected void doSynchronizeRoots() {
     if (!myStartupActivityPerformed) return;
 
-    if (myDoLogCachesUpdate) LOG.info(new Throwable("sync roots"));
+    if (myDoLogCachesUpdate) LOG.debug(new Throwable("sync roots"));
+    else LOG.info("project roots have changed");
 
     DumbServiceImpl dumbService = DumbServiceImpl.getInstance(myProject);
-    dumbService.queueTask(new UnindexedFilesUpdater(myProject, false));
-
-    if (myRootsChangeUpdaters.isEmpty()) return;
-
-    if (ourScheduleCacheUpdateInDumbMode) {
-      dumbService.queueCacheUpdateInDumbMode(myRootsChangeUpdaters);
-    }
-    else {
-      dumbService.queueCacheUpdate(myRootsChangeUpdaters);
+    if (FileBasedIndex.getInstance() instanceof FileBasedIndexImpl) {
+      dumbService.queueTask(new UnindexedFilesUpdater(myProject, false));
     }
   }
 
@@ -381,7 +342,7 @@ public class ProjectRootManagerComponent extends ProjectRootManagerImpl {
         if (myInsideRefresh == 0) {
           if (affectsRoots(pointers)) {
             beforeRootsChange(false);
-            if (myDoLogCachesUpdate) LOG.info(new Throwable(pointers.length > 0 ? pointers[0].getPresentableUrl():""));
+            if (myDoLogCachesUpdate) LOG.debug(new Throwable(pointers.length > 0 ? pointers[0].getPresentableUrl():""));
           }
         }
         else if (!myPointerChangesDetected) {
@@ -389,7 +350,7 @@ public class ProjectRootManagerComponent extends ProjectRootManagerImpl {
           if (affectsRoots(pointers)) {
             myPointerChangesDetected = true;
             myProject.getMessageBus().syncPublisher(ProjectTopics.PROJECT_ROOTS).beforeRootsChange(new ModuleRootEventImpl(myProject, false));
-            if (myDoLogCachesUpdate) LOG.info(new Throwable(pointers.length > 0 ? pointers[0].getPresentableUrl():""));
+            if (myDoLogCachesUpdate) LOG.debug(new Throwable(pointers.length > 0 ? pointers[0].getPresentableUrl():""));
           }
         }
       }

@@ -18,6 +18,7 @@ package com.intellij.usages.impl;
 
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.*;
 import com.intellij.openapi.editor.colors.EditorColors;
@@ -45,16 +46,30 @@ import java.util.List;
 public class UsagePreviewPanel extends UsageContextPanelBase {
   private static final Logger LOG = Logger.getInstance("#com.intellij.usages.impl.UsagePreviewPanel");
   private Editor myEditor;
+  private final boolean myIsEditor;
 
   public UsagePreviewPanel(@NotNull Project project, @NotNull UsageViewPresentation presentation) {
+    this(project, presentation, false);
+  }
+
+  public UsagePreviewPanel(@NotNull Project project,
+                           @NotNull UsageViewPresentation presentation,
+                           boolean isEditor) {
     super(project, presentation);
+    myIsEditor = isEditor;
   }
 
   public static class Provider implements UsageContextPanel.Provider {
     @NotNull
     @Override
     public UsageContextPanel create(@NotNull UsageView usageView) {
-      return new UsagePreviewPanel(((UsageViewImpl)usageView).getProject(), usageView.getPresentation());
+      return new UsagePreviewPanel(((UsageViewImpl)usageView).getProject(), usageView.getPresentation(), true) {
+        @Override
+        protected void customizeEditorSettings(EditorSettings settings) {
+          super.customizeEditorSettings(settings);
+          settings.setUseSoftWraps(true);
+        }
+      };
     }
 
     @Override
@@ -94,22 +109,27 @@ public class UsagePreviewPanel extends UsageContextPanelBase {
       revalidate();
     }
 
-    final Editor editor = myEditor;
-    SwingUtilities.invokeLater(new Runnable() {
-      @Override
-      public void run() {
-        if (myProject.isDisposed()) return;
-        highlight(infos, editor);
-      }
-    });
+    highlight(infos, myEditor, myProject);
   }
 
   private static final Key<Boolean> IN_PREVIEW_USAGE_FLAG = Key.create("IN_PREVIEW_USAGE_FLAG");
-  private void highlight(@NotNull List<UsageInfo> infos, @NotNull Editor editor) {
-    if (editor != myEditor) return; //already disposed
-    PsiDocumentManager.getInstance(myProject).commitAllDocuments();
 
-    MarkupModel markupModel = myEditor.getMarkupModel();
+  public static void highlight(@NotNull final List<UsageInfo> infos, @NotNull final Editor editor, @NotNull final Project project) {
+    ApplicationManager.getApplication().invokeLater(new Runnable() {
+      @Override
+      public void run() {
+        if (project.isDisposed()) return;
+        if (!editor.isDisposed()) {
+          doHighlight(infos, editor, project);
+        }
+      }
+    }, ModalityState.current());
+  }
+
+  private static void doHighlight(@NotNull List<UsageInfo> infos, @NotNull Editor editor, @NotNull Project project) {
+    PsiDocumentManager.getInstance(project).commitAllDocuments();
+
+    MarkupModel markupModel = editor.getMarkupModel();
     for (RangeHighlighter highlighter : markupModel.getAllHighlighters()) {
       if (highlighter.getUserData(IN_PREVIEW_USAGE_FLAG) != null) {
         highlighter.dispose();
@@ -126,7 +146,10 @@ public class UsagePreviewPanel extends UsageContextPanelBase {
 
       TextRange elementRange = psiElement.getTextRange();
       TextRange infoRange = info.getRangeInElement();
-      TextRange textRange = infoRange == null || infoRange.getStartOffset() > elementRange.getLength() ? null : elementRange.cutOut(infoRange);
+      TextRange textRange = infoRange == null 
+                            || infoRange.getStartOffset() > elementRange.getLength() 
+                            || infoRange.getEndOffset() > elementRange.getLength() ? null 
+                                                                                   : elementRange.cutOut(infoRange);
       if (textRange == null) textRange = elementRange;
       // hack to determine element range to highlight
       if (psiElement instanceof PsiNamedElement && !(psiElement instanceof PsiFile)) {
@@ -137,15 +160,15 @@ public class UsagePreviewPanel extends UsageContextPanelBase {
         }
       }
       // highlight injected element in host document textrange
-      textRange = InjectedLanguageManager.getInstance(myProject).injectedToHost(psiElement, textRange);
+      textRange = InjectedLanguageManager.getInstance(project).injectedToHost(psiElement, textRange);
 
       RangeHighlighter highlighter = markupModel.addRangeHighlighter(textRange.getStartOffset(), textRange.getEndOffset(),
                                                                                    HighlighterLayer.ADDITIONAL_SYNTAX, attributes,
                                                                                    HighlighterTargetArea.EXACT_RANGE);
       highlighter.putUserData(IN_PREVIEW_USAGE_FLAG, Boolean.TRUE);
-      myEditor.getCaretModel().moveToOffset(textRange.getEndOffset());
+      editor.getCaretModel().moveToOffset(textRange.getEndOffset());
     }
-    myEditor.getScrollingModel().scrollToCaret(ScrollType.CENTER);
+    editor.getScrollingModel().scrollToCaret(ScrollType.CENTER);
   }
 
   private static final Key<UsagePreviewPanel> PREVIEW_EDITOR_FLAG = Key.create("PREVIEW_EDITOR_FLAG");
@@ -153,18 +176,22 @@ public class UsagePreviewPanel extends UsageContextPanelBase {
     if (isDisposed) return null;
     Project project = psiFile.getProject();
 
-    Editor editor = EditorFactory.getInstance().createEditor(document, project, psiFile.getVirtualFile(), true);
+    Editor editor = EditorFactory.getInstance().createEditor(document, project, psiFile.getVirtualFile(), !myIsEditor);
 
     EditorSettings settings = editor.getSettings();
+    customizeEditorSettings(settings);
+
+    editor.putUserData(PREVIEW_EDITOR_FLAG, this);
+    return editor;
+  }
+
+  protected void customizeEditorSettings(EditorSettings settings) {
     settings.setLineMarkerAreaShown(false);
     settings.setIndentGuidesShown(false);
     settings.setFoldingOutlineShown(false);
     settings.setAdditionalColumnsCount(0);
     settings.setAdditionalLinesCount(0);
     settings.setVirtualSpace(true);
-
-    editor.putUserData(PREVIEW_EDITOR_FLAG, this);
-    return editor;
   }
 
   @Override

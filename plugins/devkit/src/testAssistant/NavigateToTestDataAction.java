@@ -29,8 +29,6 @@ import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.roots.ProjectFileIndex;
-import com.intellij.openapi.roots.ProjectRootManager;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
@@ -53,21 +51,25 @@ public class NavigateToTestDataAction extends AnAction implements TestTreeViewAc
     final Project project = CommonDataKeys.PROJECT.getData(dataContext);
     List<String> fileNames = findTestDataFiles(dataContext);
     if (fileNames == null || fileNames.isEmpty()) {
-      String message = "Cannot find testdata files for class";
-      final Notification notification = new Notification("testdata", "Found no testdata files", message, NotificationType.INFORMATION);
-      Notifications.Bus.notify(notification, project);
+      String testData = guessTestData(dataContext);
+      if (testData == null) {
+        String message = "Cannot find testdata files for class";
+        final Notification notification = new Notification("testdata", "Found no testdata files", message, NotificationType.INFORMATION);
+        Notifications.Bus.notify(notification, project);
+        return;
+      }
+      fileNames = Collections.singletonList(testData);
     }
-    else {
-      final Editor editor = e.getData(CommonDataKeys.EDITOR);
-      final JBPopupFactory popupFactory = JBPopupFactory.getInstance();
-      final RelativePoint point = editor != null ? popupFactory.guessBestPopupLocation(editor) : popupFactory.guessBestPopupLocation(dataContext);
-      
-      TestDataNavigationHandler.navigate(point, fileNames, project);
-    }
+
+    final Editor editor = e.getData(CommonDataKeys.EDITOR);
+    final JBPopupFactory popupFactory = JBPopupFactory.getInstance();
+    final RelativePoint point = editor != null ? popupFactory.guessBestPopupLocation(editor) : popupFactory.guessBestPopupLocation(dataContext);
+
+    TestDataNavigationHandler.navigate(point, fileNames, project);
   }
 
   @Nullable
-  public static List<String> findTestDataFiles(@NotNull DataContext context) {
+  static List<String> findTestDataFiles(@NotNull DataContext context) {
     final PsiMethod method = findTargetMethod(context);
     if (method == null) {
       return null;
@@ -96,8 +98,7 @@ public class NavigateToTestDataAction extends AnAction implements TestTreeViewAc
               final String testDataPath = TestDataLineMarkerProvider.getTestDataBasePath(containingClass);
               final String paramSetName = ((PsiMemberParameterizedLocation)location).getParamSetName();
               final String baseFileName = StringUtil.trimEnd(StringUtil.trimStart(paramSetName, "["), "]");
-              final ProjectFileIndex fileIndex = ProjectRootManager.getInstance(containingClass.getProject()).getFileIndex();
-              return TestDataGuessByExistingFilesUtil.suggestTestDataFiles(fileIndex, baseFileName, testDataPath, containingClass);
+              return TestDataGuessByExistingFilesUtil.suggestTestDataFiles(baseFileName, testDataPath, containingClass);
             }
           }
         }
@@ -114,6 +115,14 @@ public class NavigateToTestDataAction extends AnAction implements TestTreeViewAc
 
   @Nullable
   private static PsiMethod findTargetMethod(@NotNull DataContext context) {
+    final Location<?> location = Location.DATA_KEY.getData(context);
+    if (location != null) {
+      final PsiElement element = location.getPsiElement();
+      PsiMethod method = PsiTreeUtil.getParentOfType(element, PsiMethod.class, false);
+      if (method != null) {
+        return method;
+      }
+    }
     final Editor editor = CommonDataKeys.EDITOR.getData(context);
     final PsiFile file = CommonDataKeys.PSI_FILE.getData(context);
     if (file != null && editor != null) {
@@ -121,13 +130,11 @@ public class NavigateToTestDataAction extends AnAction implements TestTreeViewAc
       return PsiTreeUtil.getParentOfType(element, PsiMethod.class);
     }
 
-    final Location<?> location = Location.DATA_KEY.getData(context);
-    if (location != null) {
-      final PsiElement element = location.getPsiElement();
-      if (element instanceof PsiMethod) {
-        return (PsiMethod)element;
-      }
-    }
     return null;
+  }
+
+  private static String guessTestData(DataContext context) {
+    PsiMethod method = findTargetMethod(context);
+    return method == null ? null : TestDataGuessByExistingFilesUtil.guessTestDataName(method);
   }
 }

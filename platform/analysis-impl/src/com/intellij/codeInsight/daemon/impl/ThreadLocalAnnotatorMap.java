@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,6 @@
 package com.intellij.codeInsight.daemon.impl;
 
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.util.Pair;
-import com.intellij.openapi.util.UserDataHolder;
 import com.intellij.util.pico.ConstructorInjectionComponentAdapter;
 import gnu.trove.THashMap;
 import org.jetbrains.annotations.NotNull;
@@ -26,49 +24,53 @@ import org.picocontainer.PicoContainer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 
 /**
  * User: cdr
  */
-abstract class ThreadLocalAnnotatorMap<T, KeyT extends UserDataHolder> {
+abstract class ThreadLocalAnnotatorMap<K, V> {
   private volatile int version;
   @NotNull
-  public abstract Collection<T> initialValue(@NotNull KeyT key);
+  public abstract Collection<V> initialValue(@NotNull K key);
 
-  // pair(version, map)
-  private final ThreadLocal<Pair<Integer, Map<KeyT,List<T>>>> CACHE = new ThreadLocal<Pair<Integer, Map<KeyT,List<T>>>>(){
+  private static class VersionedMap<K, V> extends THashMap<K, List<V>> {
+    private final int version;
+
+    private VersionedMap(int version) {
+      this.version = version;
+    }
+  }
+
+  private final ThreadLocal<VersionedMap<K, V>> CACHE = new ThreadLocal<VersionedMap<K, V>>(){
     @Override
-    protected Pair<Integer, Map<KeyT,List<T>>> initialValue() {
-      return Pair.<Integer, Map<KeyT,List<T>>>create(version, new THashMap<KeyT, List<T>>());
+    protected VersionedMap<K, V> initialValue() {
+      return new VersionedMap<K, V>(version);
     }
   };
 
   @SuppressWarnings("unchecked")
   @NotNull
-  private List<T> cloneTemplates(@NotNull Collection<T> templates) {
-    List<T> result = new ArrayList<T>(templates.size());
+  private List<V> cloneTemplates(@NotNull Collection<V> templates) {
+    List<V> result = new ArrayList<V>(templates.size());
     PicoContainer container = ApplicationManager.getApplication().getPicoContainer();
-    for (T template : templates) {
-      Class<? extends T> aClass = (Class<? extends T>)template.getClass();
-      T clone = (T)new ConstructorInjectionComponentAdapter(aClass.getName(), aClass).getComponentInstance(container);
+    for (V template : templates) {
+      Class<? extends V> aClass = (Class<? extends V>)template.getClass();
+      V clone = (V)new ConstructorInjectionComponentAdapter(aClass.getName(), aClass).getComponentInstance(container);
       result.add(clone);
     }
     return result;
   }
 
   @NotNull
-  public List<T> get(@NotNull KeyT key) {
-    Pair<Integer, Map<KeyT, List<T>>> pair = CACHE.get();
-    Integer mapVersion = pair.getFirst();
-    if (version != mapVersion) {
+  public List<V> get(@NotNull K key) {
+    VersionedMap<K, V> map = CACHE.get();
+    if (version != map.version) {
       CACHE.remove();
-      pair = CACHE.get();
+      map = CACHE.get();
     }
-    Map<KeyT, List<T>> map = pair.getSecond();
-    List<T> cached = map.get(key);
+    List<V> cached = map.get(key);
     if (cached == null) {
-      Collection<T> templates = initialValue(key);
+      Collection<V> templates = initialValue(key);
       cached = cloneTemplates(templates);
       map.put(key, cached);
     }

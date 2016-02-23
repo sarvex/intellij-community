@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,8 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.wm.ToolWindowId;
 import com.intellij.util.StringBuilderSpinAllocator;
 import com.intellij.util.ui.MessageCategory;
+import com.intellij.util.ui.update.MergingUpdateQueue;
+import com.intellij.util.ui.update.Update;
 import gnu.trove.TIntObjectHashMap;
 
 import java.util.ArrayList;
@@ -41,9 +43,10 @@ import java.util.List;
 public class HotSwapProgressImpl extends HotSwapProgress{
   static final NotificationGroup NOTIFICATION_GROUP = NotificationGroup.toolWindowGroup("HotSwap", ToolWindowId.DEBUG);
 
-  TIntObjectHashMap<List<String>> myMessages = new TIntObjectHashMap<List<String>>();
+  private final TIntObjectHashMap<List<String>> myMessages = new TIntObjectHashMap<>();
   private final ProgressWindow myProgressWindow;
   private String myTitle = DebuggerBundle.message("progress.hot.swap.title");
+  private final MergingUpdateQueue myUpdateQueue;
 
   public HotSwapProgressImpl(Project project) {
     super(project);
@@ -63,6 +66,7 @@ public class HotSwapProgressImpl extends HotSwapProgress{
         HotSwapProgressImpl.this.cancel();
       }
     });
+    myUpdateQueue = new MergingUpdateQueue("HotSwapProgress update queue", 100, true, null, myProgressWindow);
   }
 
   public void finished() {
@@ -79,7 +83,7 @@ public class HotSwapProgressImpl extends HotSwapProgress{
                                             buildMessage(warnings), NotificationType.WARNING, null).notify(getProject());
     }
     else if (!myMessages.isEmpty()){
-      List<String> messages = new ArrayList<String>();
+      List<String> messages = new ArrayList<>();
       for (int category : myMessages.keys()) {
         messages.addAll(getMessages(category));
       }
@@ -99,7 +103,7 @@ public class HotSwapProgressImpl extends HotSwapProgress{
   public void addMessage(DebuggerSession session, final int type, final String text) {
     List<String> messages = myMessages.get(type);
     if (messages == null) {
-      messages = new ArrayList<String>();
+      messages = new ArrayList<>();
       myMessages.put(type, messages);
     }
     final StringBuilder builder = StringBuilderSpinAllocator.alloc();
@@ -113,14 +117,18 @@ public class HotSwapProgressImpl extends HotSwapProgress{
   }
 
   public void setText(final String text) {
-    DebuggerInvocationUtil.invokeLater(getProject(), new Runnable() {
+    myUpdateQueue.queue(new Update("Text") {
+      @Override
       public void run() {
-        if (!myProgressWindow.isCanceled() && myProgressWindow.isRunning()) {
-          myProgressWindow.setText(text);
-        }
+        DebuggerInvocationUtil.invokeLater(getProject(), new Runnable() {
+          public void run() {
+            if (!myProgressWindow.isCanceled() && myProgressWindow.isRunning()) {
+              myProgressWindow.setText(text);
+            }
+          }
+        }, myProgressWindow.getModalityState());
       }
-    }, myProgressWindow.getModalityState());
-
+    });
   }
 
   public void setTitle(final String text) {

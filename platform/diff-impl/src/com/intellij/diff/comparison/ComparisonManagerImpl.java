@@ -15,17 +15,19 @@
  */
 package com.intellij.diff.comparison;
 
-import com.intellij.diff.comparison.iterables.DiffIterableUtil.Range;
 import com.intellij.diff.fragments.DiffFragment;
 import com.intellij.diff.fragments.DiffFragmentImpl;
 import com.intellij.diff.fragments.LineFragment;
 import com.intellij.diff.fragments.LineFragmentImpl;
+import com.intellij.diff.util.Range;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.Consumer;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.diff.FilesTooBigForDiffException;
 import com.intellij.util.text.CharSequenceSubSequence;
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
@@ -38,6 +40,7 @@ public class ComparisonManagerImpl extends ComparisonManager {
   public static final Logger LOG = Logger.getInstance(ComparisonManagerImpl.class);
 
   @NotNull
+  @Override
   public List<LineFragment> compareLines(@NotNull CharSequence text1,
                                          @NotNull CharSequence text2,
                                          @NotNull ComparisonPolicy policy,
@@ -51,20 +54,13 @@ public class ComparisonManagerImpl extends ComparisonManager {
   }
 
   @NotNull
+  @Override
   public List<LineFragment> compareLinesInner(@NotNull CharSequence text1,
                                               @NotNull CharSequence text2,
                                               @NotNull ComparisonPolicy policy,
                                               @NotNull ProgressIndicator indicator) throws DiffTooBigException {
-    List<LineFragment> fragments = compareLines(text1, text2, policy, indicator);
-    return compareLinesInner(text1, text2, fragments, policy, indicator);
-  }
+    List<LineFragment> lineFragments = compareLines(text1, text2, policy, indicator);
 
-  @NotNull
-  public List<LineFragment> compareLinesInner(@NotNull CharSequence text1,
-                                              @NotNull CharSequence text2,
-                                              @NotNull List<LineFragment> lineFragments,
-                                              @NotNull ComparisonPolicy policy,
-                                              @NotNull ProgressIndicator indicator) throws DiffTooBigException {
     List<LineFragment> fineFragments = new ArrayList<LineFragment>(lineFragments.size());
     int tooBigChunksCount = 0;
 
@@ -83,7 +79,7 @@ public class ComparisonManagerImpl extends ComparisonManager {
         continue;
       }
 
-      if (tooBigChunksCount >= 3) { // Do not try to build fine blocks after few fails)
+      if (tooBigChunksCount >= FilesTooBigForDiffException.MAX_BAD_LINES) { // Do not try to build fine blocks after few fails)
         fineFragments.add(new LineFragmentImpl(fragment, null));
         continue;
       }
@@ -120,11 +116,22 @@ public class ComparisonManagerImpl extends ComparisonManager {
         tooBigChunksCount++;
       }
     }
-
     return fineFragments;
   }
 
   @NotNull
+  @Override
+  @Deprecated
+  public List<LineFragment> compareLinesInner(@NotNull CharSequence text1,
+                                              @NotNull CharSequence text2,
+                                              @NotNull List<LineFragment> lineFragments,
+                                              @NotNull ComparisonPolicy policy,
+                                              @NotNull ProgressIndicator indicator) throws DiffTooBigException {
+    return compareLinesInner(text1, text2, policy, indicator);
+  }
+
+  @NotNull
+  @Override
   public List<DiffFragment> compareWords(@NotNull CharSequence text1,
                                          @NotNull CharSequence text2,
                                          @NotNull ComparisonPolicy policy,
@@ -133,6 +140,7 @@ public class ComparisonManagerImpl extends ComparisonManager {
   }
 
   @NotNull
+  @Override
   public List<DiffFragment> compareChars(@NotNull CharSequence text1,
                                          @NotNull CharSequence text2,
                                          @NotNull ComparisonPolicy policy,
@@ -147,16 +155,48 @@ public class ComparisonManagerImpl extends ComparisonManager {
     return convertIntoFragments(ByChar.compareTwoStep(text1, text2, indicator));
   }
 
+  @Override
   public boolean isEquals(@NotNull CharSequence text1, @NotNull CharSequence text2, @NotNull ComparisonPolicy policy) {
     switch (policy) {
       case DEFAULT:
         return StringUtil.equals(text1, text2);
       case TRIM_WHITESPACES:
-        return StringUtil.equalsTrimWhitespaces(text1, text2);
+        return equalsTrimWhitespaces(text1, text2);
       case IGNORE_WHITESPACES:
         return StringUtil.equalsIgnoreWhitespaces(text1, text2);
       default:
         throw new IllegalArgumentException(policy.name());
+    }
+  }
+
+  @Contract(pure = true)
+  private static boolean equalsTrimWhitespaces(@NotNull CharSequence s1, @NotNull CharSequence s2) {
+    int index1 = 0;
+    int index2 = 0;
+
+    while (true) {
+      boolean lastLine1 = false;
+      boolean lastLine2 = false;
+
+      int end1 = StringUtil.indexOf(s1, '\n', index1) + 1;
+      int end2 = StringUtil.indexOf(s2, '\n', index2) + 1;
+      if (end1 == 0) {
+        end1 = s1.length();
+        lastLine1 = true;
+      }
+      if (end2 == 0) {
+        end2 = s2.length();
+        lastLine2 = true;
+      }
+      if (lastLine1 ^ lastLine2) return false;
+
+      CharSequence line1 = s1.subSequence(index1, end1);
+      CharSequence line2 = s2.subSequence(index2, end2);
+      if (!StringUtil.equalsTrimWhitespaces(line1, line2)) return false;
+
+      index1 = end1;
+      index2 = end2;
+      if (lastLine1) return true;
     }
   }
 
@@ -165,6 +205,7 @@ public class ComparisonManagerImpl extends ComparisonManager {
   //
 
   @NotNull
+  @Override
   public List<LineFragment> squash(@NotNull List<LineFragment> oldFragments) {
     if (oldFragments.isEmpty()) return oldFragments;
 
@@ -179,6 +220,7 @@ public class ComparisonManagerImpl extends ComparisonManager {
   }
 
   @NotNull
+  @Override
   public List<LineFragment> processBlocks(@NotNull List<LineFragment> oldFragments,
                                           @NotNull final CharSequence text1, @NotNull final CharSequence text2,
                                           @NotNull final ComparisonPolicy policy,

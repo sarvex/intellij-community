@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,10 @@
 package com.intellij.testFramework;
 
 import com.intellij.concurrency.JobSchedulerImpl;
+import com.intellij.execution.ExecutionException;
+import com.intellij.execution.configurations.GeneralCommandLine;
+import com.intellij.execution.process.ProcessOutput;
+import com.intellij.execution.util.ExecUtil;
 import com.intellij.ide.DataManager;
 import com.intellij.ide.IdeEventQueue;
 import com.intellij.ide.util.treeView.AbstractTreeNode;
@@ -52,10 +56,7 @@ import com.intellij.util.ui.UIUtil;
 import junit.framework.AssertionFailedError;
 import org.jdom.Element;
 import org.jdom.JDOMException;
-import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.*;
 import org.junit.Assert;
 
 import javax.swing.*;
@@ -72,18 +73,42 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.JarFile;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-
 /**
  * @author yole
  */
-@SuppressWarnings("UseOfSystemOutOrSystemErr")
+@SuppressWarnings({"UseOfSystemOutOrSystemErr", "TestOnlyProblems"})
 public class PlatformTestUtil {
   public static final boolean COVERAGE_ENABLED_BUILD = "true".equals(System.getProperty("idea.coverage.enabled.build"));
 
   private static final boolean SKIP_HEADLESS = GraphicsEnvironment.isHeadless();
   private static final boolean SKIP_SLOW = Boolean.getBoolean("skip.slow.tests.locally");
+
+  @NotNull
+  public static String getTestName(@NotNull String name, boolean lowercaseFirstLetter) {
+    name = StringUtil.trimStart(name, "test");
+    return StringUtil.isEmpty(name) ? "" : lowercaseFirstLetter(name, lowercaseFirstLetter);
+  }
+
+  @NotNull
+  public static String lowercaseFirstLetter(@NotNull String name, boolean lowercaseFirstLetter) {
+    if (lowercaseFirstLetter && !isAllUppercaseName(name)) {
+      name = Character.toLowerCase(name.charAt(0)) + name.substring(1);
+    }
+    return name;
+  }
+
+  public static boolean isAllUppercaseName(@NotNull String name) {
+    int uppercaseChars = 0;
+    for (int i = 0; i < name.length(); i++) {
+      if (Character.isLowerCase(name.charAt(i))) {
+        return false;
+      }
+      if (Character.isUpperCase(name.charAt(i))) {
+        uppercaseChars++;
+      }
+    }
+    return uppercaseChars >= 3;
+  }
 
   public static <T> void registerExtension(@NotNull ExtensionPointName<T> name, @NotNull T t, @NotNull Disposable parentDisposable) {
     registerExtension(Extensions.getRootArea(), name, t, parentDisposable);
@@ -214,7 +239,7 @@ public class PlatformTestUtil {
 
   public static void assertTreeEqual(JTree tree, String expected, boolean checkSelected) {
     String treeStringPresentation = print(tree, checkSelected);
-    assertEquals(expected, treeStringPresentation);
+    Assert.assertEquals(expected, treeStringPresentation);
   }
 
   public static void assertTreeEqualIgnoringNodesOrder(JTree tree, String expected, boolean checkSelected) {
@@ -289,11 +314,6 @@ public class PlatformTestUtil {
     return now.after(raidDate(bombedAnnotation));
   }
 
-  public static boolean isRotten(Bombed bomb) {
-    long bombRotPeriod = 30L * 24 * 60 * 60 * 1000; // month
-    return new Date().after(new Date(raidDate(bomb).getTime() + bombRotPeriod));
-  }
-
   public static StringBuilder print(AbstractTreeStructure structure,
                                     Object node,
                                     int currentLevel,
@@ -366,15 +386,15 @@ public class PlatformTestUtil {
   }
 
   public static void assertTreeStructureEquals(final AbstractTreeStructure treeStructure, final String expected) {
-    assertEquals(expected, print(treeStructure, treeStructure.getRootElement(), 0, null, -1, ' ', null).toString());
+    Assert.assertEquals(expected, print(treeStructure, treeStructure.getRootElement(), 0, null, -1, ' ', null).toString());
   }
 
   public static void invokeNamedAction(final String actionId) {
     final AnAction action = ActionManager.getInstance().getAction(actionId);
-    assertNotNull(action);
+    Assert.assertNotNull(action);
     final Presentation presentation = new Presentation();
     @SuppressWarnings("deprecation") final DataContext context = DataManager.getInstance().getDataContext();
-    final AnActionEvent event = new AnActionEvent(null, context, "", presentation, ActionManager.getInstance(), 0);
+    final AnActionEvent event = AnActionEvent.createFromAnAction(action, null, "", context);
     action.update(event);
     Assert.assertTrue(presentation.isEnabled());
     action.actionPerformed(event);
@@ -416,21 +436,9 @@ public class PlatformTestUtil {
   /**
    * example usage: startPerformanceTest("calculating pi",100, testRunnable).cpuBound().assertTiming();
    */
+  @Contract(pure = true) // to warn about not calling .assertTiming() in the end
   public static TestInfo startPerformanceTest(@NonNls @NotNull String message, int expectedMs, @NotNull ThrowableRunnable test) {
     return new TestInfo(test, expectedMs,message);
-  }
-
-  // calculates average of the median values in the selected part of the array. E.g. for part=3 returns average in the middle third.
-  public static long averageAmongMedians(@NotNull long[] time, int part) {
-    assert part >= 1;
-    int n = time.length;
-    Arrays.sort(time);
-    long total = 0;
-    for (int i= n /2- n / part /2; i< n /2+ n / part /2; i++) {
-      total += time[i];
-    }
-    int middlePartLength = n / part;
-    return middlePartLength == 0 ? 0 : total / middlePartLength;
   }
 
   public static boolean canRunTest(@NotNull Class testCaseClass) {
@@ -455,7 +463,7 @@ public class PlatformTestUtil {
   public static void assertPathsEqual(@Nullable String expected, @Nullable String actual) {
     if (expected != null) expected = FileUtil.toSystemIndependentName(expected);
     if (actual != null) actual = FileUtil.toSystemIndependentName(actual);
-    assertEquals(expected, actual);
+    Assert.assertEquals(expected, actual);
   }
 
   @NotNull
@@ -485,6 +493,7 @@ public class PlatformTestUtil {
     private final String message;         // to print on fail
     private boolean adjustForIO = true;   // true if test uses IO, timings need to be re-calibrated according to this agent disk performance
     private boolean adjustForCPU = true;  // true if test uses CPU, timings need to be re-calibrated according to this agent CPU speed
+    private boolean useLegacyScaling;
 
     private TestInfo(@NotNull ThrowableRunnable test, int expectedMs, String message) {
       this.test = test;
@@ -493,11 +502,23 @@ public class PlatformTestUtil {
       this.message = message;
     }
 
+    @Contract(pure = true) // to warn about not calling .assertTiming() in the end
     public TestInfo setup(@NotNull ThrowableRunnable setup) { assert this.setup==null; this.setup = setup; return this; }
+    @Contract(pure = true) // to warn about not calling .assertTiming() in the end
     public TestInfo usesAllCPUCores() { assert adjustForCPU : "This test configured to be io-bound, it cannot use all cores"; usesAllCPUCores = true; return this; }
+    @Contract(pure = true) // to warn about not calling .assertTiming() in the end
     public TestInfo cpuBound() { adjustForIO = false; adjustForCPU = true; return this; }
+    @Contract(pure = true) // to warn about not calling .assertTiming() in the end
     public TestInfo ioBound() { adjustForIO = true; adjustForCPU = false; return this; }
+    @Contract(pure = true) // to warn about not calling .assertTiming() in the end
     public TestInfo attempts(int attempts) { this.attempts = attempts; return this; }
+    /**
+     * @deprecated Enables procedure for nonlinear scaling of results between different machines. This was historically enabled, but doesn't
+     * seem to be meaningful, and is known to make results worse in some cases. Consider migration off this setting, recalibrating
+     * expected execution time accordingly.
+     */
+    @Contract(pure = true) // to warn about not calling .assertTiming() in the end
+    public TestInfo useLegacyScaling() { useLegacyScaling = true; return this; }
 
     public void assertTiming() {
       assert expectedMs != 0 : "Must call .expect() before run test";
@@ -520,12 +541,12 @@ public class PlatformTestUtil {
 
         int expectedOnMyMachine = expectedMs;
         if (adjustForCPU) {
-          expectedOnMyMachine = adjust(expectedOnMyMachine, Timings.CPU_TIMING, Timings.ETALON_CPU_TIMING);
+          expectedOnMyMachine = adjust(expectedOnMyMachine, Timings.CPU_TIMING, Timings.ETALON_CPU_TIMING, useLegacyScaling);
 
           expectedOnMyMachine = usesAllCPUCores ? expectedOnMyMachine * 8 / JobSchedulerImpl.CORES_COUNT : expectedOnMyMachine;
         }
         if (adjustForIO) {
-          expectedOnMyMachine = adjust(expectedOnMyMachine, Timings.IO_TIMING, Timings.ETALON_IO_TIMING);
+          expectedOnMyMachine = adjust(expectedOnMyMachine, Timings.IO_TIMING, Timings.ETALON_IO_TIMING, useLegacyScaling);
         }
 
         // Allow 10% more in case of test machine is busy.
@@ -591,14 +612,18 @@ public class PlatformTestUtil {
       return result;
     }
 
-    private static int adjust(int expectedOnMyMachine, long thisTiming, long ethanolTiming) {
-      // most of our algorithms are quadratic. sad but true.
-      double speed = 1.0 * thisTiming / ethanolTiming;
-      double delta = speed < 1
-                 ? 0.9 + Math.pow(speed - 0.7, 2)
-                 : 0.45 + Math.pow(speed - 0.25, 2);
-      expectedOnMyMachine *= delta;
-      return expectedOnMyMachine;
+    private static int adjust(int expectedOnMyMachine, long thisTiming, long etalonTiming, boolean useLegacyScaling) {
+      if (useLegacyScaling) {
+        double speed = 1.0 * thisTiming / etalonTiming;
+        double delta = speed < 1
+                       ? 0.9 + Math.pow(speed - 0.7, 2)
+                       : 0.45 + Math.pow(speed - 0.25, 2);
+        expectedOnMyMachine *= delta;
+        return expectedOnMyMachine;
+      }
+      else {
+        return (int)(expectedOnMyMachine * thisTiming / etalonTiming);
+      }
     }
   }
 
@@ -669,7 +694,7 @@ public class PlatformTestUtil {
 
     Set<String> keySetAfter = mapAfter.keySet();
     Set<String> keySetBefore = mapBefore.keySet();
-    assertEquals(dirAfter.getPath(), keySetAfter, keySetBefore);
+    Assert.assertEquals(dirAfter.getPath(), keySetAfter, keySetBefore);
 
     for (String name : keySetAfter) {
       VirtualFile fileAfter = mapAfter.get(name);
@@ -696,7 +721,7 @@ public class PlatformTestUtil {
       }
     }
 
-    assertEquals(sortAndJoin(vfsPaths), sortAndJoin(ioPaths));
+    Assert.assertEquals(sortAndJoin(vfsPaths), sortAndJoin(ioPaths));
   }
 
   private static String sortAndJoin(List<String> strings) {
@@ -733,7 +758,7 @@ public class PlatformTestUtil {
                        : LoadTextUtil.getTextByBinaryPresentation(fileAfter.contentsToByteArray(false), fileAfter).toString();
 
       if (textA != null && textB != null) {
-        assertEquals(fileAfter.getPath(), textA, textB);
+        Assert.assertEquals(fileAfter.getPath(), textA, textB);
       }
       else {
         Assert.assertArrayEquals(fileAfter.getPath(), fileAfter.contentsToByteArray(), fileBefore.contentsToByteArray());
@@ -763,9 +788,9 @@ public class PlatformTestUtil {
     }
 
     final VirtualFile dirAfter = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(tempDirectory1);
-    assertNotNull(tempDirectory1.toString(), dirAfter);
+    Assert.assertNotNull(tempDirectory1.toString(), dirAfter);
     final VirtualFile dirBefore = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(tempDirectory2);
-    assertNotNull(tempDirectory2.toString(), dirBefore);
+    Assert.assertNotNull(tempDirectory2.toString(), dirBefore);
     ApplicationManager.getApplication().runWriteAction(new Runnable() {
       @Override
       public void run() {
@@ -778,7 +803,7 @@ public class PlatformTestUtil {
 
   public static void assertElementsEqual(final Element expected, final Element actual) throws IOException {
     if (!JDOMUtil.areElementsEqual(expected, actual)) {
-      assertEquals(printElement(expected), printElement(actual));
+      Assert.assertEquals(printElement(expected), printElement(actual));
     }
   }
 
@@ -786,10 +811,7 @@ public class PlatformTestUtil {
     try {
       assertElementsEqual(JDOMUtil.loadDocument(expected).getRootElement(), actual);
     }
-    catch (IOException e) {
-      throw new AssertionError(e);
-    }
-    catch (JDOMException e) {
+    catch (IOException | JDOMException e) {
       throw new AssertionError(e);
     }
   }
@@ -826,7 +848,7 @@ public class PlatformTestUtil {
 
   @NotNull
   public static <T> T notNull(@Nullable T t) {
-    assertNotNull(t);
+    Assert.assertNotNull(t);
     return t;
   }
 
@@ -885,4 +907,14 @@ public class PlatformTestUtil {
     @Override
     public void write(int b) throws IOException { }
   };
+
+  public static void assertSuccessful(@NotNull GeneralCommandLine command) {
+    try {
+      ProcessOutput output = ExecUtil.execAndGetOutput(command.withRedirectErrorStream(true));
+      Assert.assertEquals(output.getStdout(), 0, output.getExitCode());
+    }
+    catch (ExecutionException e) {
+      throw new RuntimeException(e);
+    }
+  }
 }

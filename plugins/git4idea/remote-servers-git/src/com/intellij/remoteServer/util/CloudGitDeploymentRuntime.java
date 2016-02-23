@@ -4,6 +4,8 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Key;
@@ -176,18 +178,21 @@ public class CloudGitDeploymentRuntime extends CloudDeploymentRuntime {
     GitRepository repository = findOrCreateRepository();
     addOrResetGitRemote(application, repository);
 
-    if (firstDeploy) {
-      add();
-      commit();
-      return;
-    }
-
     final LocalChangeList activeChangeList = myChangeListManager.getDefaultChangeList();
-    if (activeChangeList == null) {
+
+    if (activeChangeList != null && !firstDeploy) {
+      commitWithChangesDialog(activeChangeList);
+    }
+    else {
       add();
       commit();
-      return;
     }
+    repository.update();
+    pushApplication(application);
+  }
+
+  protected void commitWithChangesDialog(final @NotNull LocalChangeList activeChangeList)
+    throws ServerRuntimeException {
 
     Collection<Change> changes = activeChangeList.getChanges();
     final List<Change> relevantChanges = new ArrayList<Change>();
@@ -230,16 +235,13 @@ public class CloudGitDeploymentRuntime extends CloudDeploymentRuntime {
     if (commitStarted != null && commitStarted) {
       commitSemaphore.waitFor();
       if (!commitSucceeded.get()) {
-        repository.update();
+        getRepository().update();
         throw new ServerRuntimeException("Commit failed");
       }
     }
     else {
       throw new ServerRuntimeException("Deploy interrupted");
     }
-
-    repository.update();
-    pushApplication(application);
   }
 
   private boolean isRelevant(ContentRevision contentRevision) throws ServerRuntimeException {
@@ -402,7 +404,7 @@ public class CloudGitDeploymentRuntime extends CloudDeploymentRuntime {
   protected void push(@NotNull CloudGitApplication application, @NotNull GitRepository repository, @NotNull String remote)
     throws ServerRuntimeException {
     GitCommandResult gitPushResult
-      = getGit().push(repository, remote, application.getGitUrl(), "master:master", createGitLineHandlerListener());
+      = getGit().push(repository, remote, application.getGitUrl(), "master:master", false, createGitLineHandlerListener());
     checkGitResult(gitPushResult);
   }
 
@@ -438,12 +440,16 @@ public class CloudGitDeploymentRuntime extends CloudDeploymentRuntime {
   }
 
   protected void commit() throws ServerRuntimeException {
+    commit(COMMIT_MESSAGE);
+  }
+
+  protected void commit(String message) throws ServerRuntimeException {
     try {
       if (GitUtil.hasLocalChanges(true, getProject(), myContentRoot)) {
         GitSimpleHandler handler = new GitSimpleHandler(getProject(), myContentRoot, GitCommand.COMMIT);
         handler.setSilent(false);
         handler.setStdoutSuppressed(false);
-        handler.addParameters("-m", COMMIT_MESSAGE);
+        handler.addParameters("-m", message);
         handler.endOptions();
         handler.run();
       }
@@ -454,42 +460,18 @@ public class CloudGitDeploymentRuntime extends CloudDeploymentRuntime {
   }
 
   protected void performRemoteGitTask(final GitLineHandler handler, String title) throws ServerRuntimeException {
-    final GitTask task = new GitTask(getProject(), handler, title);
-    task.setProgressAnalyzer(new GitStandardProgressAnalyzer());
-
-    final Semaphore semaphore = new Semaphore();
-    semaphore.down();
-
-    final Ref<ServerRuntimeException> errorRef = new Ref<ServerRuntimeException>();
-
-    ApplicationManager.getApplication().invokeLater(new Runnable() {
-
-      @Override
-      public void run() {
-        task.execute(false, false, new GitTaskResultHandlerAdapter() {
-
-          @Override
-          protected void run(GitTaskResult result) {
-            super.run(result);
-            semaphore.up();
-          }
-
-          @Override
-          protected void onFailure() {
-            for (VcsException error : handler.errors()) {
-              getLoggingHandler().println(error.toString());
-              if (errorRef.isNull()) {
-                errorRef.set(new ServerRuntimeException(error));
-              }
-            }
-          }
-        });
+    ProgressIndicator indicator = ProgressManager.getInstance().getProgressIndicator();
+    if (indicator != null) {
+      indicator.setText(title);
+      handler.addLineListener(GitStandardProgressAnalyzer.createListener(indicator));
+    }
+    GitCommandResult result = myGit.runCommand(handler);
+    if (!result.success()) {
+      getLoggingHandler().println(result.getErrorOutputAsJoinedString());
+      if (result.getException() != null) {
+        throw new ServerRuntimeException(result.getException());
       }
-    });
-
-    semaphore.waitFor();
-    if (!errorRef.isNull()) {
-      throw errorRef.get();
+      throw new ServerRuntimeException(result.getErrorOutputAsJoinedString());
     }
   }
 

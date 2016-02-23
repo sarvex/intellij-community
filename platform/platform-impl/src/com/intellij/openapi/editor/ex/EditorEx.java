@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,14 +21,15 @@ import com.intellij.ide.DeleteProvider;
 import com.intellij.ide.PasteProvider;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.DataContext;
+import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
-import com.intellij.openapi.editor.LogicalPosition;
-import com.intellij.openapi.editor.VisualPosition;
 import com.intellij.openapi.editor.colors.EditorColorsScheme;
 import com.intellij.openapi.editor.highlighter.EditorHighlighter;
 import com.intellij.openapi.editor.impl.TextDrawingCallback;
 import com.intellij.openapi.editor.impl.softwrap.SoftWrapAppliancePlaces;
 import com.intellij.openapi.editor.markup.TextAttributes;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -57,6 +58,21 @@ public interface EditorEx extends Editor {
   @NotNull
   MarkupModelEx getMarkupModel();
 
+  /**
+   * Returns the markup model for the underlying Document.
+   * <p>
+   * This model differs from the one from DocumentMarkupModel#forDocument,
+   * as it does not contain highlighters that should not be visible in this Editor.
+   * (for example, debugger breakpoints in a diff viewer editors)
+   *
+   * @return the markup model instance.
+   * @see com.intellij.openapi.editor.markup.MarkupEditorFilter
+   * @see com.intellij.openapi.editor.impl.EditorImpl#setHighlightingFilter(Condition<RangeHighlighter>)
+   * @see com.intellij.openapi.editor.impl.DocumentMarkupModel#forDocument(Document, Project, boolean)
+   */
+  @NotNull
+  MarkupModelEx getFilteredDocumentMarkupModel();
+
   @NotNull
   EditorGutterComponentEx getGutterComponentEx();
 
@@ -79,10 +95,6 @@ public interface EditorEx extends Editor {
   void setInsertMode(boolean val);
 
   void setColumnMode(boolean val);
-
-  void setLastColumnNumber(int val);
-
-  int getLastColumnNumber();
 
   int VERTICAL_SCROLLBAR_LEFT = 0;
   int VERTICAL_SCROLLBAR_RIGHT = 1;
@@ -108,6 +120,7 @@ public interface EditorEx extends Editor {
 
   void reinitSettings();
 
+  void addPropertyChangeListener(@NotNull PropertyChangeListener listener, @NotNull Disposable parentDisposable);
   void addPropertyChangeListener(@NotNull PropertyChangeListener listener);
 
   void removePropertyChangeListener(@NotNull PropertyChangeListener listener);
@@ -169,20 +182,8 @@ public interface EditorEx extends Editor {
   @Override
   ScrollingModelEx getScrollingModel();
 
-  @NotNull
-  LogicalPosition visualToLogicalPosition(@NotNull VisualPosition visiblePos, boolean softWrapAware);
-
-  @NotNull LogicalPosition offsetToLogicalPosition(int offset, boolean softWrapAware);
-
-  @NotNull
-  VisualPosition logicalToVisualPosition(@NotNull LogicalPosition logicalPos, boolean softWrapAware);
-
-  int logicalPositionToOffset(@NotNull LogicalPosition logicalPos, boolean softWrapAware);
-
   /**
    * Creates color scheme delegate which is bound to current editor. E.g. all schema changes will update editor state.
-   * @param customGlobalScheme
-   * @return
    */
   @NotNull
   EditorColorsScheme createBoundColorSchemeDelegate(@Nullable EditorColorsScheme customGlobalScheme);
@@ -207,6 +208,14 @@ public interface EditorEx extends Editor {
    */
   void setPlaceholder(@Nullable CharSequence text);
 
+  /**
+   * Sets text attributes for a placeholder. Font style and color are currently supported. 
+   * <code>null</code> means default values should be used.
+   * 
+   * @see #setPlaceholder(CharSequence)
+   */
+  void setPlaceholderAttributes(@Nullable TextAttributes attributes);
+  
   /**
    * Controls whether <code>'placeholder text'</code> is visible when editor is focused.
    *
@@ -256,11 +265,13 @@ public interface EditorEx extends Editor {
   /**
    * We often re-use the logic encapsulated at the editor. For example, every time we show editor fragment (folding, preview etc) we
    * create a dedicated graphics object and ask the editor to paint into it.
-   * <p/>
+   * <p>
    * The thing is that the editor itself may change its state if any postponed operation is triggered by the painting request
    * (e.g. soft wraps recalculation is triggered by the paint request and newly calculated soft wraps cause caret to change its position).
-   * <p/>
+   * <p>
    * This method allows to inform the editor that all subsequent painting request should not change the editor state.
+   * <p>
+   * In 'pure painting mode' editor also behaves as if soft wraps were not enabled.
    *
    * @param enabled  'pure painting mode' status to use
    */
@@ -271,8 +282,34 @@ public interface EditorEx extends Editor {
    * This is needed to allow a parent component draw above the scrollbar components (e.g. in the merge tool),
    * otherwise the drawings are cleared once the scrollbar gets repainted (which may happen suddenly, because the scrollbar UI uses the
    * {@link com.intellij.util.ui.Animator} to draw itself.
-   * @param callback  callback which will be called from the {@link javax.swing.JComponent#paint(java.awt.Graphics)} method of
+   * @param callback  callback which will be called from the {@link JComponent#paint(Graphics)} method of
    *                  the editor vertical scrollbar.
    */
   void registerScrollBarRepaintCallback(@Nullable ButtonlessScrollBarUI.ScrollbarRepaintCallback callback);
+
+  /**
+   * @return the offset that the caret is expected to be but maybe not yet.
+   * E.g. when user right-clicks the mouse the caret is not immediately jumps there but the click-handler wants to know that location already.
+   *
+   * When no mouse-clicks happened return the regular caret offset.
+   */
+  int getExpectedCaretOffset();
+
+  /**
+   * Sets id of action group what will be used to construct context menu displayed on mouse right button's click. Setting this to 
+   * <code>null</code> disables built-in logic for showing context menu (it can still be achieved by implementing corresponding mouse
+   * event listener).
+   * 
+   * @see #getContextMenuGroupId() 
+   */
+  void setContextMenuGroupId(@Nullable String groupId);
+
+  /**
+   * Returns id of action group what will be used to construct context menu displayed on mouse right button's click. <code>null</code>
+   * value means built-in logic for showing context menu is disabled.
+   * 
+   * @see #setContextMenuGroupId(String)
+   */
+  @Nullable
+  String getContextMenuGroupId();
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 package com.intellij.ui;
 
 import com.intellij.openapi.wm.IdeFocusManager;
+import com.intellij.util.ui.JBInsets;
 import com.intellij.util.ui.JBUI;
+import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -38,7 +40,7 @@ public class JBCardLayout extends CardLayout {
   private Map<String, Component> myMap = new LinkedHashMap<String, Component>();
   private int mySwipeTime = 200;//default value, provide setter if need
   private int mySwipeSteps = 20;//default value, provide setter if need
-  private final Timer myTimer = new Timer(Math.max(1, mySwipeTime / mySwipeSteps), null);
+  private final Timer myTimer = UIUtil.createNamedTimer("CardLayoutTimer",Math.max(1, mySwipeTime / mySwipeSteps));
   private Component mySwipeFrom = null;
   private Component mySwipeTo = null;
 
@@ -125,11 +127,8 @@ public class JBCardLayout extends CardLayout {
         }
         linearProgress[0] = Math.min(1, Math.max(0, (float)timePassed / mySwipeTime));
         double naturalProgress = (1 - Math.cos(Math.PI * linearProgress[0])) / 2;
-        Rectangle bounds = parent.getBounds();
-        Insets insets = parent.getInsets();
-        bounds.setLocation(insets.left, insets.top);
-        bounds.width -= insets.left + insets.right;
-        bounds.height -= insets.top + insets.bottom;
+        Rectangle bounds = new Rectangle(parent.getWidth(), parent.getHeight());
+        JBInsets.removeFrom(bounds, parent.getInsets());
         Rectangle r = new Rectangle(bounds);
         int x = (int)((naturalProgress * r.width));
         r.translate(isForward ? -x : x, 0);

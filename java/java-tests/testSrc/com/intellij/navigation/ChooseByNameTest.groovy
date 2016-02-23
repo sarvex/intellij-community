@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 package com.intellij.navigation
+
 import com.intellij.ide.util.gotoByName.*
 import com.intellij.lang.java.JavaLanguage
 import com.intellij.openapi.Disposable
@@ -27,6 +28,8 @@ import com.intellij.testFramework.fixtures.LightCodeInsightFixtureTestCase
 import com.intellij.util.Consumer
 import com.intellij.util.concurrency.Semaphore
 import org.jetbrains.annotations.NotNull
+import org.jetbrains.plugins.groovy.lang.psi.GroovyFile
+
 /**
  * @author peter
  */
@@ -102,7 +105,14 @@ class Intf {
 }""")
 
     def elements = getPopupElements(new GotoSymbolModel2(project), "xxx")
-    assert elements == [intf.findMethodsByName('xxx2', false), ChooseByNameBase.NON_PREFIX_SEPARATOR, intf.findMethodsByName('_xxx1', false)]
+
+    def xxx1
+    def xxx2
+    edt {
+      xxx1 = intf.findMethodsByName('_xxx1', false)
+      xxx2 = intf.findMethodsByName('xxx2', false)
+    }
+    assert elements == [xxx2, ChooseByNameBase.NON_PREFIX_SEPARATOR, xxx1]
   }
 
   public void "test prefer exact extension matches"() {
@@ -110,6 +120,13 @@ class Intf {
     def mod = myFixture.addFileToProject("reference.mod", "")
     def elements = getPopupElements(new GotoFileModel(project), "re*.m")
     assert elements == [m, mod]
+  }
+
+  public void "test consider dot-idea files out of project"() {
+    def outside = myFixture.addFileToProject(".idea/workspace.xml", "")
+    def inside = myFixture.addFileToProject("workspace.txt", "")
+    assert getPopupElements(new GotoFileModel(project), "work", false) == [inside]
+    assert getPopupElements(new GotoFileModel(project), "work", true) == [inside, outside]
   }
 
   public void "test prefer better path matches"() {
@@ -181,7 +198,8 @@ class Intf {
   }
 
   public void "test find method by qualified name"() {
-    def method = myFixture.addClass("package foo.bar; class Goo { void zzzZzz() {} }").methods[0]
+    def clazz = myFixture.addClass("package foo.bar; class Goo { void zzzZzz() {} }")
+    def method = ApplicationManager.application.runReadAction( { clazz.methods[0] } as Computable)
     assert getPopupElements(new GotoSymbolModel2(project), 'zzzZzz') == [method]
     assert getPopupElements(new GotoSymbolModel2(project), 'goo.zzzZzz') == [method]
     assert getPopupElements(new GotoSymbolModel2(project), 'foo.bar.goo.zzzZzz') == [method]
@@ -199,9 +217,18 @@ class Intf {
     assert getPopupElements(new GotoClassModel2(project), 'Bar:[2,3]') == [c]
   }
 
+  public void "test custom line suffixes"() {
+    def file = myFixture.addFileToProject("Bar.txt", "")
+    def model = new GotoFileModel(project)
+    assert getPopupElements(model, 'Bar:2') == [file]
+    assert getPopupElements(model, 'Bar(2)') == [file]
+    assert getPopupElements(model, 'Bar on line 2') == [file]
+    assert getPopupElements(model, 'Bar at line 2') == [file]
+  }
+
   public void "test dollar"() {
     def bar = myFixture.addClass("package foo; class Bar { class Foo {} }")
-    def foo = bar.innerClasses[0]
+    def foo = ApplicationManager.application.runReadAction( { bar.innerClasses[0] } as Computable)
     myFixture.addClass("package goo; class Goo { }")
     assert getPopupElements(new GotoClassModel2(project), 'Bar$Foo') == [foo]
     assert getPopupElements(new GotoClassModel2(project), 'foo.Bar$Foo') == [foo]
@@ -226,6 +253,13 @@ class Intf {
     assert getPopupElements(new GotoClassModel2(project), 'goo.baz.Bar') == [bar2]
   }
 
+  public void "test try lowercase pattern if nothing matches"() {
+    def match = myFixture.addClass("class IPRoi { }")
+    def nonMatch = myFixture.addClass("class InspectionProfileImpl { }")
+    assert getPopupElements(new GotoClassModel2(project), 'IPRoi') == [match]
+    assert getPopupElements(new GotoClassModel2(project), 'IproImpl') == [nonMatch]
+  }
+
   private static filterJavaItems(List<Object> items) {
     return ApplicationManager.application.runReadAction ({
       return items.findAll { it instanceof PsiElement && it.language == JavaLanguage.INSTANCE }
@@ -233,9 +267,11 @@ class Intf {
   }
 
   public void "test super method in jdk"() {
-    def ourRun = myFixture.addClass("package foo.bar; class Goo implements Runnable { public void run() {} }").methods[0]
+    def clazz = myFixture.addClass("package foo.bar; class Goo implements Runnable { public void run() {} }")
+    def ourRun
     def sdkRun
     edt {
+      ourRun = clazz.methods[0]
       sdkRun = ourRun.containingClass.interfaces[0].methods[0]
     }
 
@@ -249,18 +285,33 @@ class Intf {
   }
 
   public void "test super method not matching query qualifier"() {
-    def base = myFixture.addClass("class Base { void xpaint() {} }").methods[0]
-    def sub = myFixture.addClass("class Sub extends Base { void xpaint() {} }").methods[0]
+    def baseClass = myFixture.addClass("class Base { void xpaint() {} }")
+    def subClass = myFixture.addClass("class Sub extends Base { void xpaint() {} }")
+    
+    def base
+    def sub
+    edt {
+      base = baseClass.methods[0]
+      sub = subClass.methods[0]
+    }
 
     assert getPopupElements(new GotoSymbolModel2(project), 'Ba.xpai', false) == [base]
     assert getPopupElements(new GotoSymbolModel2(project), 'Su.xpai', false) == [sub]
+  }
+
+  public void "test groovy script class with non-identifier name"() {
+    GroovyFile file1 = myFixture.addFileToProject('foo.groovy', '')
+    GroovyFile file2 = myFixture.addFileToProject('foo-bar.groovy', '')
+
+    def variants = getPopupElements(new GotoSymbolModel2(project), 'foo', false)
+    edt { assert variants == [file1.scriptClass, file2.scriptClass] }
   }
 
   private List<Object> getPopupElements(ChooseByNameModel model, String text, boolean checkboxState = false) {
     return calcPopupElements(createPopup(model), text, checkboxState)
   }
 
-  static ArrayList<String> calcPopupElements(ChooseByNamePopup popup, String text, boolean checkboxState = false) {
+  static ArrayList<Object> calcPopupElements(ChooseByNamePopup popup, String text, boolean checkboxState = false) {
     List<Object> elements = ['empty']
     def semaphore = new Semaphore()
     semaphore.down()
@@ -282,9 +333,11 @@ class Intf {
       myPopup.close(false)
     }
 
-    def popup = myPopup = ChooseByNamePopup.createPopup(project, model, (PsiElement)context, "")
-    Disposer.register(testRootDisposable, { popup.close(false) } as Disposable)
-    popup
+    edt {
+      def popup = myPopup = ChooseByNamePopup.createPopup(project, model, (PsiElement)context, "")
+      Disposer.register(testRootDisposable, { popup.close(false) } as Disposable)
+    }
+    myPopup
   }
 
   @Override

@@ -373,7 +373,7 @@ public class Replacer {
       }
 
       StructuralSearchProfile profile = StructuralSearchUtil.getProfileByFileType(fileType);
-
+      assert profile != null;
       profile.checkReplacementPattern(project, options);
 
     } catch(IncorrectOperationException ex) {
@@ -390,7 +390,7 @@ public class Replacer {
         final MatchResult r = i.next();
 
         if (MatchResult.LINE_MATCH.equals(r.getName())) {
-          PsiElement element = r.getMatchRef().getElement();
+          PsiElement element = r.getMatch();
 
           if (element instanceof PsiDocCommentBase) { // doc comment is not collapsed when created in block
             if (i.hasNext()) {
@@ -409,7 +409,7 @@ public class Replacer {
         }
       }
     } else {
-      l.add( manager.createSmartPsiElementPointer(result.getMatchRef().getElement()));
+      l.add(manager.createSmartPsiElementPointer(result.getMatch()));
     }
 
     ReplacementInfoImpl replacementInfo = new ReplacementInfoImpl();

@@ -12,6 +12,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
+import com.intellij.openapi.util.Pair;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CodeStyleManager;
 import com.intellij.psi.impl.AllowedApiFilterExtension;
@@ -20,11 +21,9 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.searches.ReferencesSearch;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
-import com.intellij.refactoring.typeMigration.TypeConversionDescriptor;
-import com.intellij.refactoring.typeMigration.TypeMigrationLabeler;
-import com.intellij.refactoring.typeMigration.TypeMigrationReplacementUtil;
-import com.intellij.refactoring.typeMigration.TypeMigrationRules;
+import com.intellij.refactoring.typeMigration.*;
 import com.intellij.refactoring.typeMigration.rules.ThreadLocalConversionRule;
+import com.intellij.refactoring.typeMigration.usageInfo.TypeMigrationUsageInfo;
 import com.intellij.refactoring.util.RefactoringUtil;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.Query;
@@ -32,6 +31,7 @@ import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.Map;
 import java.util.Set;
 
@@ -61,7 +61,7 @@ public class ConvertFieldToThreadLocalIntention extends PsiElementBaseIntentionA
     if (psiField.getTypeElement() == null) return false;
     final PsiType fieldType = psiField.getType();
     final PsiClass fieldTypeClass = PsiUtil.resolveClassInType(fieldType);
-    if (fieldType instanceof PsiPrimitiveType || fieldType instanceof PsiArrayType) return true;
+    if (fieldType instanceof PsiPrimitiveType && !PsiType.VOID.equals(fieldType) || fieldType instanceof PsiArrayType) return true;
     return fieldTypeClass != null && !Comparing.strEqual(fieldTypeClass.getQualifiedName(), ThreadLocal.class.getName())
            && AllowedApiFilterExtension.isClassAllowed(ThreadLocal.class.getName(), element);
   }
@@ -70,7 +70,6 @@ public class ConvertFieldToThreadLocalIntention extends PsiElementBaseIntentionA
   public void invoke(@NotNull Project project, Editor editor, @NotNull PsiElement element) throws IncorrectOperationException {
     final PsiField psiField = PsiTreeUtil.getParentOfType(element, PsiField.class);
     LOG.assertTrue(psiField != null);
-    psiField.normalizeDeclaration();
     final Query<PsiReference> refs = ReferencesSearch.search(psiField);
 
     final Set<PsiElement> elements = new HashSet<PsiElement>();
@@ -79,6 +78,7 @@ public class ConvertFieldToThreadLocalIntention extends PsiElementBaseIntentionA
       elements.add(reference.getElement());
     }
     if (!FileModificationService.getInstance().preparePsiElementsForWrite(elements)) return;
+    psiField.normalizeDeclaration();
 
     final JavaPsiFacade psiFacade = JavaPsiFacade.getInstance(project);
     final PsiElementFactory factory = JavaPsiFacade.getElementFactory(project);
@@ -98,10 +98,9 @@ public class ConvertFieldToThreadLocalIntention extends PsiElementBaseIntentionA
     final PsiClassType toType = factory.createType(threadLocalClass, factory.createSubstitutor(substitutor));
 
     try {
-      final TypeMigrationRules rules = new TypeMigrationRules(fromType);
-      rules.setMigrationRootType(toType);
+      final TypeMigrationRules rules = new TypeMigrationRules();
       rules.setBoundScope(GlobalSearchScope.fileScope(element.getContainingFile()));
-      final TypeMigrationLabeler labeler = new TypeMigrationLabeler(rules);
+      final TypeMigrationLabeler labeler = new TypeMigrationLabeler(rules, toType);
       labeler.getMigratedUsages(false, psiField);
       for (PsiReference reference : refs) {
         PsiElement psiElement = reference.getElement();
@@ -112,12 +111,26 @@ public class ConvertFieldToThreadLocalIntention extends PsiElementBaseIntentionA
           }
           final TypeConversionDescriptor conversion = ThreadLocalConversionRule.findDirectConversion(psiElement, toType, fromType, labeler);
           if (conversion != null) {
-            TypeMigrationReplacementUtil.replaceExpression((PsiExpression)psiElement, project, conversion);
+            TypeMigrationReplacementUtil.replaceExpression((PsiExpression)psiElement, project, conversion, new TypeEvaluator(null, null));
           }
         }
       }
 
       PsiExpression initializer = psiField.getInitializer();
+      if (initializer == null) {
+        final PsiType type = psiField.getType();
+        String initializerText = null;
+        if (PsiType.BOOLEAN.equals(type)) {
+          initializerText = "false";
+        }
+        else if (type instanceof PsiPrimitiveType) {
+          initializerText = "0";
+        }
+        if (initializerText != null) {
+          psiField.setInitializer(factory.createExpressionFromText(initializerText, psiField));
+          initializer = psiField.getInitializer();
+        }
+      }
       if (initializer != null) {
         if (initializer instanceof PsiArrayInitializerExpression) {
           PsiExpression normalizedExpr =
@@ -125,7 +138,7 @@ public class ConvertFieldToThreadLocalIntention extends PsiElementBaseIntentionA
           initializer = (PsiExpression)initializer.replace(normalizedExpr);
         }
         final TypeConversionDescriptor conversion = ThreadLocalConversionRule.wrapWithNewExpression(toType, fromType, initializer);
-        TypeMigrationReplacementUtil.replaceExpression(initializer, project, conversion);
+        TypeMigrationReplacementUtil.replaceExpression(initializer, project, conversion, new TypeEvaluator(null, null));
         CodeStyleManager.getInstance(project).reformat(psiField);
       }
       else if (!assertNotNull(psiField.getModifierList()).hasModifierProperty(PsiModifier.FINAL)) {

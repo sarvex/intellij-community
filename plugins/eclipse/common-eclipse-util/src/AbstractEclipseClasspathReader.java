@@ -71,7 +71,7 @@ public abstract class AbstractEclipseClasspathReader<T> {
                                            boolean exported,
                                            String libName,
                                            String url,
-                                           String srcUrl, ExpandMacroToPathMap macroMap);
+                                           String srcUrl, String nativeRoot, ExpandMacroToPathMap macroMap);
 
   protected abstract String expandEclipsePath2Url(T rootModel, String path);
 
@@ -94,7 +94,6 @@ public abstract class AbstractEclipseClasspathReader<T> {
       throw new ConversionException("Missing classpathentry/@kind");
     }
 
-
     String path = element.getAttributeValue(EclipseXml.PATH_ATTR);
     if (path == null) {
       //noinspection SpellCheckingInspection
@@ -113,7 +112,7 @@ public abstract class AbstractEclipseClasspathReader<T> {
         String srcUrl = pathToUrl(myRootPath + "/" + path);
         boolean isTestFolder;
         try {
-          isTestFolder = testPattern != null && testPattern.length() > 0 && path.matches(testPattern);
+          isTestFolder = !StringUtil.isEmpty(testPattern) && path.matches(testPattern);
         }
         catch (PatternSyntaxException e) {
           isTestFolder = false;
@@ -136,7 +135,6 @@ public abstract class AbstractEclipseClasspathReader<T> {
         }
       }
     }
-
     else if (kind.equals(EclipseXml.OUTPUT_KIND)) {
       String output = myRootPath + "/" + path;
       String linked = expandLinkedResourcesPath(macroMap, path);
@@ -148,10 +146,7 @@ public abstract class AbstractEclipseClasspathReader<T> {
       }
       setupOutput(rootModel, output);
     }
-
     else if (kind.equals(EclipseXml.LIB_KIND)) {
-      final String libName = getPresentableName(path, libs);
-
       String linked = expandLinkedResourcesPath(macroMap, path);
       String url;
       if (linked != null) {
@@ -183,7 +178,12 @@ public abstract class AbstractEclipseClasspathReader<T> {
         }
       }
 
-      addModuleLibrary(rootModel, element, exported, libName, url, srcUrl, macroMap);
+      String nativeRoot = getNativeLibraryRoot(element);
+      if (nativeRoot != null) {
+        nativeRoot = expandEclipsePath2Url(rootModel, nativeRoot);
+      }
+
+      addModuleLibrary(rootModel, element, exported, getPresentableName(path, libs), url, srcUrl, nativeRoot, macroMap);
     }
     else if (kind.equals(EclipseXml.VAR_KIND)) {
       int slash = path.indexOf("/");
@@ -206,7 +206,11 @@ public abstract class AbstractEclipseClasspathReader<T> {
           eclipseModuleManager.registerEclipseSrcVariablePath(srcUrl, srcPathAttr);
         }
       }
-      addModuleLibrary(rootModel, element, exported, libName, url, srcUrl, macroMap);
+      String nativeRoot = getNativeLibraryRoot(element);
+      if (nativeRoot != null) {
+        nativeRoot = expandEclipsePath2Url(rootModel, nativeRoot);
+      }
+      addModuleLibrary(rootModel, element, exported, libName, url, srcUrl, nativeRoot, macroMap);
     }
     else if (kind.equals(EclipseXml.CON_KIND)) {
       if (path.equals(EclipseXml.ECLIPSE_PLATFORM)) {
@@ -247,6 +251,18 @@ public abstract class AbstractEclipseClasspathReader<T> {
     }
   }
 
+  private static String getNativeLibraryRoot(Element element) {
+    final Element attributes = element.getChild(EclipseXml.ATTRIBUTES_TAG);
+    if (attributes != null) {
+      for (Element attributeElement : attributes.getChildren(EclipseXml.ATTRIBUTE_TAG)) {
+        if (EclipseXml.DLL_LINK.equals(attributeElement.getAttributeValue(EclipseXml.NAME_ATTR))) {
+          return attributeElement.getAttributeValue(EclipseXml.VALUE_ATTR);
+        }
+      }
+    }
+    return null;
+  }
+
   protected static int srcVarStart(String srcPath) {
     return srcPath.startsWith("/") ? 1 : 0;
   }
@@ -258,9 +274,13 @@ public abstract class AbstractEclipseClasspathReader<T> {
 
   @NotNull
   protected static String getPresentableName(@NotNull String path, Set<String> names) {
-    final String pathComponent = getLastPathComponent(path);
-    if (pathComponent != null && names != null && !names.add(pathComponent)) return path;
-    return pathComponent != null ? pathComponent : path;
+    String pathComponent = getLastPathComponent(path);
+    if (pathComponent != null && names != null && !names.add(pathComponent)) {
+      return path;
+    }
+    else {
+      return pathComponent == null ? path : pathComponent;
+    }
   }
 
   @Nullable

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,10 +22,14 @@ import com.intellij.execution.ui.ConsoleViewContentType;
 import com.intellij.icons.AllIcons;
 import com.intellij.notification.impl.NotificationsManagerImpl;
 import com.intellij.openapi.actionSystem.*;
-import com.intellij.openapi.editor.*;
+import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.EditorFactory;
+import com.intellij.openapi.editor.ScrollType;
 import com.intellij.openapi.editor.colors.EditorColorsManager;
 import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.editor.event.EditorMouseEvent;
+import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.editor.ex.EditorMarkupModel;
 import com.intellij.openapi.editor.markup.*;
 import com.intellij.openapi.project.DumbAwareAction;
@@ -76,7 +80,7 @@ class EventLogConsole {
 
   private Editor createLogEditor() {
     Project project = myProjectModel.getProject();
-    final Editor editor = ConsoleViewUtil.setupConsoleEditor(project, false, false);
+    final EditorEx editor = ConsoleViewUtil.setupConsoleEditor(project, false, false);
     myProjectModel.getProject().getMessageBus().connect().subscribe(ProjectManager.TOPIC, new ProjectManagerAdapter() {
       @Override
       public void projectClosed(Project project) {
@@ -91,6 +95,7 @@ class EventLogConsole {
     final ClearLogAction clearLog = new ClearLogAction(this);
     clearLog.registerCustomShortcutSet(ActionManager.getInstance().getAction(IdeActions.CONSOLE_CLEAR_ALL).getShortcutSet(), editor.getContentComponent());
 
+    editor.setContextMenuGroupId(null); // disabling default context menu
     editor.addEditorMouseListener(new EditorPopupHandler() {
       public void invokePopup(final EditorMouseEvent event) {
         final ActionManager actionManager = ActionManager.getInstance();
@@ -119,12 +124,7 @@ class EventLogConsole {
     Document document = editor.getDocument();
     boolean scroll = document.getTextLength() == editor.getCaretModel().getOffset() || !editor.getContentComponent().hasFocus();
 
-    Long notificationTime = myProjectModel.getNotificationTime(notification);
-    if (notificationTime == null) {
-      return;
-    }
-
-    String date = DateFormatUtil.formatTimeWithSeconds(notificationTime) + " ";
+    String date = DateFormatUtil.formatTimeWithSeconds(notification.getTimestamp()) + " ";
     append(document, date);
 
     int startLine = document.getLineCount() - 1;

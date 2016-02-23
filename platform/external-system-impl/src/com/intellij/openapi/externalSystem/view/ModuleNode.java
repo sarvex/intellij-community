@@ -55,7 +55,8 @@ public class ModuleNode extends ExternalSystemNode<ModuleData> {
       hint = "root";
     }
 
-    setNameAndTooltip(getName(), myData.toString(), hint);
+    final String tooltip = myData.toString() + (myData.getDescription() != null ? "<br>" + myData.getDescription() : "");
+    setNameAndTooltip(getName(), tooltip, hint);
   }
 
   @NotNull
@@ -76,12 +77,12 @@ public class ModuleNode extends ExternalSystemNode<ModuleData> {
   @Nullable
   @Override
   protected String getMenuId() {
-    return "ExternalSystemView.ProjectMenu";
+    return "ExternalSystemView.ModuleMenu";
   }
 
   @Override
   public boolean isVisible() {
-    return true;
+    return super.isVisible();
   }
 
   @Override

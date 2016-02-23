@@ -23,8 +23,10 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.JavaProjectRootsUtil;
 import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.openapi.roots.ProjectRootManager;
+import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
@@ -37,6 +39,7 @@ import com.intellij.refactoring.util.MoveRenameUsageInfo;
 import com.intellij.refactoring.util.RefactoringUtil;
 import com.intellij.refactoring.util.TextOccurrencesUtil;
 import com.intellij.usageView.UsageInfo;
+import com.intellij.util.Function;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.containers.HashMap;
 import com.intellij.psi.util.FileTypeUtils;
@@ -230,7 +233,8 @@ public class MoveClassesOrPackagesUtil {
     final PsiPackage newPackage = JavaDirectoryService.getInstance().getPackage(moveDestination);
 
     newClass = aClass;
-    if (!moveDestination.equals(file.getContainingDirectory())) {
+    final PsiDirectory containingDirectory = file.getContainingDirectory();
+    if (!Comparing.equal(moveDestination.getVirtualFile(), containingDirectory != null ? containingDirectory.getVirtualFile() : null)) {
       LOG.assertTrue(file.getVirtualFile() != null, aClass);
       MoveFilesOrDirectoriesUtil.doMoveFile(file, moveDestination);
       if (file instanceof PsiClassOwner && newPackage != null && !FileTypeUtils.isInServerPageFile(file)) {
@@ -238,7 +242,15 @@ public class MoveClassesOrPackagesUtil {
         String aClassName = aClass.getName();
         ((PsiClassOwner)file).setPackageName(newPackage.getQualifiedName());
         newClass = findClassByName((PsiClassOwner)file, aClassName);
-        LOG.assertTrue(newClass != null);
+        LOG.assertTrue(newClass != null, "name: " + aClassName +
+                                         ", file: " + file +
+                                         ", classes: " + StringUtil.join(((PsiClassOwner)file).getClasses(),
+                                                                         new Function<PsiClass, String>() {
+                                                                           @Override
+                                                                           public String fun(PsiClass psiClass) {
+                                                                             return psiClass.getName();
+                                                                           }
+                                                                         }, " "));
       }
     }
     return newClass;

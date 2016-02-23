@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,13 @@
  */
 package com.intellij.openapi.vfs.newvfs;
 
+import com.intellij.openapi.fileTypes.FileTypeRegistry;
+import com.intellij.openapi.fileTypes.FileTypes;
+import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.io.BufferExposingByteArrayInputStream;
 import com.intellij.openapi.util.io.FileAttributes;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.openapi.vfs.LocalFileSystem;
-import com.intellij.openapi.vfs.VfsBundle;
-import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.*;
 import com.intellij.openapi.vfs.impl.ArchiveHandler;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -35,6 +36,8 @@ import java.io.OutputStream;
  * @since 138.100
  */
 public abstract class ArchiveFileSystem extends NewVirtualFileSystem {
+  private static final Key<VirtualFile> LOCAL_FILE = Key.create("vfs.archive.local.file");
+
   /**
    * Returns a root entry of an archive hosted by a given local file
    * (i.e.: file:///path/to/jar.jar => jar:///path/to/jar.jar!/),
@@ -52,9 +55,7 @@ public abstract class ArchiveFileSystem extends NewVirtualFileSystem {
    */
   @Nullable
   public VirtualFile getRootByEntry(@NotNull VirtualFile entry) {
-    if (entry.getFileSystem() != this) return null;
-    String rootPath = extractRootPath(entry.getPath());
-    return findFileByPath(rootPath);
+    return entry.getFileSystem() != this ? null : VfsUtil.getRootFile(entry);
   }
 
   /**
@@ -65,8 +66,17 @@ public abstract class ArchiveFileSystem extends NewVirtualFileSystem {
   @Nullable
   public VirtualFile getLocalByEntry(@NotNull VirtualFile entry) {
     if (entry.getFileSystem() != this) return null;
-    String localPath = extractLocalPath(extractRootPath(entry.getPath()));
-    return LocalFileSystem.getInstance().findFileByPath(localPath);
+
+    VirtualFile root = getRootByEntry(entry);
+    assert root != null : entry;
+
+    VirtualFile local = LOCAL_FILE.get(root);
+    if (local == null) {
+      String localPath = extractLocalPath(root.getPath());
+      local = StandardFileSystems.local().findFileByPath(localPath);
+      if (local != null) LOCAL_FILE.set(root, local);
+    }
+    return local;
   }
 
   /**
@@ -217,5 +227,26 @@ public abstract class ArchiveFileSystem extends NewVirtualFileSystem {
   @Override
   public OutputStream getOutputStream(@NotNull VirtualFile file, Object requestor, long modStamp, long timeStamp) throws IOException {
     throw new IOException(VfsBundle.message("jar.modification.not.supported.error", file.getUrl()));
+  }
+
+  // service methods
+
+  /**
+   * Returns a local file of an archive which hosts a root with the given path
+   * (i.e.: "jar:///path/to/jar.jar!/" => file:///path/to/jar.jar),
+   * or null if the local file is of incorrect type.
+   */
+  @Nullable
+  public VirtualFile findLocalByRootPath(@NotNull String rootPath) {
+    String localPath = extractLocalPath(rootPath);
+    VirtualFile local = StandardFileSystems.local().findFileByPath(localPath);
+    return local != null && isCorrectFileType(local) ? local : null;
+  }
+
+  /**
+   * Implementations should return {@code false} if the given file may not host this file system.
+   */
+  protected boolean isCorrectFileType(@NotNull VirtualFile local) {
+    return FileTypeRegistry.getInstance().getFileTypeByFileName(local.getName()) == FileTypes.ARCHIVE;
   }
 }

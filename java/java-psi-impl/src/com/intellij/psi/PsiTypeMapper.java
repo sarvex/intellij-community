@@ -28,7 +28,7 @@ import java.util.List;
  * @author peter
  */
 public abstract class PsiTypeMapper extends PsiTypeVisitorEx<PsiType> {
-  private static final Logger LOG = Logger.getInstance("#com.intellij.psi.PsiTypeMapper");
+  protected static final Logger LOG = Logger.getInstance("#com.intellij.psi.PsiTypeMapper");
 
   @Nullable
   public <T extends PsiType> T mapType(@NotNull T type) {
@@ -42,7 +42,7 @@ public abstract class PsiTypeMapper extends PsiTypeVisitorEx<PsiType> {
     PsiType mappedComponent = mapType(componentType);
     if (mappedComponent == null) return null;
     if (mappedComponent == componentType) return type;
-    return new PsiArrayType(mappedComponent);
+    return new PsiArrayType(mappedComponent, type.getAnnotationProvider());
   }
 
   @Override
@@ -51,7 +51,7 @@ public abstract class PsiTypeMapper extends PsiTypeVisitorEx<PsiType> {
     PsiType mappedComponent = mapType(componentType);
     if (mappedComponent == null) return null;
     if (mappedComponent == componentType) return type;
-    return new PsiEllipsisType(mappedComponent);
+    return new PsiEllipsisType(mappedComponent, type.getAnnotationProvider());
   }
 
   @Override
@@ -66,8 +66,7 @@ public abstract class PsiTypeMapper extends PsiTypeVisitorEx<PsiType> {
 
   @Override
   public PsiType visitCapturedWildcardType(final PsiCapturedWildcardType type) {
-    PsiWildcardType mapped = mapType(type.getWildcard());
-    return mapped == null ? null : PsiCapturedWildcardType.create(mapped, type.getContext(), type.getTypeParameter());
+    return type;
   }
 
   @Override
@@ -105,7 +104,7 @@ public abstract class PsiTypeMapper extends PsiTypeVisitorEx<PsiType> {
 
       substituted.add(mapped);
     }
-    return PsiIntersectionType.createIntersection(substituted);
+    return PsiIntersectionType.createIntersection(false, substituted.toArray(new PsiType[substituted.size()]));
   }
 
   @Override

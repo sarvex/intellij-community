@@ -23,6 +23,7 @@ import com.intellij.openapi.vcs.history.VcsRevisionNumber;
 import com.intellij.openapi.vcs.impl.ContentRevisionCache;
 import com.intellij.openapi.vcs.impl.CurrentRevisionProvider;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -64,7 +65,7 @@ public class VcsCurrentRevisionProxy implements ContentRevision {
 
   @NotNull
   public FilePath getFile() {
-    return new FilePathImpl(myFile);
+    return VcsUtil.getFilePath(myFile);
   }
 
   @NotNull
@@ -79,10 +80,10 @@ public class VcsCurrentRevisionProxy implements ContentRevision {
 
   private ContentRevision getVcsRevision() throws VcsException {
     final FilePath file = getFile();
-    final Pair<VcsRevisionNumber, String> pair;
+    final Pair<VcsRevisionNumber, byte[]> pair;
     try {
-      pair = ContentRevisionCache.getOrLoadCurrentAsString(myProject, file, myVcsKey,
-                                                           new CurrentRevisionProvider() {
+      pair = ContentRevisionCache.getOrLoadCurrentAsBytes(myProject, file, myVcsKey,
+                                                          new CurrentRevisionProvider() {
                                                              @Override
                                                              public VcsRevisionNumber getCurrentRevision() throws VcsException {
                                                                return getCurrentRevisionNumber();
@@ -98,9 +99,16 @@ public class VcsCurrentRevisionProxy implements ContentRevision {
       throw new VcsException(e);
     }
 
-    return new ContentRevision() {
+    return new ByteBackedContentRevision() {
       @Override
       public String getContent() throws VcsException {
+        byte[] byteContent = getContentAsBytes();
+        return ContentRevisionCache.getAsString(byteContent, file, null);
+      }
+
+      @Nullable
+      @Override
+      public byte[] getContentAsBytes() throws VcsException {
         return pair.getSecond();
       }
 

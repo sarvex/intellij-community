@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ public abstract class PersistentFS extends ManagingFS {
 
   public abstract String getName(int id);
 
-  public abstract boolean isSpecialFile(@NotNull VirtualFile file);
+  public abstract long getLastRecordedLength(@NotNull VirtualFile file);
 
   public abstract boolean isHidden(@NotNull VirtualFile file);
 

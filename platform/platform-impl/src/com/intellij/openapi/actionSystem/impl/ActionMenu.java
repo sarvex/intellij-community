@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,13 @@
 package com.intellij.openapi.actionSystem.impl;
 
 import com.intellij.ide.DataManager;
+import com.intellij.ide.IdeEventQueue;
 import com.intellij.ide.ui.UISettings;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.actionSystem.impl.actionholder.ActionRef;
+import com.intellij.openapi.ui.JBPopupMenu;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.IconLoader;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.wm.IdeFocusManager;
@@ -26,6 +30,8 @@ import com.intellij.openapi.wm.IdeFrame;
 import com.intellij.openapi.wm.StatusBar;
 import com.intellij.ui.plaf.beg.IdeaMenuUI;
 import com.intellij.ui.plaf.gtk.GtkMenuUI;
+import com.intellij.util.ReflectionUtil;
+import com.intellij.util.SingleAlarm;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 
@@ -34,7 +40,10 @@ import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import javax.swing.plaf.MenuItemUI;
 import java.awt.*;
+import java.awt.event.AWTEventListener;
+import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 
@@ -48,6 +57,7 @@ public final class ActionMenu extends JMenu {
   private MenuItemSynchronizer myMenuItemSynchronizer;
   private StubItem myStubItem;  // A PATCH!!! Do not remove this code, otherwise you will lose all keyboard navigation in JMenuBar.
   private final boolean myTopLevel;
+  private Disposable myDisposable;
 
   public ActionMenu(final DataContext context,
                     @NotNull final String place,
@@ -74,12 +84,16 @@ public final class ActionMenu extends JMenu {
     if (UIUtil.isUnderIntelliJLaF()) {
       setOpaque(true);
     }
+
+    // Triggering initialization of private field "popupMenu" from JMenu with our own JBPopupMenu
+    getPopupMenu();
   }
 
   public void updateContext(DataContext context) {
     myContext = context;
   }
 
+  @Override
   public void addNotify() {
     super.addNotify();
     installSynchronizer();
@@ -97,6 +111,10 @@ public final class ActionMenu extends JMenu {
   public void removeNotify() {
     uninstallSynchronizer();
     super.removeNotify();
+    if (myDisposable != null) {
+      Disposer.dispose(myDisposable);
+      myDisposable = null;
+    }
   }
 
   private void uninstallSynchronizer() {
@@ -105,6 +123,18 @@ public final class ActionMenu extends JMenu {
       myPresentation.removePropertyChangeListener(myMenuItemSynchronizer);
       myMenuItemSynchronizer = null;
     }
+  }
+
+  private JPopupMenu mySpecialMenu;
+  @Override
+  public JPopupMenu getPopupMenu() {
+    if (mySpecialMenu == null) {
+      mySpecialMenu = new JBPopupMenu();
+      mySpecialMenu.setInvoker(this);
+      popupListener = createWinListener(mySpecialMenu);
+      ReflectionUtil.setField(JMenu.class, this, JPopupMenu.class, "popupMenu", mySpecialMenu);
+    }
+    return super.getPopupMenu();
   }
 
   @Override
@@ -153,7 +183,7 @@ public final class ActionMenu extends JMenu {
   }
 
   private void init() {
-    boolean macSystemMenu = SystemInfo.isMacSystemMenu && myPlace == ActionPlaces.MAIN_MENU;
+    boolean macSystemMenu = SystemInfo.isMacSystemMenu && myPlace.equals(ActionPlaces.MAIN_MENU);
 
     myStubItem = macSystemMenu ? null : new StubItem();
     addStubItem();
@@ -221,23 +251,35 @@ public final class ActionMenu extends JMenu {
   }
 
   private class MenuListenerImpl implements MenuListener {
+    @Override
     public void menuCanceled(MenuEvent e) {
       clearItems();
       addStubItem();
     }
 
+    @Override
     public void menuDeselected(MenuEvent e) {
+      if (myDisposable != null) {
+        Disposer.dispose(myDisposable);
+        myDisposable = null;
+      }
       clearItems();
       addStubItem();
     }
 
+    @Override
     public void menuSelected(MenuEvent e) {
+      UsabilityHelper helper = new UsabilityHelper(ActionMenu.this);
+      if (myDisposable == null) {
+        myDisposable = Disposer.newDisposable();
+      }
+      Disposer.register(myDisposable, helper);
       fillMenu();
     }
   }
 
   private void clearItems() {
-    if (SystemInfo.isMacSystemMenu && myPlace == ActionPlaces.MAIN_MENU) {
+    if (SystemInfo.isMacSystemMenu && myPlace.equals(ActionPlaces.MAIN_MENU)) {
       for (Component menuComponent : getMenuComponents()) {
         if (menuComponent instanceof ActionMenu) {
           ((ActionMenu)menuComponent).clearItems();
@@ -282,6 +324,7 @@ public final class ActionMenu extends JMenu {
   }
 
   private class MenuItemSynchronizer implements PropertyChangeListener {
+    @Override
     public void propertyChange(PropertyChangeEvent e) {
       String name = e.getPropertyName();
       if (Presentation.PROP_VISIBLE.equals(name)) {
@@ -305,6 +348,90 @@ public final class ActionMenu extends JMenu {
       else if (Presentation.PROP_ICON.equals(name) || Presentation.PROP_DISABLED_ICON.equals(name)) {
         updateIcon();
       }
+    }
+  }
+  private static class UsabilityHelper implements IdeEventQueue.EventDispatcher, AWTEventListener, Disposable {
+
+    private Component myComponent;
+    private Point myLastMousePoint;
+    private Point myUpperTargetPoint;
+    private Point myLowerTargetPoint;
+    private SingleAlarm myCallbackAlarm;
+    private MouseEvent myEventToRedispatch;
+
+    private UsabilityHelper(Component component) {
+      myCallbackAlarm = new SingleAlarm(new Runnable() {
+        @Override
+        public void run() {
+          Disposer.dispose(myCallbackAlarm);
+          myCallbackAlarm = null;
+          if (myEventToRedispatch != null) {
+            IdeEventQueue.getInstance().dispatchEvent(myEventToRedispatch);
+          }
+        }
+      }, 50, this);
+      myComponent = component;
+      PointerInfo info = MouseInfo.getPointerInfo();
+      myLastMousePoint = info != null ? info.getLocation() : null;
+      if (myLastMousePoint != null) {
+        Toolkit.getDefaultToolkit().addAWTEventListener(this, AWTEvent.COMPONENT_EVENT_MASK);
+        IdeEventQueue.getInstance().addDispatcher(this, this);
+      }
+    }
+
+    @Override
+    public void eventDispatched(AWTEvent event) {
+      if (event instanceof ComponentEvent) {
+        ComponentEvent componentEvent = (ComponentEvent)event;
+        Component component = componentEvent.getComponent();
+        JPopupMenu popup = UIUtil.findParentByClass(component, JPopupMenu.class);
+        if (popup != null && popup.getInvoker() == myComponent) {
+          Rectangle bounds = popup.getBounds();
+          if (bounds.isEmpty()) return;
+          bounds.setLocation(popup.getLocationOnScreen());
+          if (myLastMousePoint.x < bounds.x) {
+            myUpperTargetPoint = new Point(bounds.x, bounds.y);
+            myLowerTargetPoint = new Point(bounds.x, bounds.y + bounds.height);
+          }
+          if (myLastMousePoint.x > bounds.x + bounds.width) {
+            myUpperTargetPoint = new Point(bounds.x + bounds.width, bounds.y);
+            myLowerTargetPoint = new Point(bounds.x + bounds.width, bounds.y + bounds.height);
+          }
+        }
+      }
+    }
+
+    @Override
+    public boolean dispatch(AWTEvent e) {
+      if (e instanceof MouseEvent && myUpperTargetPoint != null && myLowerTargetPoint != null && myCallbackAlarm != null) {
+        if (e.getID() == MouseEvent.MOUSE_PRESSED || e.getID() == MouseEvent.MOUSE_RELEASED || e.getID() == MouseEvent.MOUSE_CLICKED) {
+          return false;
+        }
+        Point point = ((MouseEvent)e).getLocationOnScreen();
+
+        myCallbackAlarm.cancel();
+        boolean isMouseMovingTowardsSubmenu = new Polygon(
+          new int[]{myLastMousePoint.x, myUpperTargetPoint.x, myLowerTargetPoint.x},
+          new int[]{myLastMousePoint.y, myUpperTargetPoint.y, myLowerTargetPoint.y},
+          3).contains(point);
+
+        myEventToRedispatch = (MouseEvent)e;
+
+        if (!isMouseMovingTowardsSubmenu) {
+          myCallbackAlarm.request();
+        }
+        myLastMousePoint = point;
+        return true;
+      }
+      return false;
+    }
+
+    @Override
+    public void dispose() {
+      myComponent = null;
+      myEventToRedispatch = null;
+      myLastMousePoint = myUpperTargetPoint = myLowerTargetPoint = null;
+      Toolkit.getDefaultToolkit().removeAWTEventListener(this);
     }
   }
 }

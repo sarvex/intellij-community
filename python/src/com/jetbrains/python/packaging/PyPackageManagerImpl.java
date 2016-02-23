@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@
  */
 package com.jetbrains.python.packaging;
 
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.RunCanceledByUserException;
@@ -35,10 +34,7 @@ import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.openapi.vfs.LocalFileSystem;
-import com.intellij.openapi.vfs.VfsUtilCore;
-import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.openapi.vfs.VirtualFileManager;
+import com.intellij.openapi.vfs.*;
 import com.intellij.openapi.vfs.newvfs.BulkFileListener;
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
 import com.intellij.util.messages.MessageBusConnection;
@@ -49,6 +45,7 @@ import com.jetbrains.python.psi.PyExpression;
 import com.jetbrains.python.psi.PyListLiteralExpression;
 import com.jetbrains.python.psi.PyStringLiteralExpression;
 import com.jetbrains.python.sdk.PySdkUtil;
+import com.jetbrains.python.sdk.PythonEnvUtil;
 import com.jetbrains.python.sdk.PythonSdkType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -66,9 +63,9 @@ public class PyPackageManagerImpl extends PyPackageManager {
   public static final String PIP_PRE_26_VERSION = "1.1";
   public static final String VIRTUALENV_PRE_26_VERSION = "1.7.2";
 
-  public static final String SETUPTOOLS_VERSION = "5.7";
-  public static final String PIP_VERSION = "1.5.6";
-  public static final String VIRTUALENV_VERSION = "1.11.6";
+  public static final String SETUPTOOLS_VERSION = "18.1";
+  public static final String PIP_VERSION = "7.1.0";
+  public static final String VIRTUALENV_VERSION = "13.1.0";
 
   public static final int OK = 0;
   public static final int ERROR_NO_SETUPTOOLS = 3;
@@ -88,24 +85,24 @@ public class PyPackageManagerImpl extends PyPackageManager {
   private List<PyPackage> myPackagesCache = null;
   private ExecutionException myExceptionCache = null;
 
-  protected Sdk mySdk;
+  @NotNull final private Sdk mySdk;
 
   @Override
   public void refresh() {
+    LOG.debug("Refreshing SDK roots and packages cache");
     final Application application = ApplicationManager.getApplication();
     application.invokeLater(new Runnable() {
       @Override
       public void run() {
+        final Sdk sdk = getSdk();
         application.runWriteAction(new Runnable() {
           @Override
           public void run() {
-            final VirtualFile[] files = mySdk.getRootProvider().getFiles(OrderRootType.CLASSES);
-            for (VirtualFile file : files) {
-              file.refresh(true, true);
-            }
+            final VirtualFile[] files = sdk.getRootProvider().getFiles(OrderRootType.CLASSES);
+            VfsUtil.markDirtyAndRefresh(true, true, true, files);
           }
         });
-        PythonSdkType.getInstance().setupSdkPaths(mySdk);
+        PythonSdkType.getInstance().setupSdkPaths(sdk);
         clearCaches();
       }
     });
@@ -113,7 +110,8 @@ public class PyPackageManagerImpl extends PyPackageManager {
 
   @Override
   public void installManagement() throws ExecutionException {
-    final boolean pre26 = PythonSdkType.getLanguageLevelForSdk(mySdk).isOlderThan(LanguageLevel.PYTHON26);
+    final Sdk sdk = getSdk();
+    final boolean pre26 = PythonSdkType.getLanguageLevelForSdk(sdk).isOlderThan(LanguageLevel.PYTHON26);
     if (!hasSetuptools(false)) {
       final String name = SETUPTOOLS + "-" + (pre26 ? SETUPTOOLS_PRE_26_VERSION : SETUPTOOLS_VERSION);
       installManagement(name);
@@ -169,17 +167,18 @@ public class PyPackageManagerImpl extends PyPackageManager {
     return findPackage(name, cachedOnly) != null;
   }
 
-  PyPackageManagerImpl(@NotNull Sdk sdk) {
+  PyPackageManagerImpl(@NotNull final Sdk sdk) {
     mySdk = sdk;
-    subscribeToLocalChanges(sdk);
+    subscribeToLocalChanges();
   }
 
-  protected void subscribeToLocalChanges(Sdk sdk) {
+  protected void subscribeToLocalChanges() {
     final Application app = ApplicationManager.getApplication();
     final MessageBusConnection connection = app.getMessageBus().connect();
     connection.subscribe(VirtualFileManager.VFS_CHANGES, new MySdkRootWatcher());
   }
 
+  @NotNull
   public Sdk getSdk() {
     return mySdk;
   }
@@ -233,6 +232,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
       throw new PyExecutionException(e.getMessage(), "pip", simplifiedArgs, e.getStdout(), e.getStderr(), e.getExitCode(), e.getFixes());
     }
     finally {
+      LOG.debug("Packages cache is about to be cleared because these requirements were installed: " + requirements);
       clearCaches();
       FileUtil.delete(buildDir);
     }
@@ -258,6 +258,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
       throw new PyExecutionException(e.getMessage(), "pip", args, e.getStdout(), e.getStderr(), e.getExitCode(), e.getFixes());
     }
     finally {
+      LOG.debug("Packages cache is about to be cleared because these packages were uninstalled: " + packages);
       clearCaches();
     }
   }
@@ -276,8 +277,10 @@ public class PyPackageManagerImpl extends PyPackageManager {
       }
     }
     try {
-      final String output = getHelperResult(PACKAGING_TOOL, Arrays.asList("list"), false, false, null);
-      final List<PyPackage> packages = parsePackagingToolOutput(output);
+      final List<PyPackage> packages = getPackages();
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Packages installed in " + mySdk.getName() + ": " + packages);
+      }
       synchronized (myCacheLock) {
         myPackagesCache = packages;
         return new ArrayList<PyPackage>(myPackagesCache);
@@ -289,6 +292,33 @@ public class PyPackageManagerImpl extends PyPackageManager {
       }
       throw e;
     }
+  }
+
+  //@NotNull
+  //public String fetchLatestVersion(InstalledPackage pkg) throws ExecutionException {
+  //  final ArrayList<String> arguments = Lists.newArrayList("latestVersion", pkg.getName());
+  //  arguments.addAll(PyPackageService.getInstance().additionalRepositories);
+  //  return getHelperResult(PACKAGING_TOOL, arguments, false, false, null);
+  //}
+
+  @NotNull
+  protected List<PyPackage> getPackages() throws ExecutionException {
+    final String output;
+    try {
+      output = getHelperResult(PACKAGING_TOOL, Collections.singletonList("list"), false, false, null);
+    }
+    catch (final ProcessNotCreatedException ex) {
+      if (ApplicationManager.getApplication().isUnitTestMode()) {
+        LOG.info("Not-env unit test mode, will return mock packages");
+        return Lists.newArrayList(new PyPackage(PIP, PIP_VERSION, null, Collections.<PyRequirement>emptyList()),
+                                  new PyPackage(SETUPTOOLS, SETUPTOOLS_VERSION, null, Collections.<PyRequirement>emptyList()));
+      }
+      else {
+        throw ex;
+      }
+    }
+
+    return parsePackagingToolOutput(output);
   }
 
   @Nullable
@@ -323,10 +353,17 @@ public class PyPackageManagerImpl extends PyPackageManager {
     return null;
   }
 
+  @Nullable
+  @Override
+  public final PyPackage findPackage(@NotNull final String name) throws ExecutionException {
+    return findPackage(name, PySdkUtil.isRemote(mySdk));
+  }
+
   @NotNull
   public String createVirtualEnv(@NotNull String destinationDir, boolean useGlobalSite) throws ExecutionException {
     final List<String> args = new ArrayList<String>();
-    final LanguageLevel languageLevel = PythonSdkType.getLanguageLevelForSdk(mySdk);
+    final Sdk sdk = getSdk();
+    final LanguageLevel languageLevel = PythonSdkType.getLanguageLevelForSdk(sdk);
     final boolean usePyVenv = languageLevel.isAtLeast(LanguageLevel.PYTHON33);
     if (usePyVenv) {
       args.add("pyvenv");
@@ -400,6 +437,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
     synchronized (myCacheLock) {
       myPackagesCache = null;
       myExceptionCache = null;
+      LOG.debug("Packages cache is cleared");
     }
   }
 
@@ -443,7 +481,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
       throw new PyExecutionException("Timed out", path, args, output);
     }
     else if (exitCode != 0) {
-      throw new PyExecutionException("Non-zero exit code", path, args, output);
+      throw new PyExecutionException("Non-zero exit code (" + exitCode + ")", path, args, output);
     }
     return output.getStdout();
   }
@@ -451,7 +489,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
   @NotNull
   protected ProcessOutput getPythonProcessOutput(@NotNull String helperPath, @NotNull List<String> args, boolean askForSudo,
                                                  boolean showProgress, @Nullable String workingDir) throws ExecutionException {
-    final String homePath = mySdk.getHomePath();
+    final String homePath = getSdk().getHomePath();
     if (homePath == null) {
       throw new ExecutionException("Cannot find Python interpreter for SDK " + mySdk.getName());
     }
@@ -468,16 +506,19 @@ public class PyPackageManagerImpl extends PyPackageManager {
     final boolean useSudo = !canCreate && !SystemInfo.isWindows && askForSudo;
 
     try {
-      final Process process;
-      final Map<String, String> environment = PySdkUtil.mergeEnvVariables(System.getenv(), ImmutableMap.of("PYTHONUNBUFFERED", "1"));
-      final GeneralCommandLine commandLine = new GeneralCommandLine(cmdline).withWorkDirectory(workingDir).withEnvironment(environment);
+      final Map<String, String> environment = new HashMap<String, String>(System.getenv());
+      PythonEnvUtil.setPythonUnbuffered(environment);
+      PythonEnvUtil.setPythonDontWriteBytecode(environment);
+      GeneralCommandLine commandLine = new GeneralCommandLine(cmdline).withWorkDirectory(workingDir).withEnvironment(environment);
+      Process process;
       if (useSudo) {
         process = ExecUtil.sudo(commandLine, "Please enter your password to make changes in system packages: ");
       }
       else {
         process = commandLine.createProcess();
       }
-      final CapturingProcessHandler handler = new CapturingProcessHandler(process);
+      final CapturingProcessHandler handler =
+        new CapturingProcessHandler(process, commandLine.getCharset(), commandLine.getCommandLineString());
       final ProgressIndicator indicator = ProgressManager.getInstance().getProgressIndicator();
       final ProcessOutput result;
       if (showProgress && indicator != null) {
@@ -509,7 +550,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
       final int exitCode = result.getExitCode();
       if (exitCode != 0) {
         final String message = StringUtil.isEmptyOrSpaces(result.getStdout()) && StringUtil.isEmptyOrSpaces(result.getStderr()) ?
-                               "Permission denied" : "Non-zero exit code";
+                               "Permission denied" : "Non-zero exit code (" + exitCode + ")";
         throw new PyExecutionException(message, helperPath, args, result);
       }
       return result;
@@ -547,12 +588,14 @@ public class PyPackageManagerImpl extends PyPackageManager {
   private class MySdkRootWatcher extends BulkFileListener.Adapter {
     @Override
     public void after(@NotNull List<? extends VFileEvent> events) {
-      final VirtualFile[] roots = mySdk.getRootProvider().getFiles(OrderRootType.CLASSES);
+      final Sdk sdk = getSdk();
+      final VirtualFile[] roots = sdk.getRootProvider().getFiles(OrderRootType.CLASSES);
       for (VFileEvent event : events) {
         final VirtualFile file = event.getFile();
         if (file != null) {
           for (VirtualFile root : roots) {
             if (VfsUtilCore.isAncestor(root, file, false)) {
+              LOG.debug("Clearing packages cache on SDK change");
               clearCaches();
               return;
             }

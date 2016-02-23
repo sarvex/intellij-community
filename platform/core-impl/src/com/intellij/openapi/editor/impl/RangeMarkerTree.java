@@ -29,6 +29,7 @@ import com.intellij.openapi.util.Segment;
 import com.intellij.util.Processor;
 import com.intellij.util.SmartList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -88,18 +89,18 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
     return 0;
   }
 
-  public void dispose() {
+  void dispose() {
     myDocument.removeDocumentListener(myListener);
   }
 
   private static final int DUPLICATE_LIMIT = 30; // assertion: no more than DUPLICATE_LIMIT range markers are allowed to be registered at given (start, end)
+  @NotNull
   @Override
   public RMNode<T> addInterval(@NotNull T interval, int start, int end, boolean greedyToLeft, boolean greedyToRight, int layer) {
-    RangeMarkerImpl marker = (RangeMarkerImpl)interval;
-    marker.setValid(true);
-    RMNode<T> node = (RMNode)super.addInterval(interval, start, end, greedyToLeft, greedyToRight, layer);
+    interval.setValid(true);
+    RMNode<T> node = (RMNode<T>)super.addInterval(interval, start, end, greedyToLeft, greedyToRight, layer);
 
-    if (DEBUG && !ApplicationInfoImpl.isInPerformanceTest() && node.intervals.size() > DUPLICATE_LIMIT) {
+    if (DEBUG && node.intervals.size() > DUPLICATE_LIMIT && !ApplicationInfoImpl.isInPerformanceTest() && ApplicationManager.getApplication().isUnitTestMode()) {
       l.readLock().lock();
       try {
         String msg = errMsg(node);
@@ -114,6 +115,7 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
     return node;
   }
   private String errMsg(@NotNull RMNode<T> node) {
+    System.gc();
     final AtomicInteger alive = new AtomicInteger();
     node.processAliveKeys(new Processor<Object>() {
       @Override
@@ -123,7 +125,7 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
       }
     });
     if (alive.get() > DUPLICATE_LIMIT) {
-      return "Too many range markers (" + alive + ") registered for interval "+node+"\n";
+      return "Too many range markers (" + alive + ") registered for interval "+node;
     }
 
     return null;
@@ -136,18 +138,20 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
   }
 
   @Override
-  protected void checkBelongsToTheTree(T interval, boolean assertInvalid) {
-    assert ((RangeMarkerImpl)interval).myDocument == myDocument;
+  protected void checkBelongsToTheTree(@NotNull T interval, boolean assertInvalid) {
+    assert interval.getDocument() == myDocument;
     super.checkBelongsToTheTree(interval, assertInvalid);
   }
 
   @Override
   protected RMNode<T> lookupNode(@NotNull T key) {
+    //noinspection unchecked
     return (RMNode<T>)((RangeMarkerImpl)key).myNode;
   }
 
   @Override
   protected void setNode(@NotNull T key, IntervalNode<T> intervalNode) {
+    //noinspection unchecked
     ((RangeMarkerImpl)key).myNode = (RMNode)intervalNode;
   }
 
@@ -166,11 +170,11 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
       setFlag(EXPAND_TO_RIGHT_FLAG, greedyToRight);
     }
 
-    public boolean isGreedyToLeft() {
+    boolean isGreedyToLeft() {
       return isFlagSet(EXPAND_TO_LEFT_FLAG);
     }
 
-    public boolean isGreedyToRight() {
+    boolean isGreedyToRight() {
       return isFlagSet(EXPAND_TO_RIGHT_FLAG);
     }
 
@@ -234,8 +238,9 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
               // merge happened
               for (Getter<T> key : keys) {
                 T interval = key.get();
-                if (interval == null) continue;
-                insertedNode.addInterval(interval);
+                if (interval != null) {
+                  insertedNode.addInterval(interval);
+                }
               }
             }
             assert marker.isValid();
@@ -256,7 +261,7 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
   }
 
   // returns true if all deltas involved are still 0
-  private boolean collectAffectedMarkersAndShiftSubtrees(IntervalNode<T> root,
+  private boolean collectAffectedMarkersAndShiftSubtrees(@Nullable IntervalNode<T> root,
                                                          @NotNull DocumentEvent e,
                                                          @NotNull List<IntervalNode<T>> affected) {
     if (root == null) return true;
@@ -303,7 +308,7 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
     return norm;
   }
 
-  public boolean sweep(final int start, final int end, @NotNull final SweepProcessor<T> sweepProcessor) {
+  public boolean sweep(final int start, final int end, @NotNull SweepProcessor<T> sweepProcessor) {
     return sweep(new Generator<T>() {
       @Override
       public boolean generateInStartOffsetOrder(@NotNull Processor<T> processor) {
@@ -319,7 +324,7 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
   public static <T extends Segment> boolean sweep(@NotNull Generator<T> generator, @NotNull final SweepProcessor<T> sweepProcessor) {
     final Queue<T> ends = new PriorityQueue<T>(5, new Comparator<T>() {
       @Override
-      public int compare(T o1, T o2) {
+      public int compare(@NotNull T o1, @NotNull T o2) {
         return o1.getEndOffset() - o2.getEndOffset();
       }
     });
@@ -382,7 +387,16 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
         node.changeDelta(shift);
         node.setValid(true);
         pushDelta(node);
-        findOrInsert(node);
+        IntervalNode<T> inserted = findOrInsert(node);
+        if (inserted != node) {
+          // the node already exists, reuse
+          for (Getter<T> interval : node.intervals) {
+            T t = interval.get();
+            if (t != null) {
+              inserted.addInterval(t);
+            }
+          }
+        }
       }
     }
     finally {
@@ -391,7 +405,7 @@ public class RangeMarkerTree<T extends RangeMarkerEx> extends IntervalTreeImpl<T
     }
   }
 
-  private void collectNodesToRetarget(IntervalNode<T> root,
+  private void collectNodesToRetarget(@Nullable IntervalNode<T> root,
                                       int start, int end,
                                       @NotNull List<IntervalNode<T>> affected) {
     if (root == null) return;

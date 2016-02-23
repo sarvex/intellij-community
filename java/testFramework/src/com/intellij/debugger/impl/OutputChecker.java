@@ -27,18 +27,22 @@ import com.intellij.openapi.projectRoots.impl.JavaAwareProjectJdkTableImpl;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.ThrowableComputable;
+import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.util.text.StringUtilRt;
 import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.util.containers.HashMap;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -47,6 +51,7 @@ public class OutputChecker {
   private static final String JDK_HOME_STR = "!JDK_HOME!";
 
   protected final String myAppPath;
+  private final String myOutputPath;
 
   public static final Key[] OUTPUT_ORDER = new Key[] {
     ProcessOutputTypes.SYSTEM, ProcessOutputTypes.STDOUT, ProcessOutputTypes.STDERR
@@ -62,8 +67,9 @@ public class OutputChecker {
   private static final Pattern JDI_BUG_OUTPUT_PATTERN_2 =
     Pattern.compile("JDWP\\s+exit\\s+error\\s+AGENT_ERROR_NO_JNI_ENV.*\\]\n");
 
-  public OutputChecker(String appPath) {
+  public OutputChecker(String appPath, String outputPath) {
     myAppPath = appPath;
+    myOutputPath = outputPath;
   }
 
   public void init(String testName) {
@@ -123,13 +129,7 @@ public class OutputChecker {
     }
 
     if (!outFile.exists()) {
-      FileOutputStream fos = new FileOutputStream(outFile, false);
-      try {
-        fos.write(actual.getBytes());
-      }
-      finally {
-        fos.close();
-      }
+      FileUtil.writeToFile(outFile, actual);
       LOG.error("Test file created " + outFile.getPath() + "\n" + "**************** Don't forget to put it into VCS! *******************");
     }
     else {
@@ -186,16 +186,17 @@ public class OutputChecker {
         result = StringUtil.replace(result, "\r\n", "\n");
         result = StringUtil.replace(result, "\r", "\n");
         result = replaceAdditionalInOutput(result);
-        result = StringUtil.replace(result, testJdk.getHomePath(), "!TEST_JDK!", shouldIgnoreCase);
         result = StringUtil.replace(result, myAppPath, "!APP_PATH!", shouldIgnoreCase);
-        result = StringUtil.replace(result, myAppPath.replace(File.separatorChar, '/'), "!APP_PATH!", shouldIgnoreCase);
+        result = StringUtil.replace(result, myOutputPath, "!OUTPUT_PATH!", shouldIgnoreCase);
+        result = StringUtil.replace(result, FileUtil.toSystemIndependentName(myOutputPath), "!OUTPUT_PATH!", shouldIgnoreCase);
+        result = StringUtil.replace(result, FileUtil.toSystemIndependentName(myAppPath), "!APP_PATH!", shouldIgnoreCase);
         result = StringUtil.replace(result, JavaSdkUtil.getIdeaRtJarPath(), "!RT_JAR!", shouldIgnoreCase);
         result = StringUtil.replace(result, JavaSdkUtil.getJunit4JarPath(), "!JUNIT4_JAR!", shouldIgnoreCase);
         result = StringUtil.replace(result, InetAddress.getLocalHost().getCanonicalHostName(), "!HOST_NAME!", shouldIgnoreCase);
         result = StringUtil.replace(result, InetAddress.getLocalHost().getHostName(), "!HOST_NAME!", shouldIgnoreCase);
         result = StringUtil.replace(result, "127.0.0.1", "!HOST_NAME!", shouldIgnoreCase);
         result = StringUtil.replace(result, JavaSdkUtil.getIdeaRtJarPath().replace('/', File.separatorChar), "!RT_JAR!", shouldIgnoreCase);
-        result = StringUtil.replace(result, internalJdkHome.replace('/', File.separatorChar), JDK_HOME_STR, shouldIgnoreCase);
+        result = StringUtil.replace(result, FileUtil.toSystemDependentName(internalJdkHome), JDK_HOME_STR, shouldIgnoreCase);
         result = StringUtil.replace(result, internalJdkHome, JDK_HOME_STR, shouldIgnoreCase);
         result = StringUtil.replace(result, PathManager.getHomePath(), "!IDEA_HOME!", shouldIgnoreCase);
         result = StringUtil.replace(result, "Process finished with exit code 255", "Process finished with exit code -1");
@@ -204,30 +205,18 @@ public class OutputChecker {
         result = result.replaceAll("!HOST_NAME!:\\d*", "!HOST_NAME!:!HOST_PORT!");
         result = result.replaceAll("at \\'.*?\\'", "at '!HOST_NAME!:PORT_NAME!'");
         result = result.replaceAll("address: \\'.*?\\'", "address: '!HOST_NAME!:PORT_NAME!'");
-        result = result.replaceAll("file.*AppletPage.*\\.html", "file:/!APPLET_HTML!");
+        result = result.replaceAll("\"?file:.*AppletPage.*\\.html\"?", "file:!APPLET_HTML!");
         result = result.replaceAll("\"(!JDK_HOME!.*?)\"", "$1");
         result = result.replaceAll("\"(!APP_PATH!.*?)\"", "$1");
 
         // unquote extra params
-        result = result.replaceAll("\"(-D.*)\"", "$1");
+        result = result.replaceAll("\"(-D.*?)\"", "$1");
 
         result = result.replaceAll("-Didea.launcher.port=\\d*", "-Didea.launcher.port=!IDEA_LAUNCHER_PORT!");
         result = result.replaceAll("-Dfile.encoding=[\\w\\d-]*", "-Dfile.encoding=!FILE_ENCODING!");
         result = result.replaceAll("\\((.*)\\:\\d+\\)", "($1:!LINE_NUMBER!)");
 
-        int commandLineStart = result.indexOf(JDK_HOME_STR);
-        while (commandLineStart != -1) {
-          final StringBuilder builder = new StringBuilder(result);
-          int i = commandLineStart + 1;
-          while (i < builder.length()) {
-            char c = builder.charAt(i);
-            if (c == '\n') break;
-            else if (c == File.separatorChar) builder.setCharAt(i, '\\');
-            i++;
-          }
-          result = builder.toString();
-          commandLineStart = result.indexOf(JDK_HOME_STR, commandLineStart + 1);
-        }
+        result = fixSlashes(result, JDK_HOME_STR);
 
         result = stripQuotesAroundClasspath(result);
 
@@ -265,6 +254,24 @@ public class OutputChecker {
         return result;
       }
     });
+  }
+
+  @NotNull
+  private static String fixSlashes(String text, final String jdkHomeMarker) {
+    int commandLineStart = text.indexOf(jdkHomeMarker);
+    while (commandLineStart != -1) {
+      final StringBuilder builder = new StringBuilder(text);
+      int i = commandLineStart + 1;
+      while (i < builder.length()) {
+        char c = builder.charAt(i);
+        if (c == '\n') break;
+        else if (c == File.separatorChar) builder.setCharAt(i, '\\');
+        i++;
+      }
+      text = builder.toString();
+      commandLineStart = text.indexOf(jdkHomeMarker, commandLineStart + 1);
+    }
+    return text;
   }
 
   protected String replaceAdditionalInOutput(String str) {

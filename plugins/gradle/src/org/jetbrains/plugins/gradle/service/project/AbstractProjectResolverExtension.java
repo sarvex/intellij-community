@@ -88,8 +88,8 @@ public abstract class AbstractProjectResolverExtension implements GradleProjectR
 
   @NotNull
   @Override
-  public ModuleData createModule(@NotNull IdeaModule gradleModule, @NotNull ProjectData projectData) {
-    return nextResolver.createModule(gradleModule, projectData);
+  public DataNode<ModuleData> createModule(@NotNull IdeaModule gradleModule, @NotNull DataNode<ProjectData> projectDataNode) {
+    return nextResolver.createModule(gradleModule, projectDataNode);
   }
 
   @Override
@@ -124,12 +124,6 @@ public abstract class AbstractProjectResolverExtension implements GradleProjectR
                                                   @NotNull DataNode<ProjectData> ideProject)
     throws IllegalArgumentException, IllegalStateException {
     return nextResolver.populateModuleTasks(gradleModule, ideModule, ideProject);
-  }
-
-  @NotNull
-  @Override
-  public Collection<TaskData> filterRootProjectTasks(@NotNull List<TaskData> allTasks) {
-    return nextResolver.filterRootProjectTasks(allTasks);
   }
 
   @NotNull

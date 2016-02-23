@@ -30,10 +30,15 @@ public abstract class ServerRuntimeInstance<D extends DeploymentConfiguration> {
     return source.getPresentableName();
   }
 
+  @NotNull
+  public String getRuntimeDeploymentName(@NotNull DeploymentRuntime deploymentRuntime, @NotNull DeploymentSource source, D configuration) {
+    return getDeploymentName(source, configuration);
+  }
+
   public abstract void disconnect();
 
   public interface DeploymentOperationCallback extends RemoteOperationCallback {
-    void succeeded(@NotNull DeploymentRuntime deploymentRuntime);
+    Deployment succeeded(@NotNull DeploymentRuntime deploymentRuntime);
   }
 
   public interface ComputeDeploymentsCallback extends RemoteOperationCallback {

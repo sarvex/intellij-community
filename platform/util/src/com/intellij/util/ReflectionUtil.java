@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,16 @@
 
 package com.intellij.util;
 
-import com.intellij.Patches;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.DifferenceFilter;
-import com.intellij.util.containers.*;
+import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import sun.reflect.ConstructorAccessor;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.*;
 import java.util.*;
 
@@ -211,6 +211,7 @@ public class ReflectionUtil {
       LOG.info(e);
     }
   }
+
   public static void resetField(@NotNull Object object, @Nullable("null means any type") Class type, @NotNull String name)  {
     try {
       resetField(object, findField(object.getClass(), type, name));
@@ -254,6 +255,10 @@ public class ReflectionUtil {
     catch (IllegalAccessException e) {
       LOG.info(e);
     }
+  }
+
+  public static void resetStaticField(@NotNull Class aClass, @NotNull @NonNls String name) {
+    resetField(aClass, null, name);
   }
 
   @Nullable
@@ -332,7 +337,7 @@ public class ReflectionUtil {
     return method == null ? null : method.getDeclaringClass();
   }
 
-  public static <T> T getField(@NotNull Class objectClass, Object object, @Nullable("null means any type") Class<T> fieldType, @NotNull @NonNls String fieldName) {
+  public static <T> T getField(@NotNull Class objectClass, @Nullable Object object, @Nullable("null means any type") Class<T> fieldType, @NotNull @NonNls String fieldName) {
     try {
       final Field field = findAssignableField(objectClass, fieldType, fieldName);
       return (T)field.get(object);
@@ -347,8 +352,30 @@ public class ReflectionUtil {
     }
   }
 
+  public static <T> T getStaticFieldValue(@NotNull Class objectClass, @Nullable("null means any type") Class<T> fieldType, @NotNull @NonNls String fieldName) {
+    try {
+      final Field field = findAssignableField(objectClass, fieldType, fieldName);
+      if (!Modifier.isStatic(field.getModifiers())) {
+        throw new IllegalArgumentException("Field " + objectClass + "." + fieldName + " is not static");
+      }
+      return (T)field.get(null);
+    }
+    catch (NoSuchFieldException e) {
+      LOG.debug(e);
+      return null;
+    }
+    catch (IllegalAccessException e) {
+      LOG.debug(e);
+      return null;
+    }
+  }
+
   // returns true if value was set
-  public static <T> boolean setField(@NotNull Class objectClass, Object object, @Nullable("null means any type") Class<T> fieldType, @NotNull @NonNls String fieldName, T value) {
+  public static <T> boolean setField(@NotNull Class objectClass,
+                                     Object object,
+                                     @Nullable("null means any type") Class<T> fieldType,
+                                     @NotNull @NonNls String fieldName,
+                                     T value) {
     try {
       final Field field = findAssignableField(objectClass, fieldType, fieldName);
       field.set(object, value);
@@ -393,17 +420,16 @@ public class ReflectionUtil {
     }
   }
 
-  static {
-    // method getConstructorAccessorMethod is not necessary since JDK7, use acquireConstructorAccessor return value instead
-    assert Patches.USE_REFLECTION_TO_ACCESS_JDK7;
-  }
   private static final Method acquireConstructorAccessorMethod = getDeclaredMethod(Constructor.class, "acquireConstructorAccessor");
   private static final Method getConstructorAccessorMethod = getDeclaredMethod(Constructor.class, "getConstructorAccessor");
 
-  @NotNull
+  /** @deprecated private API (to be removed in IDEA 17) */
   public static ConstructorAccessor getConstructorAccessor(@NotNull Constructor constructor) {
+    if (acquireConstructorAccessorMethod == null || getConstructorAccessorMethod == null) {
+      throw new IllegalStateException();
+    }
+
     constructor.setAccessible(true);
-    // it is faster to invoke constructor via sun.reflect.ConstructorAccessor; it avoids AccessibleObject.checkAccess()
     try {
       acquireConstructorAccessorMethod.invoke(constructor);
       return (ConstructorAccessor)getConstructorAccessorMethod.invoke(constructor);
@@ -413,20 +439,22 @@ public class ReflectionUtil {
     }
   }
 
-  @NotNull
-  public static <T> T createInstanceViaConstructorAccessor(@NotNull ConstructorAccessor constructorAccessor,
-                                                           @NotNull Object... arguments) {
+  /** @deprecated private API, use {@link #createInstance(Constructor, Object...)} instead (to be removed in IDEA 17) */
+  public static <T> T createInstanceViaConstructorAccessor(@NotNull ConstructorAccessor constructorAccessor, @NotNull Object... arguments) {
     try {
-      return (T)constructorAccessor.newInstance(arguments);
+      @SuppressWarnings("unchecked") T t = (T)constructorAccessor.newInstance(arguments);
+      return t;
     }
     catch (Exception e) {
       throw new RuntimeException(e);
     }
   }
-  @NotNull
+
+  /** @deprecated private API, use {@link #newInstance(Class)} instead (to be removed in IDEA 17) */
   public static <T> T createInstanceViaConstructorAccessor(@NotNull ConstructorAccessor constructorAccessor) {
     try {
-      return (T)constructorAccessor.newInstance(ArrayUtil.EMPTY_OBJECT_ARRAY);
+      @SuppressWarnings("unchecked") T t = (T)constructorAccessor.newInstance(ArrayUtil.EMPTY_OBJECT_ARRAY);
+      return t;
     }
     catch (Exception e) {
       throw new RuntimeException(e);
@@ -456,6 +484,39 @@ public class ReflectionUtil {
       return constructor.newInstance();
     }
     catch (Exception e) {
+      // support Kotlin data classes - pass null as default value
+      for (Annotation annotation : aClass.getAnnotations()) {
+        String name = annotation.annotationType().getName();
+        if (name.equals("kotlin.Metadata") || name.equals("kotlin.jvm.internal.KotlinClass")) {
+          Constructor<?>[] constructors = aClass.getDeclaredConstructors();
+          Exception exception = e;
+          ctorLoop:
+          for (Constructor<?> constructor1 : constructors) {
+            try {
+              try {
+                constructor1.setAccessible(true);
+              }
+              catch (Throwable ignored) {
+              }
+
+              Class<?>[] parameterTypes = constructor1.getParameterTypes();
+              for (Class<?> type : parameterTypes) {
+                if (type.getName().equals("kotlin.jvm.internal.DefaultConstructorMarker")) {
+                  continue ctorLoop;
+                }
+              }
+
+              //noinspection unchecked
+              return (T)constructor1.newInstance(new Object[parameterTypes.length]);
+            }
+            catch (Exception e1) {
+              exception = e1;
+            }
+          }
+          throw new RuntimeException(exception);
+        }
+      }
+
       throw new RuntimeException(e);
     }
   }
@@ -529,6 +590,16 @@ public class ReflectionUtil {
 
   private static boolean isFinal(final Field field) {
     return (field.getModifiers() & Modifier.FINAL) != 0;
+  }
+
+  @NotNull
+  public static Class forName(@NotNull String fqn) {
+    try {
+      return Class.forName(fqn);
+    }
+    catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
 
 

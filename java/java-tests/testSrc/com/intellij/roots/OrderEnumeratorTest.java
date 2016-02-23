@@ -4,9 +4,10 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.roots.*;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.ArrayUtil;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import static com.intellij.openapi.roots.OrderEnumerator.orderEntries;
@@ -85,6 +86,8 @@ public class OrderEnumeratorTest extends ModuleRootManagerTestCase {
       getJDomJar());
     assertClassRoots(orderEntries(myModule).withoutSdk().withoutDepModules().withoutModuleSourceEntries());
     assertEnumeratorRoots(orderEntries(myModule).productionOnly().withoutModuleSourceEntries().withoutSdk().withoutDepModules().classes());
+
+    assertOrderedEquals(orderEntries(myModule).getAllLibrariesAndSdkClassesRoots(), getRtJarJdk17(), getJDomJar());
   }
 
   public void testModuleDependencyScope() throws Exception {
@@ -111,6 +114,8 @@ public class OrderEnumeratorTest extends ModuleRootManagerTestCase {
     assertClassRoots(orderEntries(myModule).withoutSdk().recursively(), getAsmJar(), getJDomJar());
     assertClassRoots(orderEntries(myModule).withoutSdk().recursively().exportedOnly(), getAsmJar());
     assertClassRoots(orderEntries(myModule).withoutSdk().exportedOnly().recursively());
+
+    assertClassRoots(orderEntriesForModulesList(myModule).withoutSdk().recursively(), getAsmJar(), getJDomJar());
   }
 
   public void testJdkIsNotExported() throws Exception {
@@ -167,10 +172,15 @@ public class OrderEnumeratorTest extends ModuleRootManagerTestCase {
     final VirtualFile output = setModuleOutput(myModule, false);
     final VirtualFile testOutput = setModuleOutput(myModule, true);
 
-    assertClassRoots(ProjectRootManager.getInstance(myProject).orderEntries(Arrays.asList(myModule)).withoutSdk(),
+    assertClassRoots(orderEntriesForModulesList(myModule).withoutSdk(),
                      testOutput, output, getJDomJar());
-    assertSourceRoots(ProjectRootManager.getInstance(myProject).orderEntries(Arrays.asList(myModule)).withoutSdk(),
+    assertSourceRoots(orderEntriesForModulesList(myModule).withoutSdk(),
                       srcRoot, testRoot, getJDomSources());
+  }
+
+  @NotNull
+  private OrderEnumerator orderEntriesForModulesList(final Module module) {
+    return ProjectRootManager.getInstance(myProject).orderEntries(Collections.singletonList(module));
   }
 
   public void testDoNotAddJdkRootFromModuleDependency() {
@@ -192,7 +202,7 @@ public class OrderEnumeratorTest extends ModuleRootManagerTestCase {
 
   private static void assertEnumeratorRoots(OrderRootsEnumerator rootsEnumerator, VirtualFile... files) {
     assertOrderedEquals(rootsEnumerator.getRoots(), files);
-    List<String> expectedUrls = new ArrayList<String>();
+    List<String> expectedUrls = new ArrayList<>();
     for (VirtualFile file : files) {
       expectedUrls.add(file.getUrl());
     }

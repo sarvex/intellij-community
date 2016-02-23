@@ -21,13 +21,13 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Getter;
 import com.intellij.openapi.vcs.Details;
 import com.intellij.openapi.vcs.FilePath;
-import com.intellij.openapi.vcs.FilePathImpl;
 import com.intellij.openapi.vcs.GenericDetailsLoader;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Consumer;
 import com.intellij.util.PairConsumer;
 import com.intellij.util.containers.SLRUMap;
 import com.intellij.vcsUtil.UIVcsUtil;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -38,6 +38,11 @@ import javax.swing.*;
  * Date: 8/17/11
  * Time: 7:08 PM
  */
+
+/**
+ * @deprecated use {@link CacheChangeProcessor} instead
+ */
+@Deprecated
 public class ShortDiffDetails implements RefreshablePanel<Change>, Disposable {
   private final Project myProject;
   private final VcsChangeDetailsManager myVcsChangeDetailsManager;
@@ -216,7 +221,7 @@ public class ShortDiffDetails implements RefreshablePanel<Change>, Disposable {
   }
 
   public boolean refreshData(VirtualFile vf) {
-    RefreshablePanel panel = myDetailsCache.get(new FilePathImpl(vf));
+    RefreshablePanel panel = myDetailsCache.get(VcsUtil.getFilePath(vf));
     if (panel != null) {
       panel.dataChanged();
       return true;

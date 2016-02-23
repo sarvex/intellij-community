@@ -67,18 +67,15 @@ public class ExtractClassTest extends MultiFileTestCase{
   private void doTestMethod(final String methodName,
                             final String conflicts,
                             final String qualifiedName) throws Exception {
-    doTest(new PerformAction() {
-      @Override
-      public void performAction(final VirtualFile rootDir, final VirtualFile rootAfter) throws Exception {
-        PsiClass aClass = myJavaFacade.findClass(qualifiedName, GlobalSearchScope.projectScope(myProject));
+    doTest((rootDir, rootAfter) -> {
+      PsiClass aClass = myJavaFacade.findClass(qualifiedName, GlobalSearchScope.projectScope(myProject));
 
-        assertNotNull("Class Test not found", aClass);
+      assertNotNull("Class Test not found", aClass);
 
-        final ArrayList<PsiMethod> methods = new ArrayList<PsiMethod>();
-        methods.add(aClass.findMethodsByName(methodName, false)[0]);
-        
-        doTest(aClass, methods, new ArrayList<PsiField>(), conflicts, false);
-      }
+      final ArrayList<PsiMethod> methods = new ArrayList<>();
+      methods.add(aClass.findMethodsByName(methodName, false)[0]);
+
+      doTest(aClass, methods, new ArrayList<>(), conflicts, false);
     });
   }
 
@@ -92,6 +89,16 @@ public class ExtractClassTest extends MultiFileTestCase{
 
   public void testFieldReference() throws Exception {
     doTestMethod("foo", "Field 'myField' needs getter");
+  }
+  
+  public void testIncrement() throws Exception {
+    try {
+      BaseRefactoringProcessor.ConflictsInTestsException.setTestIgnore(true);
+      doTestField(null, false);
+    }
+    finally {
+      BaseRefactoringProcessor.ConflictsInTestsException.setTestIgnore(false);
+    }
   }
 
   public void testVarargs() throws Exception {
@@ -151,21 +158,18 @@ public class ExtractClassTest extends MultiFileTestCase{
   }
 
   private void doTestFieldAndMethod(final String methodName) throws Exception {
-    doTest(new PerformAction() {
-      @Override
-      public void performAction(final VirtualFile rootDir, final VirtualFile rootAfter) throws Exception {
-        PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
+    doTest((rootDir, rootAfter) -> {
+      PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
 
-        assertNotNull("Class Test not found", aClass);
+      assertNotNull("Class Test not found", aClass);
 
-        final ArrayList<PsiMethod> methods = new ArrayList<PsiMethod>();
-        methods.add(aClass.findMethodsByName(methodName, false)[0]);
+      final ArrayList<PsiMethod> methods = new ArrayList<>();
+      methods.add(aClass.findMethodsByName(methodName, false)[0]);
 
-        final ArrayList<PsiField> fields = new ArrayList<PsiField>();
-        fields.add(aClass.findFieldByName("myT", false));
+      final ArrayList<PsiField> fields = new ArrayList<>();
+      fields.add(aClass.findFieldByName("myT", false));
 
-        doTest(aClass, methods, fields, null, false);
-      }
+      doTest(aClass, methods, fields, null, false);
     });
   }
 
@@ -174,28 +178,51 @@ public class ExtractClassTest extends MultiFileTestCase{
   }
 
   private void doTestField(final String conflicts, final boolean generateGettersSetters) throws Exception {
-    doTest(new PerformAction() {
-      @Override
-      public void performAction(final VirtualFile rootDir, final VirtualFile rootAfter) throws Exception {
-        PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
+    doTest((rootDir, rootAfter) -> {
+      PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
 
-        assertNotNull("Class Test not found", aClass);
+      assertNotNull("Class Test not found", aClass);
 
-        final ArrayList<PsiMethod> methods = new ArrayList<PsiMethod>();
+      final ArrayList<PsiMethod> methods = new ArrayList<>();
 
-        final ArrayList<PsiField> fields = new ArrayList<PsiField>();
-        fields.add(aClass.findFieldByName("myT", false));
+      final ArrayList<PsiField> fields = new ArrayList<>();
+      fields.add(aClass.findFieldByName("myT", false));
 
-        doTest(aClass, methods, fields, conflicts, generateGettersSetters);
-      }
+      doTest(aClass, methods, fields, conflicts, generateGettersSetters);
     });
   }
 
-  private static void doTest(final PsiClass aClass, final ArrayList<PsiMethod> methods, final ArrayList<PsiField> fields, final String conflicts,
+  public void testInnerClass() throws Exception {
+    doTest((rootDir, rootAfter) -> {
+      PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
+
+      assertNotNull("Class Test not found", aClass);
+
+      final ArrayList<PsiField> fields = new ArrayList<>();
+      fields.add(aClass.findFieldByName("myT", false));
+
+      doTest(aClass, new ArrayList<>(), fields, null, true, true);
+    });
+  }
+
+  private static void doTest(final PsiClass aClass,
+                             final ArrayList<PsiMethod> methods,
+                             final ArrayList<PsiField> fields,
+                             final String conflicts,
                              boolean generateGettersSetters) {
+    doTest(aClass, methods, fields, conflicts, generateGettersSetters, false);
+  }
+
+  private static void doTest(final PsiClass aClass,
+                             final ArrayList<PsiMethod> methods,
+                             final ArrayList<PsiField> fields,
+                             final String conflicts,
+                             boolean generateGettersSetters,
+                             boolean inner) {
     try {
-      ExtractClassProcessor processor = new ExtractClassProcessor(aClass, fields, methods, new ArrayList<PsiClass>(), StringUtil.getPackageName(aClass.getQualifiedName()), null,
+      ExtractClassProcessor processor = new ExtractClassProcessor(aClass, fields, methods, new ArrayList<>(), StringUtil.getPackageName(aClass.getQualifiedName()), null,
                                                                   "Extracted", null, generateGettersSetters, Collections.<MemberInfo>emptyList());
+      processor.setExtractInnerClass(inner);
       processor.run();
       LocalFileSystem.getInstance().refresh(false);
       FileDocumentManager.getInstance().saveAllDocuments();
@@ -233,39 +260,33 @@ public class ExtractClassTest extends MultiFileTestCase{
   }
 
   public void testPublicFieldDelegation() throws Exception {
-    doTest(new PerformAction() {
-      @Override
-      public void performAction(final VirtualFile rootDir, final VirtualFile rootAfter) throws Exception {
-        PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
+    doTest((rootDir, rootAfter) -> {
+      PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
 
-        assertNotNull("Class Test not found", aClass);
+      assertNotNull("Class Test not found", aClass);
 
-        final ArrayList<PsiField> fields = new ArrayList<PsiField>();
-        fields.add(aClass.findFieldByName("myT", false));
+      final ArrayList<PsiField> fields = new ArrayList<>();
+      fields.add(aClass.findFieldByName("myT", false));
 
-        ExtractClassProcessor processor = new ExtractClassProcessor(aClass, fields, new ArrayList<PsiMethod>(), new ArrayList<PsiClass>(), "", "Extracted");
-        processor.run();
-        LocalFileSystem.getInstance().refresh(false);
-        FileDocumentManager.getInstance().saveAllDocuments();
-      }
+      ExtractClassProcessor processor = new ExtractClassProcessor(aClass, fields, new ArrayList<>(), new ArrayList<>(), "", "Extracted");
+      processor.run();
+      LocalFileSystem.getInstance().refresh(false);
+      FileDocumentManager.getInstance().saveAllDocuments();
     });
   }
 
   private void doTestInnerClass() throws Exception {
-    doTest(new PerformAction() {
-      @Override
-      public void performAction(final VirtualFile rootDir, final VirtualFile rootAfter) throws Exception {
-        PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
+    doTest((rootDir, rootAfter) -> {
+      PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
 
-        assertNotNull("Class Test not found", aClass);
+      assertNotNull("Class Test not found", aClass);
 
-        final ArrayList<PsiClass> classes = new ArrayList<PsiClass>();
-        classes.add(aClass.findInnerClassByName("Inner", false));
-        ExtractClassProcessor processor = new ExtractClassProcessor(aClass, new ArrayList<PsiField>(), new ArrayList<PsiMethod>(), classes, "", "Extracted");
-        processor.run();
-        LocalFileSystem.getInstance().refresh(false);
-        FileDocumentManager.getInstance().saveAllDocuments();
-      }
+      final ArrayList<PsiClass> classes = new ArrayList<>();
+      classes.add(aClass.findInnerClassByName("Inner", false));
+      ExtractClassProcessor processor = new ExtractClassProcessor(aClass, new ArrayList<>(), new ArrayList<>(), classes, "", "Extracted");
+      processor.run();
+      LocalFileSystem.getInstance().refresh(false);
+      FileDocumentManager.getInstance().saveAllDocuments();
     });
   }
 
@@ -302,25 +323,22 @@ public class ExtractClassTest extends MultiFileTestCase{
   }
 
   public void testPublicVisibility() throws Exception {
-    doTest(new PerformAction() {
-      @Override
-      public void performAction(final VirtualFile rootDir, final VirtualFile rootAfter) throws Exception {
-        PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
+    doTest((rootDir, rootAfter) -> {
+      PsiClass aClass = myJavaFacade.findClass("Test", GlobalSearchScope.projectScope(myProject));
 
-        assertNotNull("Class Test not found", aClass);
+      assertNotNull("Class Test not found", aClass);
 
-        final ArrayList<PsiMethod> methods = new ArrayList<PsiMethod>();
-        methods.add(aClass.findMethodsByName("foos", false)[0]);
+      final ArrayList<PsiMethod> methods = new ArrayList<>();
+      methods.add(aClass.findMethodsByName("foos", false)[0]);
 
-        final ArrayList<PsiField> fields = new ArrayList<PsiField>();
-        fields.add(aClass.findFieldByName("myT", false));
+      final ArrayList<PsiField> fields = new ArrayList<>();
+      fields.add(aClass.findFieldByName("myT", false));
 
-        final ExtractClassProcessor processor =
-          new ExtractClassProcessor(aClass, fields, methods, new ArrayList<PsiClass>(), "", null, "Extracted", PsiModifier.PUBLIC, false, Collections.<MemberInfo>emptyList());
-        processor.run();
-        LocalFileSystem.getInstance().refresh(false);
-        FileDocumentManager.getInstance().saveAllDocuments();
-      }
+      final ExtractClassProcessor processor =
+        new ExtractClassProcessor(aClass, fields, methods, new ArrayList<>(), "", null, "Extracted", PsiModifier.PUBLIC, false, Collections.<MemberInfo>emptyList());
+      processor.run();
+      LocalFileSystem.getInstance().refresh(false);
+      FileDocumentManager.getInstance().saveAllDocuments();
     });
   }
 }

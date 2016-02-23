@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Consumer;
 import com.intellij.util.IconUtil;
 import org.jdom.Element;
-import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -36,19 +35,33 @@ import java.util.Collections;
 import java.util.List;
 
 public abstract class SdkType implements SdkTypeId {
-  public static ExtensionPointName<SdkType> EP_NAME = ExtensionPointName.create("com.intellij.sdkType");
+  public static final ExtensionPointName<SdkType> EP_NAME = ExtensionPointName.create("com.intellij.sdkType");
 
   private final String myName;
 
+  public SdkType(@NotNull String name) {
+    myName = name;
+  }
+
   /**
-   * @return path to set up file chooser to or null if not applicable
+   * Returns a recommended starting path for a file chooser (where SDKs of this type are usually may be found),
+   * or {@code null} if not applicable/no SDKs found.
+   * <p/>
+   * E.g. for Python SDK on Unix the method may return either {@code "/usr/bin"} or {@code "/usr/bin/python"}
+   * (if there is only one Python interpreter installed on a host).
    */
   @Nullable
   public abstract String suggestHomePath();
 
+  /**
+   * Returns a list of all valid SDKs found on this host.
+   * <p/>
+   * E.g. for Python SDK on Unix the method may return {@code ["/usr/bin/python2", "/usr/bin/python3"]}.
+   */
+  @NotNull
   public Collection<String> suggestHomePaths() {
-    String s = suggestHomePath();
-    return s == null ? Collections.<String>emptyList() : Collections.singletonList(s);
+    String home = suggestHomePath();
+    return home != null ? Collections.singletonList(home) : Collections.<String>emptyList();
   }
 
   /**
@@ -58,13 +71,12 @@ public abstract class SdkType implements SdkTypeId {
    * @param homePath the path selected in the file chooser.
    * @return the path to be used as the SDK home.
    */
-
-  public String adjustSelectedSdkHome(String homePath) {
+  @NotNull
+  public String adjustSelectedSdkHome(@NotNull String homePath) {
     return homePath;
   }
 
   public abstract boolean isValidSdkHome(String path);
-
 
   @Override
   @Nullable
@@ -81,7 +93,7 @@ public abstract class SdkType implements SdkTypeId {
 
   public void setupSdkPaths(@NotNull Sdk sdk) {}
 
-  public boolean setupSdkPaths(final Sdk sdk, final SdkModel sdkModel) {
+  public boolean setupSdkPaths(@NotNull Sdk sdk, @NotNull SdkModel sdkModel) {
     setupSdkPaths(sdk);
     return true;
   }
@@ -90,7 +102,7 @@ public abstract class SdkType implements SdkTypeId {
    * @return Configurable object for the sdk's additional data or null if not applicable
    */
   @Nullable
-  public abstract AdditionalDataConfigurable createAdditionalDataConfigurable(SdkModel sdkModel, SdkModificator sdkModificator);
+  public abstract AdditionalDataConfigurable createAdditionalDataConfigurable(@NotNull SdkModel sdkModel, @NotNull SdkModificator sdkModificator);
 
   @Nullable
   public SdkAdditionalData loadAdditionalData(Element additional) {
@@ -103,16 +115,13 @@ public abstract class SdkType implements SdkTypeId {
     return loadAdditionalData(additional);
   }
 
-  public SdkType(@NotNull @NonNls String name) {
-    myName = name;
-  }
-
   @NotNull
   @Override
   public String getName() {
     return myName;
   }
 
+  @NotNull
   public abstract String getPresentableName();
 
   public Icon getIcon() {
@@ -120,15 +129,16 @@ public abstract class SdkType implements SdkTypeId {
   }
 
   @NotNull
-  @NonNls
   public String getHelpTopic() {
     return "preferences.jdks";
   }
 
+  @NotNull
   public Icon getIconForAddAction() {
     return IconUtil.getAddIcon();
   }
 
+  @Override
   public boolean equals(Object o) {
     if (this == o) return true;
     if (!(o instanceof SdkType)) return false;
@@ -140,14 +150,17 @@ public abstract class SdkType implements SdkTypeId {
     return true;
   }
 
+  @Override
   public int hashCode() {
     return myName.hashCode();
   }
 
+  @Override
   public String toString() {
     return getName();
   }
 
+  @NotNull
   public FileChooserDescriptor getHomeChooserDescriptor() {
     final FileChooserDescriptor descriptor = new FileChooserDescriptor(false, true, false, false, false, false) {
       @Override
@@ -172,6 +185,7 @@ public abstract class SdkType implements SdkTypeId {
   }
 
 
+  @NotNull
   public String getHomeFieldLabel() {
     return ProjectBundle.message("sdk.configure.type.home.path", getPresentableName());
   }
@@ -181,6 +195,7 @@ public abstract class SdkType implements SdkTypeId {
     return null;
   }
 
+  @NotNull
   public static SdkType[] getAllTypes() {
     List<SdkType> allTypes = new ArrayList<SdkType>();
     Collections.addAll(allTypes, ApplicationManager.getApplication().getComponents(SdkType.class));
@@ -188,7 +203,8 @@ public abstract class SdkType implements SdkTypeId {
     return allTypes.toArray(new SdkType[allTypes.size()]);
   }
 
-  public static <T extends SdkType> T findInstance(final Class<T> sdkTypeClass) {
+  @NotNull
+  public static <T extends SdkType> T findInstance(@NotNull Class<T> sdkTypeClass) {
     for (SdkType sdkType : Extensions.getExtensions(EP_NAME)) {
       if (sdkTypeClass.equals(sdkType.getClass())) {
         //noinspection unchecked
@@ -199,7 +215,7 @@ public abstract class SdkType implements SdkTypeId {
     return null;
   }
 
-  public boolean isRootTypeApplicable(final OrderRootType type) {
+  public boolean isRootTypeApplicable(@NotNull OrderRootType type) {
     return true;
   }
 
@@ -223,7 +239,7 @@ public abstract class SdkType implements SdkTypeId {
    * @param sdkCreatedCallback the callback to which the created SDK is passed.
    * @since 12.0
    */
-  public void showCustomCreateUI(SdkModel sdkModel, JComponent parentComponent, Consumer<Sdk> sdkCreatedCallback) {
+  public void showCustomCreateUI(@NotNull SdkModel sdkModel, @NotNull JComponent parentComponent, @NotNull Consumer<Sdk> sdkCreatedCallback) {
   }
 
   /**
@@ -239,7 +255,7 @@ public abstract class SdkType implements SdkTypeId {
     return homeDir != null && homeDir.isValid();
   }
 
-  public String sdkPath(VirtualFile homePath) {
+  public String sdkPath(@NotNull VirtualFile homePath) {
     return homePath.getPath();
   }
 }

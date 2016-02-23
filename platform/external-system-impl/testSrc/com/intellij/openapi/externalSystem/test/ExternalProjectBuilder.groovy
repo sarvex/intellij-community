@@ -15,6 +15,7 @@
  */
 package com.intellij.openapi.externalSystem.test
 
+import com.intellij.externalSystem.JavaProjectData
 import com.intellij.openapi.externalSystem.model.DataNode
 import com.intellij.openapi.externalSystem.model.ProjectKeys
 import com.intellij.openapi.externalSystem.model.ProjectSystemId
@@ -57,16 +58,25 @@ class ExternalProjectBuilder extends BuilderSupport {
 
   @Override
   protected Object createNode(Object name, Map attributes) {
+    def projectPath = ExternalSystemApiUtil.normalizePath(projectDir.path)
     switch (name) {
       case 'project':
         ProjectSystemId projectSystemId = attributes.projectSystemId ?: TEST_EXTERNAL_SYSTEM_ID
-        ProjectData projectData = new ProjectData(projectSystemId, attributes.name ?: 'project', projectDir.path, projectDir.path)
+        ProjectData projectData = new ProjectData(projectSystemId, attributes.name ?: 'project', projectPath, projectPath)
         projectNode = new DataNode<ProjectData>(ProjectKeys.PROJECT, projectData, null)
         return projectNode
+      case 'javaProject':
+        ProjectSystemId projectSystemId = attributes.projectSystemId ?: TEST_EXTERNAL_SYSTEM_ID
+        String jdk = attributes.jdk ?: ""
+        String languageLevel = attributes.languageLevel ?: ""
+        JavaProjectData javaProjectData = new JavaProjectData(projectSystemId, "")
+        javaProjectData.setJdkVersion(jdk)
+        javaProjectData.setLanguageLevel(languageLevel)
+        return (current as DataNode).createChild(JavaProjectData.KEY, javaProjectData)
       case 'module':
         ProjectSystemId projectSystemId = attributes.projectSystemId ?: TEST_EXTERNAL_SYSTEM_ID
-        String moduleFilePath = attributes.moduleFilePath ?: projectDir.path
-        String externalConfigPath = attributes.externalConfigPath ?: projectDir.path
+        String moduleFilePath = attributes.moduleFilePath ?: projectPath
+        String externalConfigPath = attributes.externalConfigPath ?: projectPath
         ModuleData moduleData = new ModuleData(attributes.name ?: name as String,
                                                projectSystemId,
                                                ModuleTypeId.JAVA_MODULE,
@@ -115,7 +125,9 @@ class ExternalProjectBuilder extends BuilderSupport {
     ['bin': LibraryPathType.BINARY, 'src': LibraryPathType.SOURCE, 'doc': LibraryPathType.DOC].each {
       key, type -> attributes[key]?.each { result.addPath(type, it as String) }
     }
-    projectNode.createChild(ProjectKeys.LIBRARY, result)
+    if (attributes.level != 'module') {
+      projectNode.createChild(ProjectKeys.LIBRARY, result)
+    }
     result
   }
 

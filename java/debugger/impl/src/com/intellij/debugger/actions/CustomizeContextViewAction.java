@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import com.intellij.openapi.options.TabbedConfigurable;
 import com.intellij.openapi.options.ex.SingleConfigurableEditor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.util.ui.JBUI;
 import com.intellij.xdebugger.XDebugSession;
 import com.intellij.xdebugger.XDebuggerManager;
 import com.intellij.xdebugger.impl.ui.tree.actions.XDebuggerTreeActionBase;
@@ -36,10 +37,11 @@ import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import java.util.List;
 
 public class CustomizeContextViewAction extends XDebuggerTreeActionBase {
+  private static int ourLastSelectedTabIndex = 0;
+
   @Override
   public void actionPerformed(AnActionEvent e) {
     perform(null, "", e);
@@ -49,40 +51,66 @@ public class CustomizeContextViewAction extends XDebuggerTreeActionBase {
   protected void perform(XValueNodeImpl node, @NotNull String nodeName, AnActionEvent e) {
     final Project project = CommonDataKeys.PROJECT.getData(e.getDataContext());
     Disposable disposable = Disposer.newDisposable();
-    SingleConfigurableEditor editor = new SingleConfigurableEditor(project, new TabbedConfigurable(disposable) {
+    final MyTabbedConfigurable configurable = new MyTabbedConfigurable(disposable);
+    SingleConfigurableEditor editor = new SingleConfigurableEditor(project, configurable) {
       @Override
-      protected List<Configurable> createConfigurables() {
-        return JavaDebuggerSettings.createDataViewsConfigurable();
+      protected void doOKAction() {
+        //noinspection AssignmentToStaticFieldFromInstanceMethod
+        ourLastSelectedTabIndex = configurable.getSelectedIndex();
+        super.doOKAction();
       }
 
       @Override
-      public void apply() throws ConfigurationException {
-        super.apply();
-        NodeRendererSettings.getInstance().fireRenderersChanged();
+      public void doCancelAction() {
+        //noinspection AssignmentToStaticFieldFromInstanceMethod
+        ourLastSelectedTabIndex = configurable.getSelectedIndex();
+        super.doCancelAction();
       }
-
-      @Override
-      public String getDisplayName() {
-        return DebuggerBundle.message("title.customize.data.views");
-      }
-
-      @Override
-      public String getHelpTopic() {
-        return "reference.debug.customize.data.view";
-      }
-
-      @Override
-      protected void createConfigurableTabs() {
-        for (Configurable configurable : getConfigurables()) {
-          JComponent component = configurable.createComponent();
-          assert component != null;
-          component.setBorder(new EmptyBorder(8, 8, 8, 8));
-          myTabbedPane.addTab(configurable.getDisplayName(), component);
-        }
-      }
-    });
+    };
     Disposer.register(editor.getDisposable(), disposable);
     editor.show();
+  }
+
+  private static class MyTabbedConfigurable extends TabbedConfigurable {
+    public MyTabbedConfigurable(@NotNull Disposable parent) {
+      super(parent);
+    }
+
+    @Override
+    protected List<Configurable> createConfigurables() {
+      return JavaDebuggerSettings.createDataViewsConfigurable();
+    }
+
+    @Override
+    public void apply() throws ConfigurationException {
+      super.apply();
+      NodeRendererSettings.getInstance().fireRenderersChanged();
+    }
+
+    @Override
+    public String getDisplayName() {
+      return DebuggerBundle.message("title.customize.data.views");
+    }
+
+    @Override
+    public String getHelpTopic() {
+      return "reference.debug.customize.data.view";
+    }
+
+    @Override
+    protected void createConfigurableTabs() {
+      for (Configurable configurable : getConfigurables()) {
+        JComponent component = configurable.createComponent();
+        assert component != null;
+        component.setBorder(JBUI.Borders.empty(8, 8));
+        myTabbedPane.addTab(configurable.getDisplayName(), component);
+      }
+      myTabbedPane.setSelectedIndex(ourLastSelectedTabIndex);
+    }
+
+    int getSelectedIndex() {
+      return myTabbedPane.getSelectedIndex();
+    }
   }
 
   @Override

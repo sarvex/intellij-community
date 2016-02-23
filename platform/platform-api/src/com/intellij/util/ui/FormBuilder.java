@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2010 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -104,6 +104,11 @@ public class FormBuilder {
 
   public FormBuilder addComponent(@NotNull JComponent component, final int topInset) {
     return addLabeledComponent((JLabel)null, component, topInset, false);
+  }
+
+  @NotNull
+  public FormBuilder addComponentFillVertically(@NotNull JComponent component, int topInset) {
+    return addLabeledComponent(null, component, topInset, false, true);
   }
 
   public FormBuilder addSeparator(final int topInset) {
@@ -212,10 +217,9 @@ public class FormBuilder {
   }
 
   protected int getFill(JComponent component) {
-    if (component instanceof JComboBox || component instanceof JSpinner) {
-      return NONE;
-    }
-    else if (component instanceof JTextField && ((JTextField)component).getColumns() != 0) {
+    if (component instanceof JComboBox ||
+        component instanceof JSpinner ||
+        component instanceof JTextField && ((JTextField)component).getColumns() != 0) {
       return NONE;
     }
     return HORIZONTAL;
@@ -261,7 +265,7 @@ public class FormBuilder {
   }
 
   /**
-   * @deprecated use {@code setHorizontalGap} or {@code setFormLeftIndent}, to be removed in IDEA 16
+   * @deprecated use {@link #setHorizontalGap} or {@link #setFormLeftIndent}, to be removed in IDEA 16
    */
   @Deprecated
   public FormBuilder setIndent(int indent) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,9 @@
 package com.intellij.codeInsight.daemon.impl;
 
 import com.intellij.codeHighlighting.Pass;
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzerSettings;
-import com.intellij.codeInsight.daemon.LineMarkerInfo;
-import com.intellij.codeInsight.daemon.LineMarkerProvider;
-import com.intellij.codeInsight.daemon.MergeableLineMarkerInfo;
+import com.intellij.codeInsight.daemon.*;
 import com.intellij.icons.AllIcons;
+import com.intellij.openapi.actionSystem.IdeActions;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.colors.CodeInsightColors;
@@ -29,16 +27,16 @@ import com.intellij.openapi.editor.colors.EditorColorsScheme;
 import com.intellij.openapi.editor.markup.GutterIconRenderer;
 import com.intellij.openapi.editor.markup.SeparatorPlacement;
 import com.intellij.openapi.progress.ProgressManager;
-import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
+import com.intellij.psi.impl.FindSuperElementsHelper;
 import com.intellij.psi.search.searches.AllOverridingMethodsSearch;
-import com.intellij.psi.search.searches.ClassInheritorsSearch;
 import com.intellij.psi.search.searches.FunctionalExpressionSearch;
 import com.intellij.psi.search.searches.SuperMethodsSearch;
 import com.intellij.psi.util.MethodSignatureBackedByPsiMethod;
+import com.intellij.psi.util.PsiExpressionTrimRenderer;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.util.Function;
 import com.intellij.util.FunctionUtil;
@@ -51,12 +49,13 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
-public class JavaLineMarkerProvider implements LineMarkerProvider {
-
-  protected final DaemonCodeAnalyzerSettings myDaemonSettings;
-  protected final EditorColorsManager myColorsManager;
+public class JavaLineMarkerProvider extends LineMarkerProviderDescriptor {
+  private final DaemonCodeAnalyzerSettings myDaemonSettings;
+  private final EditorColorsManager myColorsManager;
+  private final Option myLambdaOption = new Option("java.lambda", "Lambda", AllIcons.Gutter.ImplementingFunctionalInterface);
 
   public JavaLineMarkerProvider(DaemonCodeAnalyzerSettings daemonSettings, EditorColorsManager colorsManager) {
     myDaemonSettings = daemonSettings;
@@ -75,17 +74,14 @@ public class JavaLineMarkerProvider implements LineMarkerProvider {
           method.hasModifierProperty(PsiModifier.ABSTRACT) == superSignature.getMethod().hasModifierProperty(PsiModifier.ABSTRACT);
 
         final Icon icon = overrides ? AllIcons.Gutter.OverridingMethod : AllIcons.Gutter.ImplementingMethod;
-        final MarkerType type = MarkerType.OVERRIDING_METHOD;
-        return new ArrowUpLineMarkerInfo(element, icon, type);
+        return createSuperMethodLineMarkerInfo(element, icon, Pass.UPDATE_ALL);
       }
     }
 
     final PsiMethod interfaceMethod = LambdaUtil.getFunctionalInterfaceMethod(element);
     final PsiElement firstChild = element.getFirstChild();
-    if (interfaceMethod != null && firstChild != null) {
-      final Icon icon = AllIcons.Gutter.ImplementingMethod;
-      final MarkerType type = MarkerType.OVERRIDING_METHOD;
-      return new ArrowUpLineMarkerInfo(firstChild, icon, type);
+    if (interfaceMethod != null && firstChild != null && LineMarkerSettings.getSettings().isEnabled(myLambdaOption)) {
+      return createSuperMethodLineMarkerInfo(firstChild, AllIcons.Gutter.ImplementingFunctionalInterface, Pass.UPDATE_ALL);
     }
 
     if (myDaemonSettings.SHOW_METHOD_SEPARATORS && firstChild == null) {
@@ -100,7 +96,7 @@ public class JavaLineMarkerProvider implements LineMarkerProvider {
       }
       if (isMember && !(element1 instanceof PsiAnonymousClass || element1.getParent() instanceof PsiAnonymousClass)) {
         PsiFile file = element1.getContainingFile();
-        Document document = file == null ? null : PsiDocumentManager.getInstance(file.getProject()).getDocument(file);
+        Document document = file == null ? null : PsiDocumentManager.getInstance(file.getProject()).getLastCommittedDocument(file);
         boolean drawSeparator = false;
 
         if (document != null) {
@@ -129,6 +125,12 @@ public class JavaLineMarkerProvider implements LineMarkerProvider {
     return null;
   }
 
+  @NotNull
+  private static LineMarkerInfo createSuperMethodLineMarkerInfo(@NotNull PsiElement name, @NotNull Icon icon, int passId) {
+    ArrowUpLineMarkerInfo info = new ArrowUpLineMarkerInfo(name, icon, MarkerType.OVERRIDING_METHOD, passId);
+    return NavigateAction.setNavigateAction(info, "Go to super method", IdeActions.ACTION_GOTO_SUPER);
+  }
+
   private static int getCategory(@NotNull PsiElement element, @NotNull CharSequence documentChars) {
     if (element instanceof PsiField || element instanceof PsiTypeParameter) return 1;
     if (element instanceof PsiClass || element instanceof PsiClassInitializer) return 2;
@@ -148,47 +150,98 @@ public class JavaLineMarkerProvider implements LineMarkerProvider {
   @Override
   public void collectSlowLineMarkers(@NotNull final List<PsiElement> elements, @NotNull final Collection<LineMarkerInfo> result) {
     ApplicationManager.getApplication().assertReadAccessAllowed();
+    Map<PsiClass, PsiClass> subClassCache = FindSuperElementsHelper.createSubClassCache();
 
-    Set<PsiMethod> methods = new HashSet<PsiMethod>();
+    Collection<PsiMethod> methods = new THashSet<PsiMethod>();
     //noinspection ForLoopReplaceableByForEach
     for (int i = 0; i < elements.size(); i++) {
       PsiElement element = elements.get(i);
       ProgressManager.checkCanceled();
-      if (element instanceof PsiMethod) {
-        final PsiMethod method = (PsiMethod)element;
+      if (!(element instanceof PsiIdentifier)) continue;
+      PsiElement parent = element.getParent();
+      if (parent instanceof PsiMethod) {
+        final PsiMethod method = (PsiMethod)parent;
         if (PsiUtil.canBeOverriden(method)) {
           methods.add(method);
         }
       }
-      else if (element instanceof PsiClass && !(element instanceof PsiTypeParameter)) {
-        collectInheritingClasses((PsiClass)element, result);
+      else if (parent instanceof PsiClass && !(parent instanceof PsiTypeParameter)) {
+        collectInheritingClasses((PsiClass)parent, result, subClassCache);
       }
     }
     if (!methods.isEmpty()) {
-      collectOverridingAccessors(methods, result);
+      collectOverridingMethods(methods, result);
+      collectSiblingInheritedMethods(methods, result, subClassCache);
     }
   }
 
-  public static void collectInheritingClasses(PsiClass aClass, Collection<LineMarkerInfo> result) {
+  private static void collectSiblingInheritedMethods(@NotNull final Collection<PsiMethod> methods,
+                                                     @NotNull Collection<LineMarkerInfo> result,
+                                                     @NotNull Map<PsiClass, PsiClass> subClassCache) {
+    for (PsiMethod method : methods) {
+      ProgressManager.checkCanceled();
+      PsiClass aClass = method.getContainingClass();
+      if (aClass == null || aClass.hasModifierProperty(PsiModifier.FINAL) || aClass.isInterface()) continue;
+
+      boolean canHaveSiblingSuper = !method.hasModifierProperty(PsiModifier.ABSTRACT) && !method.hasModifierProperty(PsiModifier.STATIC) && method.hasModifierProperty(PsiModifier.PUBLIC)&& !method.hasModifierProperty(PsiModifier.FINAL)&& !method.hasModifierProperty(PsiModifier.NATIVE);
+      if (!canHaveSiblingSuper) continue;
+
+      PsiMethod siblingInheritedViaSubClass = Pair.getFirst(FindSuperElementsHelper.getSiblingInheritedViaSubClass(method, subClassCache));
+      if (siblingInheritedViaSubClass == null) {
+        continue;
+      }
+      PsiElement range = getMethodRange(method);
+      ArrowUpLineMarkerInfo upInfo = new ArrowUpLineMarkerInfo(range, AllIcons.Gutter.ImplementingMethod, MarkerType.SIBLING_OVERRIDING_METHOD,
+                                                              Pass.UPDATE_OVERRIDEN_MARKERS);
+      LineMarkerInfo info = NavigateAction.setNavigateAction(upInfo, "Go to super method", IdeActions.ACTION_GOTO_SUPER);
+      result.add(info);
+    }
+  }
+
+  @NotNull
+  private static PsiElement getMethodRange(@NotNull PsiMethod method) {
+    PsiElement range;
+    if (method.isPhysical()) {
+      range = method.getNameIdentifier();
+    }
+    else {
+      final PsiElement navigationElement = method.getNavigationElement();
+      range = navigationElement instanceof PsiNameIdentifierOwner
+              ? ((PsiNameIdentifierOwner)navigationElement).getNameIdentifier()
+              : navigationElement;
+    }
+    if (range == null) {
+      range = method;
+    }
+    return range;
+  }
+
+  public static void collectInheritingClasses(@NotNull PsiClass aClass,
+                                              @NotNull Collection<LineMarkerInfo> result,
+                                              @NotNull Map<PsiClass, PsiClass> subClassCache) {
     if (aClass.hasModifierProperty(PsiModifier.FINAL)) {
       return;
     }
     if (CommonClassNames.JAVA_LANG_OBJECT.equals(aClass.getQualifiedName())) return; // It's useless to have overridden markers for object.
 
-    if (ClassInheritorsSearch.search(aClass, false).findFirst() != null || FunctionalExpressionSearch.search(aClass).findFirst() != null) {
+    PsiClass subClass = subClassCache.get(aClass);
+    if (subClass != null || FunctionalExpressionSearch.search(aClass).findFirst() != null) {
       final Icon icon = aClass.isInterface() ? AllIcons.Gutter.ImplementedMethod : AllIcons.Gutter.OverridenMethod;
       PsiElement range = aClass.getNameIdentifier();
-      if (range == null) range = aClass;
+      if (range == null) {
+        range = aClass;
+      }
       MarkerType type = MarkerType.SUBCLASSED_CLASS;
       LineMarkerInfo info = new LineMarkerInfo<PsiElement>(range, range.getTextRange(),
                                                            icon, Pass.UPDATE_OVERRIDEN_MARKERS, type.getTooltip(),
                                                            type.getNavigationHandler(),
                                                            GutterIconRenderer.Alignment.RIGHT);
+      NavigateAction.setNavigateAction(info, aClass.isInterface() ? "Go to implementation(s)" : "Go to subclass(es)", IdeActions.ACTION_GOTO_IMPLEMENTATION);
       result.add(info);
     }
   }
 
-  private static void collectOverridingAccessors(final Set<PsiMethod> methods, Collection<LineMarkerInfo> result) {
+  private static void collectOverridingMethods(@NotNull final Collection<PsiMethod> methods, @NotNull Collection<LineMarkerInfo> result) {
     final Set<PsiMethod> overridden = new HashSet<PsiMethod>();
     Set<PsiClass> classes = new THashSet<PsiClass>();
     for (PsiMethod method : methods) {
@@ -229,33 +282,31 @@ public class JavaLineMarkerProvider implements LineMarkerProvider {
       ProgressManager.checkCanceled();
       boolean overrides = !method.hasModifierProperty(PsiModifier.ABSTRACT);
 
+      PsiElement range = getMethodRange(method);
+      final MarkerType type = MarkerType.OVERRIDDEN_METHOD;
       final Icon icon = overrides ? AllIcons.Gutter.OverridenMethod : AllIcons.Gutter.ImplementedMethod;
-      PsiElement range;
-      if (method.isPhysical()) {
-        range = method.getNameIdentifier();
-      }
-      else {
-        final PsiElement navigationElement = method.getNavigationElement();
-        if (navigationElement instanceof PsiNameIdentifierOwner) {
-          range = ((PsiNameIdentifierOwner)navigationElement).getNameIdentifier();
-        }
-        else {
-          range = navigationElement;
-        }
-      }
-      if (range == null) range = method;
-      final MarkerType type = MarkerType.OVERRIDEN_METHOD;
-      LineMarkerInfo info = new LineMarkerInfo<PsiElement>(range, range.getTextRange(),
+      LineMarkerInfo<PsiElement> info = new LineMarkerInfo<PsiElement>(range, range.getTextRange(),
                                                            icon, Pass.UPDATE_OVERRIDEN_MARKERS, type.getTooltip(),
                                                            type.getNavigationHandler(),
                                                            GutterIconRenderer.Alignment.RIGHT);
+      NavigateAction.setNavigateAction(info, overrides ? "Go to overriding methods" : "Go to implementation(s)", IdeActions.ACTION_GOTO_IMPLEMENTATION);
       result.add(info);
     }
   }
 
+  @Override
+  public String getName() {
+    return "Java line markers";
+  }
+
+  @Override
+  public Option[] getOptions() {
+    return new Option[] {myLambdaOption};
+  }
+
   private static class ArrowUpLineMarkerInfo extends MergeableLineMarkerInfo<PsiElement> {
-    private ArrowUpLineMarkerInfo(@NotNull PsiElement element, Icon icon, @NotNull MarkerType markerType) {
-      super(element, element.getTextRange(), icon, Pass.UPDATE_ALL, markerType.getTooltip(),
+    private ArrowUpLineMarkerInfo(@NotNull PsiElement element, @NotNull Icon icon, @NotNull MarkerType markerType, int passId) {
+      super(element, element.getTextRange(), icon, passId, markerType.getTooltip(),
             markerType.getNavigationHandler(), GutterIconRenderer.Alignment.LEFT);
     }
 
@@ -273,6 +324,7 @@ public class JavaLineMarkerProvider implements LineMarkerProvider {
       return myIcon;
     }
 
+    @NotNull
     @Override
     public Function<? super PsiElement, String> getCommonTooltip(@NotNull List<MergeableLineMarkerInfo> infos) {
       return new Function<PsiElement, String>() {
@@ -281,6 +333,15 @@ public class JavaLineMarkerProvider implements LineMarkerProvider {
           return "Multiple method overrides";
         }
       };
+    }
+
+    @Override
+    public String getElementPresentation(PsiElement element) {
+      final PsiElement parent = element.getParent();
+      if (parent instanceof PsiFunctionalExpression) {
+        return PsiExpressionTrimRenderer.render((PsiExpression)parent);
+      }
+      return super.getElementPresentation(element);
     }
   }
 }

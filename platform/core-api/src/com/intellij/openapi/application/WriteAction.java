@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,16 @@
 package com.intellij.openapi.application;
 
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.util.ObjectUtils;
+import com.intellij.util.ReflectionUtil;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import javax.swing.*;
 
 public abstract class WriteAction<T> extends BaseActionRunnable<T> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.application.WriteAction");
+
   @NotNull
   @Override
+  @SuppressWarnings("InstanceofCatchParameter")
   public RunResult<T> execute() {
     final RunResult<T> result = new RunResult<T>(this);
 
@@ -34,50 +35,37 @@ public abstract class WriteAction<T> extends BaseActionRunnable<T> {
       return result;
     }
 
-    try {
-      if (!application.isDispatchThread() && application.isReadAccessAllowed()) {
-        LOG.error("Must not start write action from within read action in the other thread - deadlock is coming");
-      }
-      Runnable runnable = new Runnable() {
-        @Override
-        public void run() {
-          application.runWriteAction(new Runnable() {
-            @Override
-            public void run() {
-              result.run();
-            }
-          });
+    boolean dispatchThread = application.isDispatchThread();
+    if (!dispatchThread && application.isReadAccessAllowed()) {
+      LOG.error("Must not start write action from within read action in the other thread - deadlock is coming");
+    }
+
+    application.invokeAndWait(new Runnable() {
+      @Override
+      public void run() {
+        AccessToken token = application.acquireWriteActionLock(WriteAction.this.getClass());
+        try {
+          result.run();
         }
-      };
-      if (application.isDispatchThread()) {
-        runnable.run();
+        finally {
+          token.finish();
+        }
       }
-      else if (application.isReadAccessAllowed()) {
-        LOG.error("Calling write action from read-action leads to deadlock.");
-      }
-      else {
-        SwingUtilities.invokeAndWait(runnable);
-      }
-    }
-    catch (Exception e) {
-      if (isSilentExecution()) {
-        result.setThrowable(e);
-      }
-      else {
-        if (e instanceof RuntimeException) throw (RuntimeException)e;
-        throw new Error(e);
-      }
-    }
+    }, ModalityState.defaultModalityState());
+
+    result.throwException();
     return result;
   }
 
   @NotNull
   public static AccessToken start() {
-    return start(null);
+    // get useful information about the write action
+    Class aClass = ObjectUtils.notNull(ReflectionUtil.getGrandCallerClass(), WriteAction.class);
+    return start(aClass);
   }
 
   @NotNull
-  public static AccessToken start(@Nullable Class clazz) {
+  public static AccessToken start(@NotNull Class clazz) {
     return ApplicationManager.getApplication().acquireWriteActionLock(clazz);
   }
 }

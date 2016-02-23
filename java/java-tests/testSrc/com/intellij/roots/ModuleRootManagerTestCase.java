@@ -1,5 +1,21 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.roots;
 
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.projectRoots.Sdk;
@@ -7,6 +23,7 @@ import com.intellij.openapi.projectRoots.SdkModificator;
 import com.intellij.openapi.roots.OrderRootType;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.roots.libraries.LibraryTablesRegistrar;
+import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vfs.JarFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.testFramework.IdeaTestUtil;
@@ -14,6 +31,7 @@ import com.intellij.testFramework.ModuleTestCase;
 import com.intellij.testFramework.PsiTestUtil;
 import com.intellij.util.PathsList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 
@@ -32,15 +50,15 @@ public abstract class ModuleRootManagerTestCase extends ModuleTestCase {
 
   @NotNull
   protected static Sdk getMockJdk17WithRtJarOnly() {
-    return retainRtJarOnly(IdeaTestUtil.getMockJdk17());
+    return retainRtJarOnlyAndSetVersion(IdeaTestUtil.getMockJdk17());
   }
 
   protected Sdk getMockJdk18WithRtJarOnly() {
-    return retainRtJarOnly(IdeaTestUtil.getMockJdk18());
+    return retainRtJarOnlyAndSetVersion(IdeaTestUtil.getMockJdk18());
   }
 
   @NotNull
-  private static Sdk retainRtJarOnly(Sdk jdk) {
+  private static Sdk retainRtJarOnlyAndSetVersion(Sdk jdk) {
     final SdkModificator modificator = jdk.getSdkModificator();
     VirtualFile rtJar = null;
     for (VirtualFile root : modificator.getRoots(OrderRootType.CLASSES)) {
@@ -50,6 +68,7 @@ public abstract class ModuleRootManagerTestCase extends ModuleTestCase {
       }
     }
     assertNotNull("rt.jar not found in jdk: " + jdk, rtJar);
+    modificator.setVersionString(IdeaTestUtil.getMockJdkVersion(jdk.getHomePath()));
     modificator.removeAllRoots();
     modificator.addRoot(rtJar, OrderRootType.CLASSES);
     modificator.commitChanges();
@@ -93,15 +112,22 @@ public abstract class ModuleRootManagerTestCase extends ModuleTestCase {
     return output;
   }
 
-  protected Library createLibrary(final String name, final VirtualFile classesRoot, final VirtualFile sourceRoot) {
-    final Library library = LibraryTablesRegistrar.getInstance().getLibraryTable(myProject).createLibrary(name);
-    final Library.ModifiableModel model = library.getModifiableModel();
-    model.addRoot(classesRoot, OrderRootType.CLASSES);
-    if (sourceRoot != null) {
-      model.addRoot(sourceRoot, OrderRootType.SOURCES);
-    }
-    model.commit();
-    return library;
+  protected Library createLibrary(final String name, final @Nullable VirtualFile classesRoot, final @Nullable VirtualFile sourceRoot) {
+    return ApplicationManager.getApplication().runWriteAction(new Computable<Library>() {
+      @Override
+      public Library compute() {
+        final Library library = LibraryTablesRegistrar.getInstance().getLibraryTable(myProject).createLibrary(name);
+        final Library.ModifiableModel model = library.getModifiableModel();
+        if (classesRoot != null) {
+          model.addRoot(classesRoot, OrderRootType.CLASSES);
+        }
+        if (sourceRoot != null) {
+          model.addRoot(sourceRoot, OrderRootType.SOURCES);
+        }
+        model.commit();
+        return library;
+      }
+    });
   }
 
   protected Library createJDomLibrary() {

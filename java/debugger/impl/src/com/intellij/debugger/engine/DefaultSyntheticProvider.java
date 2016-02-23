@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 package com.intellij.debugger.engine;
 
-import com.sun.jdi.ReferenceType;
+import com.intellij.debugger.impl.DebuggerUtilsEx;
 import com.sun.jdi.TypeComponent;
 import com.sun.jdi.VirtualMachine;
 
@@ -26,12 +26,11 @@ public class DefaultSyntheticProvider implements SyntheticTypeComponentProvider 
   @Override
   public boolean isSynthetic(TypeComponent typeComponent) {
     String name = typeComponent.name();
-    if (name.startsWith(LambdaMethodFilter.LAMBDA_METHOD_PREFIX)) {
+    if (LambdaMethodFilter.isLambdaName(name)) {
       return false;
     }
     else {
-      ReferenceType type = typeComponent.declaringType();
-      if (type.name().contains("$$Lambda$")) {
+      if (DebuggerUtilsEx.isLambdaClassName(typeComponent.declaringType().name())) {
         return true;
       }
     }

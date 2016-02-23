@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,6 @@ import com.intellij.codeInsight.CodeInsightUtilCore;
 import com.intellij.ide.util.EditorHelper;
 import com.intellij.lang.findUsages.DescriptiveNameUtil;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.fileEditor.FileEditorManager;
-import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.text.StringUtil;
@@ -38,7 +36,9 @@ import com.intellij.refactoring.listeners.RefactoringElementListener;
 import com.intellij.refactoring.move.MoveCallback;
 import com.intellij.refactoring.move.moveClassesOrPackages.MoveClassesOrPackagesUtil;
 import com.intellij.refactoring.rename.RenameUtil;
-import com.intellij.refactoring.util.*;
+import com.intellij.refactoring.util.ConflictsUtil;
+import com.intellij.refactoring.util.NonCodeUsageInfo;
+import com.intellij.refactoring.util.RefactoringUIUtil;
 import com.intellij.usageView.UsageInfo;
 import com.intellij.usageView.UsageViewDescriptor;
 import com.intellij.util.Function;
@@ -93,7 +93,7 @@ public class MoveInnerProcessor extends BaseRefactoringProcessor {
   }
 
   @NotNull
-  protected UsageViewDescriptor createUsageViewDescriptor(UsageInfo[] usages) {
+  protected UsageViewDescriptor createUsageViewDescriptor(@NotNull UsageInfo[] usages) {
     return new MoveInnerViewDescriptor(myInnerClass);
   }
 
@@ -134,7 +134,7 @@ public class MoveInnerProcessor extends BaseRefactoringProcessor {
     return usageInfos.toArray(new UsageInfo[usageInfos.size()]);
   }
 
-  protected void refreshElements(PsiElement[] elements) {
+  protected void refreshElements(@NotNull PsiElement[] elements) {
     boolean condition = elements.length == 1 && elements[0] instanceof PsiClass;
     LOG.assertTrue(condition);
     myInnerClass = (PsiClass)elements[0];
@@ -156,7 +156,7 @@ public class MoveInnerProcessor extends BaseRefactoringProcessor {
     mySearchInNonJavaFiles = searchInNonJavaFiles;
   }
 
-  protected void performRefactoring(final UsageInfo[] usages) {
+  protected void performRefactoring(@NotNull final UsageInfo[] usages) {
     final PsiManager manager = PsiManager.getInstance(myProject);
     final PsiElementFactory factory = JavaPsiFacade.getInstance(manager.getProject()).getElementFactory();
 
@@ -193,8 +193,11 @@ public class MoveInnerProcessor extends BaseRefactoringProcessor {
           PsiJavaCodeReferenceElement parentRef = (PsiJavaCodeReferenceElement)element.getParent();
           PsiElement parentRefElement = parentRef.resolve();
           if (parentRefElement instanceof PsiClass) { // reference to inner class inside our inner
-            parentRef.getQualifier().delete();
-            continue;
+            final PsiReferenceList referenceList = PsiTreeUtil.getTopmostParentOfType(parentRef, PsiReferenceList.class);
+            if (referenceList == null || referenceList.getParent() != newClass) {
+              parentRef.getQualifier().delete();
+              continue;
+            }
           }
         }
         ref.bindToElement(newClass);
@@ -310,7 +313,7 @@ public class MoveInnerProcessor extends BaseRefactoringProcessor {
     }
   }
 
-  protected boolean preprocessUsages(Ref<UsageInfo[]> refUsages) {
+  protected boolean preprocessUsages(@NotNull Ref<UsageInfo[]> refUsages) {
     final MultiMap<PsiElement, String> conflicts = new MultiMap<PsiElement, String>();
     final HashMap<PsiElement,HashSet<PsiElement>> reported = new HashMap<PsiElement, HashSet<PsiElement>>();
     class Visitor extends JavaRecursiveElementWalkingVisitor {

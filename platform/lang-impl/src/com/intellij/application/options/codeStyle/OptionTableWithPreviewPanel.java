@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,7 @@
 package com.intellij.application.options.codeStyle;
 
 import com.intellij.openapi.application.ApplicationBundle;
-import com.intellij.psi.codeStyle.CodeStyleSettings;
-import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
-import com.intellij.psi.codeStyle.CustomCodeStyleSettings;
+import com.intellij.psi.codeStyle.*;
 import com.intellij.ui.SpeedSearchComparator;
 import com.intellij.ui.TreeTableSpeedSearch;
 import com.intellij.ui.components.JBCheckBox;
@@ -225,6 +223,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
 
         Object node = treePath.getLastPathComponent();
 
+        @SuppressWarnings("unchecked")
         TableCellRenderer renderer = COLUMNS[column].getRenderer(node);
         return renderer == null ? super.getCellRenderer(row, column) : renderer;
       }
@@ -235,6 +234,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
         if (treePath == null) return super.getCellEditor(row, column);
 
         Object node = treePath.getLastPathComponent();
+        @SuppressWarnings("unchecked")
         TableCellEditor editor = COLUMNS[column].getEditor(node);
         return editor == null ? super.getCellEditor(row, column) : editor;
       }
@@ -252,6 +252,9 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
 
     expandTree(tree);
 
+    treeTable.getColumnModel().getSelectionModel().setAnchorSelectionIndex(1);
+    treeTable.getColumnModel().getSelectionModel().setLeadSelectionIndex(1);
+
     int maxWidth = tree.getPreferredScrollableViewportSize().width + 10;
     final TableColumn titleColumn = treeTable.getColumnModel().getColumn(0);
     titleColumn.setPreferredWidth(maxWidth);
@@ -259,7 +262,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     titleColumn.setMaxWidth(maxWidth);
     titleColumn.setResizable(false);
 
-    final TableColumn levelColumn = treeTable.getColumnModel().getColumn(1);
+    //final TableColumn levelColumn = treeTable.getColumnModel().getColumn(1);
     //TODO[max]: better preffered size...
     //TODO[kb]: Did I fixed it by making the last column floating?
     //levelColumn.setPreferredWidth(valueSize.width);
@@ -278,7 +281,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     return result == null ? defaultName : result;
   }
 
-  private static void expandTree(final JTree tree) {
+  public static void expandTree(final JTree tree) {
     int oldRowCount = 0;
     do {
       int rowCount = tree.getRowCount();
@@ -293,7 +296,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
 
   protected abstract void initTables();
 
-  private void resetNode(TreeNode node, CodeStyleSettings settings) {
+  private static void resetNode(TreeNode node, CodeStyleSettings settings) {
     if (node instanceof MyTreeNode) {
       ((MyTreeNode)node).reset(settings);
     }
@@ -303,7 +306,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     }
   }
 
-  private void applyNode(TreeNode node, final CodeStyleSettings settings) {
+  private static void applyNode(TreeNode node, final CodeStyleSettings settings) {
     if (node instanceof MyTreeNode) {
       ((MyTreeNode)node).apply(settings);
     }
@@ -313,7 +316,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     }
   }
 
-  private boolean isModified(TreeNode node, final CodeStyleSettings settings) {
+  private static boolean isModified(TreeNode node, final CodeStyleSettings settings) {
     if (node instanceof MyTreeNode) {
       if (((MyTreeNode)node).isModified(settings)) return true;
     }
@@ -411,7 +414,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     @Override
     public Object getValue(CodeStyleSettings settings) {
       try {
-        return field.getBoolean(getSettings(settings)) ? Boolean.TRUE : Boolean.FALSE;
+        return field.getBoolean(getSettings(settings));
       }
       catch (IllegalAccessException ignore) {
         return null;
@@ -500,8 +503,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     @Override
     public Object getValue(CodeStyleSettings settings) {
       try {
-        int value = field.getInt(getSettings(settings));
-        return value == myDefaultValue && myDefaultValueText != null ? myDefaultValueText : value;
+        return field.getInt(getSettings(settings));
       }
       catch (IllegalAccessException e) {
         return null;
@@ -512,11 +514,11 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     public void setValue(Object value, CodeStyleSettings settings) {
       //noinspection EmptyCatchBlock
       try {
-        if (myDefaultValueText != null && !myDefaultValueText.equals(value)) {
+        if (value instanceof Integer) {
           field.setInt(getSettings(settings), ((Integer)value).intValue());
         }
         else {
-          field.setInt(getSettings(settings), -1);
+          field.setInt(getSettings(settings), myDefaultValue);
         }
       }
       catch (IllegalAccessException e) {
@@ -534,9 +536,9 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     public int getDefaultValue() {
       return myDefaultValue;
     }
-    
-    public boolean isDefaultText(Object value) {
-      return myDefaultValueText != null && myDefaultValueText.equals(value);
+
+    public boolean isDefaultValue(Object value) {
+      return value instanceof Integer && ((Integer)value).intValue() == myDefaultValue;
     }
 
     @Nullable
@@ -632,7 +634,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     }
   };
 
-  private class MyTreeNode extends DefaultMutableTreeNode {
+  private static class MyTreeNode extends DefaultMutableTreeNode {
     private final Option myKey;
     private final String myText;
     private Object myValue;
@@ -677,7 +679,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     }
   }
 
-  private class MyValueRenderer implements TableCellRenderer {
+  private static class MyValueRenderer implements TableCellRenderer {
     private final JLabel myComboBox = new JLabel();
     private final JCheckBox myCheckBox = new JBCheckBox();
     private final JPanel myEmptyLabel = new JPanel();
@@ -694,8 +696,10 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
       boolean isEnabled = true;
       final DefaultMutableTreeNode node = (DefaultMutableTreeNode)((TreeTable)table).getTree().
         getPathForRow(row).getLastPathComponent();
+      Option key = null;
       if (node instanceof MyTreeNode) {
         isEnabled = ((MyTreeNode)node).isEnabled();
+        key = ((MyTreeNode)node).getKey();
       }
       if (!table.isEnabled()) {
         isEnabled = false;
@@ -719,7 +723,12 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
         return myComboBox;
       }
       else if (value instanceof Integer) {
-        myIntLabel.setText(value.toString());
+        if (key instanceof IntOption && ((IntOption)key).isDefaultValue(value)) {
+          myIntLabel.setText(((IntOption)key).getDefaultValueText());
+        }
+        else {
+          myIntLabel.setText(value.toString());
+        }
         return myIntLabel;
       }
 
@@ -735,15 +744,13 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     private int myMinValue;
     private int myMaxValue;
     private int myDefaultValue;
-    private String myDefaultValueText;
 
     private MyIntOptionEditor() {
       super();
     }
-    
+
     public Object getPresentableValue() {
-      int value = validateAndGetIntOption();
-      return value == myDefaultValue && myDefaultValueText != null ? myDefaultValueText : value;
+      return validateAndGetIntOption();
     }
 
     private int validateAndGetIntOption() {
@@ -754,7 +761,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
       catch (NumberFormatException nfe) {
         return myDefaultValue;
       }
-    }   
+    }
 
     public void setMinValue(int minValue) {
       myMinValue = minValue;
@@ -766,10 +773,6 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
 
     public void setDefaultValue(int defaultValue) {
       myDefaultValue = defaultValue;
-    }
-
-    public void setDefaultValueText(String defaultValueText) {
-      myDefaultValueText = defaultValueText;
     }
   }
 
@@ -811,7 +814,7 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
         return myOptionsEditor.getEditorValue();
       }
       else if (myCurrentEditor == myBooleanEditor) {
-        return myBooleanEditor.isSelected() ? Boolean.TRUE : Boolean.FALSE;
+        return myBooleanEditor.isSelected();
       }
       else if (myCurrentEditor == myIntOptionsEditor) {
         return myIntOptionsEditor.getPresentableValue();
@@ -837,11 +840,10 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
         else if (node.getKey() instanceof IntOption) {
           IntOption intOption = (IntOption)node.getKey();
           myCurrentEditor = myIntOptionsEditor;
-          myIntOptionsEditor.setText(intOption.isDefaultText(node.getValue()) ? "" : node.getValue().toString());
+          myIntOptionsEditor.setText(intOption.isDefaultValue(node.getValue()) ? "" : node.getValue().toString());
           myIntOptionsEditor.setMinValue(intOption.getMinValue());
           myIntOptionsEditor.setMaxValue(intOption.getMaxValue());
           myIntOptionsEditor.setDefaultValue(intOption.getDefaultValue());
-          myIntOptionsEditor.setDefaultValueText(intOption.getDefaultValueText());
         }
         else {
           myCurrentEditor = myOptionsEditor;
@@ -852,7 +854,9 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
         }
       }
 
-      myCurrentEditor.setBackground(table.getBackground());
+      if (myCurrentEditor != null) {
+        myCurrentEditor.setBackground(table.getBackground());
+      }
       return myCurrentEditor;
     }
   }

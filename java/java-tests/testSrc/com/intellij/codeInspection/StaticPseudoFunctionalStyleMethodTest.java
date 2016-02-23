@@ -20,10 +20,16 @@ import com.intellij.codeInsight.intention.IntentionAction;
 import com.intellij.codeInspection.ex.QuickFixWrapper;
 import com.intellij.codeInspection.java18StreamApi.StaticPseudoFunctionalStyleMethodInspection;
 import com.intellij.openapi.application.PathManager;
+import com.intellij.openapi.roots.ModuleRootManager;
+import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.pom.java.LanguageLevel;
+import com.intellij.psi.JavaPsiFacade;
+import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.testFramework.IdeaTestUtil;
 import com.intellij.testFramework.builders.JavaModuleFixtureBuilder;
 import com.intellij.testFramework.fixtures.JavaCodeInsightFixtureTestCase;
+import com.intellij.util.PathUtil;
+import com.intellij.util.Processor;
 
 import java.io.File;
 
@@ -41,43 +47,68 @@ public class StaticPseudoFunctionalStyleMethodTest extends JavaCodeInsightFixtur
     moduleBuilder.setLanguageLevel(LanguageLevel.JDK_1_8);
     moduleBuilder.addLibraryJars("guava-17.0.jar", PathManager.getHomePath().replace(File.separatorChar, '/') + "/community/lib/",
                                  "guava-17.0.jar");
+    moduleBuilder.addLibraryJars("guava-17.0.jar-2", PathManager.getHomePath().replace(File.separatorChar, '/') + "/lib/",
+                                 "guava-17.0.jar");
     moduleBuilder.addJdk(IdeaTestUtil.getMockJdk18Path().getPath());
   }
 
-  @Override
-  public void setUp() throws Exception {
-    super.setUp();
-  }
-
-  public void _testSimpleTransform() {
+  public void testSimpleTransform() {
     doTest();
   }
 
-  public void _testSimpleFilter() {
+  public void testSimpleFilter() {
     doTest();
   }
 
-  public void _testSimpleFind() {
+  public void testSimpleFind() {
     doTest();
   }
 
-  public void _testSimpleAll() {
+  public void testSimpleAll() {
     doTest();
   }
 
-  public void _testSimpleAny() {
+  public void testSimpleAny() {
     doTest();
   }
 
-  public void _testLambdaIsntAnonymous() {
+  public void testLambdaIsntAnonymous() {
     doTest();
   }
 
-  public void _testLambdaIsntAnonymous2() {
+  public void testLambdaIsntAnonymous2() {
     doTest();
   }
 
-  public void _testLambdaIsntAnonymous3() {
+  public void testLambdaIsntAnonymous3() {
+    doTest();
+  }
+
+  public void testFindWithDefaultValue() {
+    doTest();
+  }
+
+  public void testFilterWithInstanceOf() {
+    doTest();
+  }
+
+  public void testDiamondResolve() {
+    doTest();
+  }
+
+  public void testTransformLambda() {
+    doTest();
+  }
+
+  public void testTransformMethodCalling() {
+    doTest();
+  }
+
+  public void testTransformMethodRef() {
+    doTest();
+  }
+
+  public void testLambdaIsVariable() {
     doTest();
   }
 
@@ -99,7 +130,7 @@ public class StaticPseudoFunctionalStyleMethodTest extends JavaCodeInsightFixtur
         }
       }
     }
-    assertTrue(isQuickFixFound);
+    assertTrue("Quick fix isn't found", isQuickFixFound);
     myFixture.checkResultByFile(getTestName(true) + "/test_after.java");
   }
 }

@@ -22,6 +22,7 @@
  */
 package com.intellij.openapi.vcs.changes.shelf;
 
+import com.google.common.base.Objects;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.diff.impl.patch.ApplyPatchException;
@@ -33,11 +34,15 @@ import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Computable;
-import com.intellij.openapi.vcs.*;
+import com.intellij.openapi.vcs.FilePath;
+import com.intellij.openapi.vcs.FileStatus;
+import com.intellij.openapi.vcs.VcsBundle;
+import com.intellij.openapi.vcs.VcsException;
 import com.intellij.openapi.vcs.changes.*;
 import com.intellij.openapi.vcs.history.VcsRevisionNumber;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -125,11 +130,12 @@ public class ShelvedChange {
   }
 
   public Change getChange(Project project) {
+    // todo unify with
     if (myChange == null) {
       File baseDir = new File(project.getBaseDir().getPath());
 
       File file = getAbsolutePath(baseDir, myBeforePath);
-      final FilePathImpl beforePath = new FilePathImpl(file, false);
+      FilePath beforePath = VcsUtil.getFilePath(file, false);
       beforePath.refresh();
       ContentRevision beforeRevision = null;
       if (myFileStatus != FileStatus.ADDED) {
@@ -143,7 +149,7 @@ public class ShelvedChange {
       }
       ContentRevision afterRevision = null;
       if (myFileStatus != FileStatus.DELETED) {
-        final FilePathImpl afterPath = new FilePathImpl(getAbsolutePath(baseDir, myAfterPath), false);
+        FilePath afterPath = VcsUtil.getFilePath(getAbsolutePath(baseDir, myAfterPath), false);
         afterRevision = new PatchedContentRevision(project, beforePath, afterPath);
       }
       myChange = new Change(beforeRevision, afterRevision, myFileStatus);
@@ -191,11 +197,7 @@ public class ShelvedChange {
 
   @Override
   public int hashCode() {
-    int result = myPatchPath != null ? myPatchPath.hashCode() : 0;
-    result = 31 * result + (myBeforePath != null ? myBeforePath.hashCode() : 0);
-    result = 31 * result + (myAfterPath != null ? myAfterPath.hashCode() : 0);
-    result = 31 * result + (myFileStatus != null ? myFileStatus.hashCode() : 0);
-    return result;
+    return Objects.hashCode(myPatchPath, myBeforePath, myAfterPath, myFileStatus);
   }
 
   private class PatchedContentRevision implements ContentRevision {

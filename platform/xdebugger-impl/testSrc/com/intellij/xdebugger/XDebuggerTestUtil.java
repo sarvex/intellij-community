@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,11 +28,11 @@ import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.testFramework.UsefulTestCase;
+import com.intellij.util.ui.TextTransferable;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.xdebugger.breakpoints.*;
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator;
 import com.intellij.xdebugger.frame.*;
-import com.intellij.xdebugger.frame.XNamedValue;
 import com.intellij.xdebugger.impl.XDebugSessionImpl;
 import com.intellij.xdebugger.impl.breakpoints.XBreakpointUtil;
 import com.intellij.xdebugger.impl.breakpoints.XExpressionImpl;
@@ -117,6 +117,12 @@ public class XDebuggerTestUtil {
     throws InterruptedException {
     return collectStacks(thread == null ? getActiveThread(session) : thread);
   }
+  
+  public static String getFramePresentation(XStackFrame frame) {
+    TextTransferable.ColoredStringBuilder builder = new TextTransferable.ColoredStringBuilder();
+    frame.customizePresentation(builder);
+    return builder.getBuilder().toString();
+  }
 
   public static List<XStackFrame> collectStacks(@NotNull XExecutionStack thread) throws InterruptedException {
     return collectStacks(thread, TIMEOUT * 2);
@@ -126,6 +132,12 @@ public class XDebuggerTestUtil {
     XTestStackFrameContainer container = new XTestStackFrameContainer();
     thread.computeStackFrames(0, container);
     return container.waitFor(timeout).first;
+  }
+
+  public static List<XValue> collectVariables(XStackFrame frame) throws InterruptedException {
+    XTestCompositeNode container = new XTestCompositeNode();
+    frame.computeChildren(container);
+    return container.waitFor(TIMEOUT).first;
   }
 
   public static Pair<XValue, String> evaluate(XDebugSession session, XExpression expression) {

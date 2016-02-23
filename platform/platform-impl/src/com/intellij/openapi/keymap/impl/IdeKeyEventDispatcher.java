@@ -53,6 +53,7 @@ import com.intellij.openapi.wm.impl.IdeFrameImpl;
 import com.intellij.openapi.wm.impl.IdeGlassPaneEx;
 import com.intellij.ui.ColoredListCellRenderer;
 import com.intellij.ui.ComponentWithMnemonics;
+import com.intellij.ui.KeyStrokeAdapter;
 import com.intellij.ui.SimpleTextAttributes;
 import com.intellij.ui.components.JBOptionButton;
 import com.intellij.ui.popup.list.ListPopupImpl;
@@ -172,7 +173,7 @@ public final class IdeKeyEventDispatcher implements Disposable {
       return false;
     }
     if (focusOwner instanceof JTextComponent && ((JTextComponent)focusOwner).isEditable()) {
-      if (e.getKeyChar() != KeyEvent.CHAR_UNDEFINED && e.getKeyChar() != KeyEvent.VK_ESCAPE) {
+      if (e.getKeyChar() != KeyEvent.CHAR_UNDEFINED && e.getKeyCode() != KeyEvent.VK_ESCAPE) {
         MacUIUtil.hideCursor();
       }
     }
@@ -196,6 +197,8 @@ public final class IdeKeyEventDispatcher implements Disposable {
     // - when there's an editor in contexts
     Window focusedWindow = focusManager.getFocusedWindow();
     boolean isModalContext = focusedWindow != null && isModalContext(focusedWindow);
+
+    if (ApplicationManager.getApplication() == null) return false; //EA-39114
 
     final DataManager dataManager = DataManager.getInstance();
     if (dataManager == null) return false;
@@ -339,7 +342,10 @@ public final class IdeKeyEventDispatcher implements Disposable {
       return false;
     }
 
-    KeyStroke originalKeyStroke=KeyStroke.getKeyStrokeForEvent(e);
+    KeyStroke originalKeyStroke = KeyStrokeAdapter.getDefaultKeyStroke(e);
+    if (originalKeyStroke == null) {
+      return false;
+    }
     KeyStroke keyStroke=getKeyStrokeWithoutMouseModifiers(originalKeyStroke);
 
     updateCurrentContext(myContext.getFoundComponent(), new KeyboardShortcut(myFirstKeyStroke, keyStroke), myContext.isModalContext());
@@ -406,7 +412,10 @@ public final class IdeKeyEventDispatcher implements Disposable {
       }
     }
 
-    KeyStroke originalKeyStroke=KeyStroke.getKeyStrokeForEvent(e);
+    KeyStroke originalKeyStroke = KeyStrokeAdapter.getDefaultKeyStroke(e);
+    if (originalKeyStroke == null) {
+      return false;
+    }
     KeyStroke keyStroke=getKeyStrokeWithoutMouseModifiers(originalKeyStroke);
 
     if (myKeyGestureProcessor.processInitState()) {

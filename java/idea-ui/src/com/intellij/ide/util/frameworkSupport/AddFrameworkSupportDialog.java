@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@
  */
 package com.intellij.ide.util.frameworkSupport;
 
-import com.intellij.CommonBundle;
 import com.intellij.facet.impl.DefaultFacetsProvider;
 import com.intellij.framework.addSupport.FrameworkSupportInModuleProvider;
 import com.intellij.ide.util.newProjectWizard.AddSupportForFrameworksPanel;
@@ -23,13 +22,14 @@ import com.intellij.ide.util.newProjectWizard.impl.FrameworkSupportModelBase;
 import com.intellij.openapi.application.Result;
 import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.module.Module;
+import com.intellij.openapi.project.DumbModePermission;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.ProjectBundle;
 import com.intellij.openapi.roots.ModifiableRootModel;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.roots.ui.configuration.projectRoot.LibrariesContainer;
 import com.intellij.openapi.roots.ui.configuration.projectRoot.LibrariesContainerFactory;
 import com.intellij.openapi.ui.DialogWrapper;
-import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.vfs.VirtualFile;
 import org.jetbrains.annotations.NotNull;
@@ -86,22 +86,21 @@ public class AddFrameworkSupportDialog extends DialogWrapper {
 
   protected void doOKAction() {
     if (myAddSupportPanel.hasSelectedFrameworks()) {
-      if (!myAddSupportPanel.downloadLibraries()) {
-        int answer = Messages.showYesNoDialog(myAddSupportPanel.getMainPanel(),
-                                              ProjectBundle.message("warning.message.some.required.libraries.wasn.t.downloaded"),
-                                              CommonBundle.getWarningTitle(), Messages.getWarningIcon());
-        if (answer != Messages.YES) {
-          return;
-        }
-      }
+      if (!myAddSupportPanel.validate()) return;
+      if (!myAddSupportPanel.downloadLibraries(myAddSupportPanel.getMainPanel())) return;
 
-      new WriteAction() {
-        protected void run(final Result result) {
-          ModifiableRootModel model = ModuleRootManager.getInstance(myModule).getModifiableModel();
-          myAddSupportPanel.addSupport(myModule, model);
-          model.commit();
+      DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, new Runnable() {
+        @Override
+        public void run() {
+          new WriteAction() {
+            protected void run(@NotNull final Result result) {
+              ModifiableRootModel model = ModuleRootManager.getInstance(myModule).getModifiableModel();
+              myAddSupportPanel.addSupport(myModule, model);
+              model.commit();
+            }
+          }.execute();
         }
-      }.execute();
+      });
     }
     super.doOKAction();
   }

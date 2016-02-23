@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -106,14 +106,28 @@ public class PySdkUtil {
                                                final int timeout,
                                                @Nullable byte[] stdin,
                                                boolean needEOFMarker) {
+    return getProcessOutput(new GeneralCommandLine(command), homePath, extraEnv, timeout, stdin, needEOFMarker);
+  }
+
+  public static ProcessOutput getProcessOutput(@NotNull GeneralCommandLine cmd, @Nullable String homePath,
+                                               @Nullable @NonNls Map<String, String> extraEnv,
+                                               int timeout) {
+    return getProcessOutput(cmd, homePath, extraEnv, timeout, null, true);
+  }
+
+  public static ProcessOutput getProcessOutput(@NotNull GeneralCommandLine cmd, @Nullable String homePath,
+                                               @Nullable @NonNls Map<String, String> extraEnv,
+                                               int timeout,
+                                               @Nullable byte[] stdin, boolean needEOFMarker) {
     if (homePath == null || !new File(homePath).exists()) {
       return new ProcessOutput();
     }
     final Map<String, String> systemEnv = System.getenv();
     final Map<String, String> env = extraEnv != null ? mergeEnvVariables(systemEnv, extraEnv) : systemEnv;
     try {
-      final Process process = new GeneralCommandLine(command).withWorkDirectory(homePath).withEnvironment(env).createProcess();
-      final CapturingProcessHandler processHandler = new CapturingProcessHandler(process);
+
+      GeneralCommandLine commandLine = cmd.withWorkDirectory(homePath).withEnvironment(env);
+      final CapturingProcessHandler processHandler = new CapturingProcessHandler(commandLine);
       if (stdin != null) {
         final OutputStream processInput = processHandler.getProcessInput();
         assert processInput != null;
@@ -159,6 +173,7 @@ public class PySdkUtil {
                                                        @NotNull Map<String, String> extraEnvironment) {
     final Map<String, String> result = new HashMap<String, String>(environment);
     for (Map.Entry<String, String> entry : extraEnvironment.entrySet()) {
+      //TODO: merge python path also?
       if (PATH_ENV_VARIABLE.equals(entry.getKey()) && result.containsKey(PATH_ENV_VARIABLE)) {
         result.put(PATH_ENV_VARIABLE, result.get(PATH_ENV_VARIABLE) + File.pathSeparator + entry.getValue());
       }

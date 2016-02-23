@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import com.intellij.openapi.projectRoots.JavaSdkVersion;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.testFramework.IdeaTestUtil;
 import com.intellij.testFramework.PlatformTestUtil;
-import com.intellij.util.ThrowableRunnable;
 import org.jetbrains.annotations.NonNls;
 
 public class OverloadResolutionTest extends LightDaemonAnalyzerTestCase {
@@ -89,13 +88,128 @@ public class OverloadResolutionTest extends LightDaemonAnalyzerTestCase {
     doTest();
   }
 
+  public void testDefaultAbstractConflictResolution() throws Exception {
+    doTest();
+  }
+
+  public void testLambdaValueCompatibleWithNestedTryWithResources() throws Exception {
+    doTest(false);
+  }
+
   public void testManyOverloadsWithVarargs() throws Exception {
-    PlatformTestUtil.startPerformanceTest("Overload resolution with 14 overloads", 20000, new ThrowableRunnable() {
-      @Override
-      public void run() throws Throwable {
-        doTest(false);
-      }
-    }).assertTiming();
+    PlatformTestUtil.startPerformanceTest("Overload resolution with 14 overloads", 10000, () -> doTest(false)).useLegacyScaling().assertTiming();
+  }
+
+  public void testConstructorOverloadsWithDiamonds() throws Exception {
+    PlatformTestUtil.startPerformanceTest("Overload resolution with chain constructor calls with diamonds", 5000, () -> doTest(false)).useLegacyScaling().assertTiming();
+  }
+
+  public void testMultipleOverloadsWithNestedGeneric() throws Exception {
+    doTest(false);
+  }
+
+  public void testSecondSearchPossibleForFunctionalInterfacesWithPrimitiveFisrtParameter() throws Exception {
+    doTest(false);
+  }
+
+  public void testIDEA139875() throws Exception {
+    doTest();
+  }
+
+  public void testMethodReferenceWithTypeArgs() throws Exception {
+    doTest();
+  }
+
+  public void testPrimitiveVarargsAreNoMoreSpecificThanNonPrimitiveWhenNoArgIsActuallyProvided() throws Exception {
+    doTest();
+  }
+
+  public void testProperUnrelatedFunctionalInterfacesTypesComparison() throws Exception {
+    doTest();
+  }
+
+  public void testDoNotCheckConstantIfsDuringValueCompatibleChecks() throws Exception {
+    doTest();
+  }
+
+  public void testFunctionalExpressionTypeErasure() throws Exception {
+    doTest();
+  }
+
+  public void testOverrideObjectMethods() throws Exception {
+    doTest();
+  }
+
+  public void testStaticImportOfObjectsToString() throws Exception {
+    doTest();
+  }
+
+  public void testConflictsWithRawQualifier() throws Exception {
+    doTest();
+  }
+
+  public void testIgnoreCandidatesWithLowerApplicabilityLevel() throws Exception {
+    doTest();
+  }
+
+  public void testSiteSubstituteTypeParameterBoundsWhenCheckForMostSpecific() throws Exception {
+    doTest();
+  }
+
+  public void testChooseAbstractMethodArbitrarily() throws Exception {
+    doTest();
+  }
+
+  public void testFunctionalInterfaceIncompatibilityBasedOnAbsenceOfVoidToTypeConvertion() throws Exception {
+    doTest();
+  }
+
+  public void testNoBoxingWithNullType() throws Exception {
+    doTest();
+  }
+
+  public void testFunctionalInterfacesAtVarargsPositionMostSpecificCheck() throws Exception {
+    doTest();
+  }
+
+  public void testIgnoreNumberOfParametersInPotentiallyCompatibleCheckNotToExcludeAllConflicts() throws Exception {
+    doTest(false);
+  }
+
+  public void testPotentialCompatibilityInCaseWhenNoMethodHasValidNumberOfParameters() throws Exception {
+    doTest(false);
+  }
+
+  public void testNoNeedToPreferGenericToRawSubstitution() throws Exception {
+    doTest();
+  }
+
+  public void testLongerParamsWhenVarargs() throws Exception {
+    doTest();
+  }
+
+  public void testPotentiallyCompatibleShouldCheckAgainstSubstitutedWithSiteSubstitutor() throws Exception {
+    doTest(false);
+  }
+
+  public void testCompareFormalParametersWithNotionOfSiteSubstitutorInIsMoreSpecificCheck() throws Exception {
+    doTest(true);
+  }
+
+  public void testDonotIncludeAdditionalConstraintsDuringApplicabilityChecksInsideOverloadResolution() throws Exception {
+    doTest(true);
+  }
+
+  public void testPreserveErrorsFromOuterVariables() throws Exception {
+    doTest(true);
+  }
+
+  public void testIDEA151823() throws Exception {
+    doTest();
+  }
+
+  public void testTypeCalculationOfQualifierShouldNotDependOnOverloadResolutionOfContainingMethodCall() throws Exception {
+    doTest();
   }
 
   private void doTest() {

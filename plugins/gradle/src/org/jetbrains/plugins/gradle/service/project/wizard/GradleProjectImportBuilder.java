@@ -66,23 +66,20 @@ public class GradleProjectImportBuilder extends AbstractExternalProjectImportBui
   protected void doPrepare(@NotNull WizardContext context) {
     String pathToUse = getFileToImport();
     VirtualFile file = LocalFileSystem.getInstance().refreshAndFindFileByPath(pathToUse);
-    if (file != null && file.isDirectory()) {
-      pathToUse = new File(pathToUse, GradleConstants.DEFAULT_SCRIPT_NAME).getAbsolutePath();
+    if (file != null && !file.isDirectory() && file.getParent() != null) {
+      pathToUse = file.getParent().getPath();
     }
 
     final ImportFromGradleControl importFromGradleControl = getControl(context.getProject());
     importFromGradleControl.setLinkedProjectPath(pathToUse);
     final Pair<String, Sdk> sdkPair = ExternalSystemJdkUtil.getAvailableJdk(context.getProject());
-    if (sdkPair != null) {
+    if (sdkPair != null && !ExternalSystemJdkUtil.USE_INTERNAL_JAVA.equals(sdkPair.first)) {
       importFromGradleControl.getProjectSettings().setGradleJvm(sdkPair.first);
     }
   }
 
   @Override
   protected void beforeCommit(@NotNull DataNode<ProjectData> dataNode, @NotNull Project project) {
-    if (!ExternalSystemApiUtil.isNewProjectConstruction()) {
-      return;
-    }
     DataNode<JavaProjectData> javaProjectNode = ExternalSystemApiUtil.find(dataNode, JavaProjectData.KEY);
     if (javaProjectNode == null) {
       return;

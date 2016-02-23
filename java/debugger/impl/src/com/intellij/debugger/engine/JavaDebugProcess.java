@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,12 @@ import com.intellij.debugger.DebuggerBundle;
 import com.intellij.debugger.actions.DebuggerActions;
 import com.intellij.debugger.engine.evaluation.EvaluationContext;
 import com.intellij.debugger.engine.events.DebuggerCommandImpl;
-import com.intellij.debugger.engine.events.DebuggerContextCommandImpl;
+import com.intellij.debugger.engine.events.SuspendContextCommandImpl;
 import com.intellij.debugger.impl.*;
 import com.intellij.debugger.jdi.StackFrameProxyImpl;
+import com.intellij.debugger.jdi.ThreadReferenceProxyImpl;
 import com.intellij.debugger.settings.DebuggerSettings;
+import com.intellij.debugger.ui.AlternativeSourceNotificationProvider;
 import com.intellij.debugger.ui.DebuggerContentInfo;
 import com.intellij.debugger.ui.breakpoints.Breakpoint;
 import com.intellij.debugger.ui.impl.ThreadsPanel;
@@ -37,15 +39,17 @@ import com.intellij.execution.ui.RunnerLayoutUi;
 import com.intellij.execution.ui.layout.PlaceInGrid;
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.actionSystem.*;
-import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.extensions.Extensions;
-import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.ui.EditorNotifications;
 import com.intellij.ui.content.Content;
 import com.intellij.ui.content.ContentManagerAdapter;
 import com.intellij.ui.content.ContentManagerEvent;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.xdebugger.*;
 import com.intellij.xdebugger.breakpoints.XBreakpoint;
 import com.intellij.xdebugger.breakpoints.XBreakpointHandler;
@@ -56,6 +60,7 @@ import com.intellij.xdebugger.impl.XDebugSessionImpl;
 import com.intellij.xdebugger.impl.XDebuggerUtilImpl;
 import com.intellij.xdebugger.ui.XDebugTabLayouter;
 import com.sun.jdi.event.Event;
+import com.sun.jdi.event.LocatableEvent;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.java.debugger.JavaDebuggerEditorsProvider;
@@ -84,7 +89,7 @@ public class JavaDebugProcess extends XDebugProcess {
     myEditorsProvider = new JavaDebuggerEditorsProvider();
     final DebugProcessImpl process = javaSession.getProcess();
 
-    List<XBreakpointHandler> handlers = new ArrayList<XBreakpointHandler>();
+    List<XBreakpointHandler> handlers = new ArrayList<>();
     handlers.add(new JavaBreakpointHandler.JavaLineBreakpointHandler(process));
     handlers.add(new JavaBreakpointHandler.JavaExceptionBreakpointHandler(process));
     handlers.add(new JavaBreakpointHandler.JavaFieldBreakpointHandler(process));
@@ -99,36 +104,41 @@ public class JavaDebugProcess extends XDebugProcess {
 
     myJavaSession.getContextManager().addListener(new DebuggerContextListener() {
       @Override
-      public void changeEvent(final DebuggerContextImpl newContext, int event) {
-        if (event == DebuggerSession.EVENT_PAUSE
-            || event == DebuggerSession.EVENT_CONTEXT
-            || event == DebuggerSession.EVENT_REFRESH
+      public void changeEvent(@NotNull final DebuggerContextImpl newContext, DebuggerSession.Event event) {
+        if (event == DebuggerSession.Event.PAUSE
+            || event == DebuggerSession.Event.CONTEXT
+            || event == DebuggerSession.Event.REFRESH
+            || event == DebuggerSession.Event.REFRESH_WITH_STACK
                && myJavaSession.isPaused()) {
-          if (getSession().getSuspendContext() != newContext.getSuspendContext()) {
-            process.getManagerThread().schedule(new DebuggerContextCommandImpl(newContext) {
+          final SuspendContextImpl newSuspendContext = newContext.getSuspendContext();
+          if (newSuspendContext != null &&
+              (shouldApplyContext(newContext) || event == DebuggerSession.Event.REFRESH_WITH_STACK)) {
+            process.getManagerThread().schedule(new SuspendContextCommandImpl(newSuspendContext) {
               @Override
-              public void threadAction() {
-                SuspendContextImpl context = newContext.getSuspendContext();
-                if (context != null) {
-                  context.initExecutionStacks(newContext.getThreadProxy());
+              public void contextAction() throws Exception {
+                ThreadReferenceProxyImpl threadProxy = newContext.getThreadProxy();
+                newSuspendContext.initExecutionStacks(threadProxy);
 
-                  List<Pair<Breakpoint, Event>> descriptors =
-                    DebuggerUtilsEx.getEventDescriptors(context);
-                  if (!descriptors.isEmpty()) {
-                    Breakpoint breakpoint = descriptors.get(0).getFirst();
-                    XBreakpoint xBreakpoint = breakpoint.getXBreakpoint();
-                    if (xBreakpoint != null) {
-                      ((XDebugSessionImpl)getSession()).breakpointReachedNoProcessing(xBreakpoint, context);
-                      return;
-                    }
+                Pair<Breakpoint, Event> item = ContainerUtil.getFirstItem(DebuggerUtilsEx.getEventDescriptors(newSuspendContext));
+                if (item != null) {
+                  XBreakpoint xBreakpoint = item.getFirst().getXBreakpoint();
+                  Event second = item.getSecond();
+                  if (xBreakpoint != null && second instanceof LocatableEvent &&
+                      threadProxy != null && ((LocatableEvent)second).thread() == threadProxy.getThreadReference()) {
+                    ((XDebugSessionImpl)getSession()).breakpointReachedNoProcessing(xBreakpoint, newSuspendContext);
+                    unsetPausedIfNeeded(newContext);
+                    SourceCodeChecker.checkSource(newContext);
+                    return;
                   }
-                  getSession().positionReached(context);
                 }
+                getSession().positionReached(newSuspendContext);
+                unsetPausedIfNeeded(newContext);
+                SourceCodeChecker.checkSource(newContext);
               }
             });
           }
         }
-        else if (event == DebuggerSession.EVENT_ATTACHED) {
+        else if (event == DebuggerSession.Event.ATTACHED) {
           getSession().rebuildViews(); // to refresh variables views message
         }
       }
@@ -154,18 +164,47 @@ public class JavaDebugProcess extends XDebugProcess {
       @Override
       public void sessionPaused() {
         saveNodeHistory();
+        showAlternativeNotification(session.getCurrentStackFrame());
       }
 
       @Override
       public void stackFrameChanged() {
         XStackFrame frame = session.getCurrentStackFrame();
         if (frame instanceof JavaStackFrame) {
+          showAlternativeNotification(frame);
           StackFrameProxyImpl frameProxy = ((JavaStackFrame)frame).getStackFrameProxy();
           DebuggerContextUtil.setStackFrame(javaSession.getContextManager(), frameProxy);
           saveNodeHistory(frameProxy);
         }
       }
+
+      private void showAlternativeNotification(@Nullable XStackFrame frame) {
+        if (frame != null) {
+          XSourcePosition position = frame.getSourcePosition();
+          if (position != null) {
+            VirtualFile file = position.getFile();
+            if (!AlternativeSourceNotificationProvider.fileProcessed(file)) {
+              EditorNotifications.getInstance(session.getProject()).updateNotifications(file);
+            }
+          }
+        }
+      }
     });
+  }
+
+  private void unsetPausedIfNeeded(DebuggerContextImpl context) {
+    SuspendContextImpl suspendContext = context.getSuspendContext();
+    if (suspendContext != null && !suspendContext.suspends(context.getThreadProxy())) {
+      ((XDebugSessionImpl)getSession()).unsetPaused();
+    }
+  }
+
+  private boolean shouldApplyContext(DebuggerContextImpl context) {
+    SuspendContextImpl suspendContext = context.getSuspendContext();
+    SuspendContextImpl currentContext = (SuspendContextImpl)getSession().getSuspendContext();
+    if (suspendContext != null && !suspendContext.equals(currentContext)) return true;
+    JavaExecutionStack currentExecutionStack = currentContext != null ? currentContext.getActiveExecutionStack() : null;
+    return currentExecutionStack == null || !Comparing.equal(context.getThreadProxy(), currentExecutionStack.getThreadProxy());
   }
 
   public void saveNodeHistory() {
@@ -238,8 +277,7 @@ public class JavaDebugProcess extends XDebugProcess {
 
   @Override
   public void runToPosition(@NotNull XSourcePosition position) {
-    Document document = FileDocumentManager.getInstance().getDocument(position.getFile());
-    myJavaSession.runToCursor(document, position.getLine(), false);
+    myJavaSession.runToCursor(position, false);
   }
 
   @NotNull
@@ -287,7 +325,7 @@ public class JavaDebugProcess extends XDebugProcess {
               if (threadsContent.isSelected()) {
                 panel.setUpdateEnabled(true);
                 if (panel.isRefreshNeeded()) {
-                  panel.rebuildIfVisible(DebuggerSession.EVENT_CONTEXT);
+                  panel.rebuildIfVisible(DebuggerSession.Event.CONTEXT);
                 }
               }
               else {
@@ -321,24 +359,17 @@ public class JavaDebugProcess extends XDebugProcess {
     leftToolbar.add(ActionManager.getInstance().getAction(DebuggerActions.DUMP_THREADS), beforeRunner);
     leftToolbar.add(Separator.getInstance(), beforeRunner);
 
-    settings.addAction(new AutoVarsSwitchAction(), Constraints.FIRST);
-    settings.addAction(new WatchLastMethodReturnValueAction(), Constraints.FIRST);
+    Constraints beforeSort = new Constraints(Anchor.BEFORE, "XDebugger.ToggleSortValues");
+    settings.addAction(new WatchLastMethodReturnValueAction(), beforeSort);
+    settings.addAction(new AutoVarsSwitchAction(), beforeSort);
   }
 
   private static class AutoVarsSwitchAction extends ToggleAction {
     private volatile boolean myAutoModeEnabled;
 
     public AutoVarsSwitchAction() {
-      super("", "", AllIcons.Debugger.AutoVariablesMode);
+      super(DebuggerBundle.message("action.auto.variables.mode"), DebuggerBundle.message("action.auto.variables.mode.description"), null);
       myAutoModeEnabled = DebuggerSettings.getInstance().AUTO_VARIABLES_MODE;
-    }
-
-    @Override
-    public void update(@NotNull final AnActionEvent e) {
-      super.update(e);
-      final Presentation presentation = e.getPresentation();
-      final boolean autoModeEnabled = Boolean.TRUE.equals(presentation.getClientProperty(SELECTED_PROPERTY));
-      presentation.setText(autoModeEnabled ? "All-Variables Mode" : "Auto-Variables Mode");
     }
 
     @Override
@@ -356,15 +387,13 @@ public class JavaDebugProcess extends XDebugProcess {
 
   private static class WatchLastMethodReturnValueAction extends ToggleAction {
     private volatile boolean myWatchesReturnValues;
-    private final String myTextEnable;
+    private final String myText;
     private final String myTextUnavailable;
-    private final String myMyTextDisable;
 
     public WatchLastMethodReturnValueAction() {
       super("", DebuggerBundle.message("action.watch.method.return.value.description"), null);
       myWatchesReturnValues = DebuggerSettings.getInstance().WATCH_RETURN_VALUES;
-      myTextEnable = DebuggerBundle.message("action.watches.method.return.value.enable");
-      myMyTextDisable = DebuggerBundle.message("action.watches.method.return.value.disable");
+      myText = DebuggerBundle.message("action.watches.method.return.value.enable");
       myTextUnavailable = DebuggerBundle.message("action.watches.method.return.value.unavailable.reason");
     }
 
@@ -372,12 +401,10 @@ public class JavaDebugProcess extends XDebugProcess {
     public void update(@NotNull final AnActionEvent e) {
       super.update(e);
       final Presentation presentation = e.getPresentation();
-      final boolean watchValues = Boolean.TRUE.equals(presentation.getClientProperty(SELECTED_PROPERTY));
       DebugProcessImpl process = getCurrentDebugProcess(e.getProject());
-      final String actionText = watchValues ? myMyTextDisable : myTextEnable;
       if (process == null || process.canGetMethodReturnValue()) {
         presentation.setEnabled(true);
-        presentation.setText(actionText);
+        presentation.setText(myText);
       }
       else {
         presentation.setEnabled(false);
@@ -415,11 +442,6 @@ public class JavaDebugProcess extends XDebugProcess {
     return null;
   }
 
-  private static void addActionToGroup(final DefaultActionGroup group, final String actionId) {
-    AnAction action = ActionManager.getInstance().getAction(actionId);
-    if (action != null) group.addAction(action, Constraints.FIRST);
-  }
-
   public NodeManagerImpl getNodeManager() {
     return myNodeManager;
   }
@@ -434,5 +456,10 @@ public class JavaDebugProcess extends XDebugProcess {
   @Override
   public XValueMarkerProvider<?, ?> createValueMarkerProvider() {
     return new JavaValueMarker();
+  }
+
+  @Override
+  public boolean isLibraryFrameFilterSupported() {
+    return true;
   }
 }

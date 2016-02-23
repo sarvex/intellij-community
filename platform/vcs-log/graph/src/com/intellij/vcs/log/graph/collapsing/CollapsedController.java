@@ -23,6 +23,7 @@ import com.intellij.vcs.log.graph.api.elements.GraphNode;
 import com.intellij.vcs.log.graph.api.permanent.PermanentGraphInfo;
 import com.intellij.vcs.log.graph.impl.facade.CascadeController;
 import com.intellij.vcs.log.graph.impl.facade.GraphChanges;
+import com.intellij.vcs.log.graph.impl.facade.ReachableNodes;
 import com.intellij.vcs.log.graph.utils.UnsignedBitSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -34,10 +35,10 @@ public class CollapsedController extends CascadeController {
 
   public CollapsedController(@NotNull CascadeController delegateLinearGraphController,
                              @NotNull final PermanentGraphInfo<?> permanentGraphInfo,
-                             @Nullable Set<Integer> IdsOfVisibleBranches) {
+                             @Nullable Set<Integer> idsOfVisibleBranches) {
     super(delegateLinearGraphController, permanentGraphInfo);
     UnsignedBitSet initVisibility =
-      BranchMatchedNodesGenerator.generateVisibleNodes(permanentGraphInfo.getPermanentLinearGraph(), IdsOfVisibleBranches);
+      ReachableNodes.getReachableNodes(permanentGraphInfo.getPermanentLinearGraph(), idsOfVisibleBranches);
     myCollapsedGraph = CollapsedGraph.newInstance(getDelegateController().getCompiledGraph(), initVisibility);
   }
 

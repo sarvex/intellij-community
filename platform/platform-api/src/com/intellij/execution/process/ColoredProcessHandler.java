@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,12 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.intellij.execution.process;
 
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.GeneralCommandLine;
-import com.intellij.execution.configurations.PtyCommandLine;
 import com.intellij.openapi.util.Key;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
@@ -35,18 +33,21 @@ public class ColoredProcessHandler extends OSProcessHandler implements AnsiEscap
 
   private final List<AnsiEscapeDecoder.ColoredTextAcceptor> myColoredTextListeners = ContainerUtil.newArrayList();
 
-  public ColoredProcessHandler(final GeneralCommandLine commandLine) throws ExecutionException {
-    super(commandLine.createProcess(), commandLine.getCommandLineString(), commandLine.getCharset());
-    setHasPty(commandLine instanceof PtyCommandLine);
+  public ColoredProcessHandler(@NotNull GeneralCommandLine commandLine) throws ExecutionException {
+    super(commandLine);
   }
 
-  public ColoredProcessHandler(Process process, String commandLine) {
+  /**
+   * {@code commandLine} must not be not empty (for correct thread attribution in the stacktrace)
+   */
+  public ColoredProcessHandler(@NotNull Process process, /*@NotNull*/ String commandLine) {
     super(process, commandLine);
   }
 
-  public ColoredProcessHandler(final Process process,
-                               final String commandLine,
-                               @NotNull final Charset charset) {
+  /**
+   * {@code commandLine} must not be not empty (for correct thread attribution in the stacktrace)
+   */
+  public ColoredProcessHandler(@NotNull Process process, /*@NotNull*/ String commandLine, @NotNull Charset charset) {
     super(process, commandLine, charset);
   }
 
@@ -60,8 +61,6 @@ public class ColoredProcessHandler extends OSProcessHandler implements AnsiEscap
    * Overrides should call super.coloredTextAvailable() if they want to pass lines to registered listeners
    * To receive chunks of data instead of fragments inherit your class from ColoredChunksAcceptor interface and
    * override coloredChunksAvailable method.
-   * @param text
-   * @param attributes
    */
   @Override
   public void coloredTextAvailable(String text, Key attributes) {

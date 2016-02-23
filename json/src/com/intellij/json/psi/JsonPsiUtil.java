@@ -7,7 +7,10 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.TokenType;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.tree.TokenSet;
+import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
+
+import java.util.List;
 
 import static com.intellij.json.JsonParserDefinition.JSON_COMMENTARIES;
 
@@ -136,5 +139,75 @@ public class JsonPsiUtil {
     else {
       return element.getText();
     }
+  }
+
+  /**
+   * Returns content of the string literal (without escaping) striving to preserve as much of user data as possible.
+   * <ul>
+   * <li>If literal length is greater than one and it starts and ends with the same quote and the last quote is not escaped, returns
+   * text without first and last characters.</li>
+   * <li>Otherwise if literal still begins with a quote, returns text without first character only.</li>
+   * <li>Returns unmodified text in all other cases.</li>
+   * </ul>
+   *
+   * @param text presumably result of {@link JsonStringLiteral#getText()}
+   * @return
+   */
+  @NotNull
+  public static String stripQuotes(@NotNull String text) {
+    if (text.length() > 0) {
+      final char firstChar = text.charAt(0);
+      final char lastChar = text.charAt(text.length() - 1);
+      if (firstChar == '\'' || firstChar == '"') {
+        if (text.length() > 1 && firstChar == lastChar && !isEscapedChar(text, text.length() - 1)) {
+          return text.substring(1, text.length() - 1);
+        }
+        return text.substring(1);
+      }
+    }
+    return text;
+  }
+
+  /**
+   * Checks that character in given position is escaped with backslashes.
+   *
+   * @param text     text character belongs to
+   * @param position position of the character
+   * @return whether character at given position is escaped, i.e. preceded by odd number of backslashes
+   */
+  public static boolean isEscapedChar(@NotNull String text, int position) {
+    int count = 0;
+    for (int i = position - 1; i >= 0 && text.charAt(i) == '\\'; i--) {
+      count++;
+    }
+    return count % 2 != 0;
+  }
+
+  /**
+   * Add new property and necessary comma either at the beginning of the object literal or at its end.
+   *
+   * @param object   object literal
+   * @param property new property, probably created via {@link JsonElementGenerator}
+   * @param first    if true make new property first in the object, otherwise append in the end of property list
+   * @return property as returned by {@link PsiElement#addAfter(PsiElement, PsiElement)}
+   */
+  @NotNull
+  public static PsiElement addProperty(@NotNull JsonObject object, @NotNull JsonProperty property, boolean first) {
+    final List<JsonProperty> propertyList = object.getPropertyList();
+    if (!first) {
+      final JsonProperty lastProperty = ContainerUtil.getLastItem(propertyList);
+      if (lastProperty != null) {
+        final PsiElement addedProperty = object.addAfter(property, lastProperty);
+        object.addBefore(new JsonElementGenerator(object.getProject()).createComma(), addedProperty);
+        return addedProperty;
+      }
+    }
+    final PsiElement leftBrace = object.getFirstChild();
+    assert hasElementType(leftBrace, JsonElementTypes.L_CURLY);
+    final PsiElement addedProperty = object.addAfter(property, leftBrace);
+    if (!propertyList.isEmpty()) {
+      object.addAfter(new JsonElementGenerator(object.getProject()).createComma(), addedProperty);
+    }
+    return addedProperty;
   }
 }

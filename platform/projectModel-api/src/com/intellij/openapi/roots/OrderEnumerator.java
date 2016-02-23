@@ -25,7 +25,7 @@ import com.intellij.util.PathsList;
 import com.intellij.util.Processor;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Collection;
+import java.util.List;
 
 /**
  * Interface for convenient processing dependencies of a module or a project. Allows to process {@link OrderEntry}s and collect classes
@@ -82,7 +82,7 @@ public abstract class OrderEnumerator {
   }
 
   public VirtualFile[] getAllLibrariesAndSdkClassesRoots() {
-    return withoutModuleSourceEntries().recursively().exportedOnly().classes().usingCache().getRoots();
+    return withoutModuleSourceEntries().withoutDepModules().recursively().exportedOnly().classes().usingCache().getRoots();
   }
 
   public VirtualFile[] getAllSourceRoots() {
@@ -90,7 +90,8 @@ public abstract class OrderEnumerator {
   }
 
   /**
-   * Recursively process modules on which the module depends
+   * Recursively process modules on which the module depends. This flag is ignored for modules imported from Maven because for such modules
+   * transitive dependencies are propagated to the root module during importing.
    *
    * @return this instance
    */
@@ -118,6 +119,16 @@ public abstract class OrderEnumerator {
    * @return this instance
    */
   public abstract OrderEnumerator using(@NotNull RootModelProvider provider);
+
+  /**
+   * Determine if, given the current enumerator settings and handlers for a module, should the
+   * enumerator recurse to further modules based on the given ModuleOrderEntry?
+   *
+   * @param entry the ModuleOrderEntry in question (m1 -> m2)
+   * @param handlers custom handlers registered to the module
+   * @return true if the enumerator would have recursively processed the given ModuleOrderEntry.
+   */
+  public abstract boolean shouldRecurse(@NotNull ModuleOrderEntry entry, @NotNull List<OrderEnumerationHandler> handlers);
 
   /**
    * @return {@link OrderRootsEnumerator} instance for processing classes roots

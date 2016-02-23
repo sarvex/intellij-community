@@ -22,15 +22,20 @@ import com.intellij.codeInsight.template.Macro;
 import com.intellij.codeInsight.template.macro.MacroFactory;
 import com.intellij.lexer.Lexer;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.tree.IElementType;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.List;
 
 @VisibleForTesting
 public class MacroParser {
   private static final Logger LOG = Logger.getInstance("#com.intellij.codeInsight.template.impl.MacroParser");
-
-  //-----------------------------------------------------------------------------------
-  public static Expression parse(String expression) {
-    if (expression.length() == 0) {
+  
+  @NotNull
+  public static Expression parse(@Nullable String expression) {
+    if (StringUtil.isEmpty(expression)) {
       return new ConstantNode("");
     }
     Lexer lexer = new MacroLexer();
@@ -73,13 +78,13 @@ public class MacroParser {
       return new ConstantNode("");
     }
 
-    Macro macro = MacroFactory.createMacro(token);
-    if (macro == null) {
+    List<Macro> macros = MacroFactory.getMacros(token);
+    if (macros.isEmpty()) {
       return parseVariable(lexer, expression);
     }
 
     advance(lexer);
-    MacroCallNode macroCallNode = new MacroCallNode(macro);
+    MacroCallNode macroCallNode = new MacroCallNode(macros.get(0));
     if (lexer.getTokenType() == null) {
       return macroCallNode;
     }

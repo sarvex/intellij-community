@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,27 +16,28 @@
 
 package com.intellij.codeInsight.completion;
 
-import com.intellij.codeInsight.CodeInsightSettings;
 import com.intellij.codeInsight.TailType;
 import com.intellij.codeInsight.lookup.Lookup;
 import com.intellij.codeInsight.lookup.LookupElement;
-import com.intellij.codeInsight.lookup.LookupItem;
 import com.intellij.codeInsight.lookup.LookupValueWithPsiElement;
+import com.intellij.diagnostic.LogEventException;
+import com.intellij.diagnostic.ThreadDumper;
 import com.intellij.featureStatistics.FeatureUsageTracker;
 import com.intellij.lang.Language;
+import com.intellij.openapi.diagnostic.Attachment;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.progress.ProgressManager;
-import com.intellij.openapi.util.Key;
-import com.intellij.openapi.util.NotNullLazyValue;
 import com.intellij.patterns.ElementPattern;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.filters.TrueFilter;
-import com.intellij.util.containers.HashMap;
+import com.intellij.util.ExceptionUtil;
+import com.intellij.util.UnmodifiableIterator;
+import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -46,7 +47,6 @@ import java.util.*;
 import static com.intellij.patterns.PlatformPatterns.character;
 
 public class CompletionUtil {
-  public static final Key<TailType> TAIL_TYPE_ATTR = LookupItem.TAIL_TYPE_ATTR;
 
   private static final CompletionData ourGenericCompletionData = new CompletionData() {
     {
@@ -55,35 +55,8 @@ public class CompletionUtil {
       registerVariant(variant);
     }
   };
-  private static final HashMap<FileType, NotNullLazyValue<CompletionData>> ourCustomCompletionDatas = new HashMap<FileType, NotNullLazyValue<CompletionData>>();
-
   public static final @NonNls String DUMMY_IDENTIFIER = CompletionInitializationContext.DUMMY_IDENTIFIER;
   public static final @NonNls String DUMMY_IDENTIFIER_TRIMMED = DUMMY_IDENTIFIER.trim();
-
-  public static boolean startsWith(String text, String prefix) {
-    //if (text.length() <= prefix.length()) return false;
-    return toLowerCase(text).startsWith(toLowerCase(prefix));
-  }
-
-  private static String toLowerCase(String text) {
-    CodeInsightSettings settings = CodeInsightSettings.getInstance();
-    switch (settings.COMPLETION_CASE_SENSITIVE) {
-      case CodeInsightSettings.NONE:
-        return text.toLowerCase();
-
-      case CodeInsightSettings.FIRST_LETTER: {
-        StringBuffer buffer = new StringBuffer();
-        buffer.append(text.toLowerCase());
-        if (buffer.length() > 0) {
-          buffer.setCharAt(0, text.charAt(0));
-        }
-        return buffer.toString();
-      }
-
-      default:
-        return text;
-    }
-  }
 
   @Nullable
   public static CompletionData getCompletionDataByElement(@Nullable final PsiElement position, @NotNull PsiFile originalFile) {
@@ -103,35 +76,15 @@ public class CompletionUtil {
     return mainData != null ? mainData : ourGenericCompletionData;
   }
 
-  /** @see CompletionDataEP */
-  @Deprecated
-  public static void registerCompletionData(FileType fileType, NotNullLazyValue<CompletionData> completionData) {
-    ourCustomCompletionDatas.put(fileType, completionData);
-  }
-
-  /** @see CompletionDataEP */
-  @Deprecated
-  public static void registerCompletionData(FileType fileType, final CompletionData completionData) {
-    registerCompletionData(fileType, new NotNullLazyValue<CompletionData>() {
-      @Override
-      @NotNull
-      protected CompletionData compute() {
-        return completionData;
-      }
-    });
-  }
-
   @Nullable
-  public static CompletionData getCompletionDataByFileType(FileType fileType) {
+  private static CompletionData getCompletionDataByFileType(FileType fileType) {
     for(CompletionDataEP ep: Extensions.getExtensions(CompletionDataEP.EP_NAME)) {
       if (ep.fileType.equals(fileType.getName())) {
         return ep.getHandler();
       }
     }
-    final NotNullLazyValue<CompletionData> lazyValue = ourCustomCompletionDatas.get(fileType);
-    return lazyValue == null ? null : lazyValue.getValue();
+    return null;
   }
-
 
   public static boolean shouldShowFeature(final CompletionParameters parameters, @NonNls final String id) {
     if (FeatureUsageTracker.getInstance().isToBeAdvertisedInLookup(id, parameters.getPosition().getProject())) {
@@ -225,14 +178,14 @@ public class CompletionUtil {
   @Nullable
   public static PsiElement getTargetElement(LookupElement lookupElement) {
     PsiElement psiElement = lookupElement.getPsiElement();
-    if (psiElement != null) {
+    if (psiElement != null && psiElement.isValid()) {
       return getOriginalElement(psiElement);
     }
 
     Object object = lookupElement.getObject();
     if (object instanceof LookupValueWithPsiElement) {
       final PsiElement element = ((LookupValueWithPsiElement)object).getElement();
-      if (element != null) return getOriginalElement(element);
+      if (element != null && element.isValid()) return getOriginalElement(element);
     }
 
     return null;
@@ -249,8 +202,16 @@ public class CompletionUtil {
     return element == null ? psi : element;
   }
 
+  /**
+   * Filters _names for strings that match given matcher and sorts them. 
+   * "Start matching" items go first, then others. 
+   * Within both groups names are sorted lexicographically in a case-insensitive way.
+   */
   public static LinkedHashSet<String> sortMatching(final PrefixMatcher matcher, Collection<String> _names) {
     ProgressManager.checkCanceled();
+    if (matcher.getPrefix().isEmpty()) {
+      return ContainerUtil.newLinkedHashSet(_names);
+    }
 
     List<String> sorted = new ArrayList<String>();
     for (String name : _names) {
@@ -274,5 +235,42 @@ public class CompletionUtil {
 
     result.addAll(sorted);
     return result;
+  }
+
+  public static Iterable<String> iterateLookupStrings(@NotNull final LookupElement element) {
+    return new Iterable<String>() {
+      @NotNull
+      @Override
+      public Iterator<String> iterator() {
+        final Iterator<String> original = element.getAllLookupStrings().iterator();
+        return new UnmodifiableIterator<String>(original) {
+          @Override
+          public boolean hasNext() {
+            try {
+              return super.hasNext();
+            }
+            catch (ConcurrentModificationException e) {
+              throw handleCME(e);
+            }
+          }
+
+          @Override
+          public String next() {
+            try {
+              return super.next();
+            }
+            catch (ConcurrentModificationException e) {
+              throw handleCME(e);
+            }
+          }
+
+          private LogEventException handleCME(ConcurrentModificationException e) {
+            final Attachment dump = new Attachment("threadDump.txt", ThreadDumper.dumpThreadsToString());
+            return new LogEventException("Error while traversing lookup strings of " + element + " of " + element.getClass(),
+                                        ExceptionUtil.getThrowableText(e), dump);
+          }
+        };
+      }
+    };
   }
 }

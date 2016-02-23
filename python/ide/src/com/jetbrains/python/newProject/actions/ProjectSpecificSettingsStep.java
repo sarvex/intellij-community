@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.ui.LabeledComponent;
 import com.intellij.openapi.ui.VerticalFlowLayout;
 import com.intellij.openapi.util.Condition;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.platform.DirectoryProjectGenerator;
 import com.intellij.ui.DocumentAdapter;
 import com.intellij.ui.HideableDecorator;
@@ -38,6 +39,7 @@ import com.jetbrains.python.configuration.VirtualEnvProjectFilter;
 import com.jetbrains.python.newProject.PyFrameworkProjectGenerator;
 import com.jetbrains.python.newProject.PythonProjectGenerator;
 import com.jetbrains.python.packaging.PyPackageManager;
+import com.jetbrains.python.packaging.PyPackageUtil;
 import com.jetbrains.python.sdk.PySdkUtil;
 import com.jetbrains.python.sdk.PythonSdkType;
 import icons.PythonIcons;
@@ -133,11 +135,10 @@ public class ProjectSpecificSettingsStep extends ProjectSettingsStepBase impleme
   }
 
   @Nullable
-  @Override
   protected JPanel extendBasePanel() {
     if (myProjectGenerator instanceof PythonProjectGenerator)
       return ((PythonProjectGenerator)myProjectGenerator).extendBasePanel();
-    return super.extendBasePanel();
+    return null;
   }
 
   @Override
@@ -165,19 +166,23 @@ public class ProjectSpecificSettingsStep extends ProjectSettingsStepBase impleme
       PyFrameworkProjectGenerator frameworkProjectGenerator = (PyFrameworkProjectGenerator)myProjectGenerator;
       String frameworkName = frameworkProjectGenerator.getFrameworkTitle();
       if (sdk != null && !isFrameworkInstalled(sdk)) {
-        String warningText = frameworkName + " will be installed on selected interpreter";
-        myInstallFramework = true;
-        final PyPackageManager packageManager = PyPackageManager.getInstance(sdk);
-        boolean hasManagement = false;
-        try {
-          hasManagement = packageManager.hasManagement(PySdkUtil.isRemote(sdk));
+        if (PyPackageUtil.packageManagementEnabled(sdk)) {
+          String warningText = frameworkName + " will be installed on the selected interpreter";
+          myInstallFramework = true;
+          final PyPackageManager packageManager = PyPackageManager.getInstance(sdk);
+          boolean hasManagement = false;
+          try {
+            hasManagement = packageManager.hasManagement(PySdkUtil.isRemote(sdk));
+          }
+          catch (ExecutionException ignored) {
+          }
+          if (!hasManagement) {
+            warningText = "Python packaging tools and " + warningText;
+          }
+          setWarningText(warningText);
+        } else {
+          setWarningText(frameworkName + " is not installed on the selected interpreter");
         }
-        catch (ExecutionException ignored) {
-        }
-        if (!hasManagement) {
-          warningText = "Python packaging tools and " + warningText;
-        }
-        setWarningText(warningText);
       }
       if (isPy3k && !((PyFrameworkProjectGenerator)myProjectGenerator).supportsPython3()) {
         setErrorText(frameworkName + " is not supported for the selected interpreter");
@@ -251,9 +256,7 @@ public class ProjectSpecificSettingsStep extends ProjectSettingsStepBase impleme
       protected void textChanged(DocumentEvent e) {
         if (myProjectGenerator instanceof PythonProjectGenerator) {
           String path = myLocationField.getText().trim();
-          if (path.endsWith(File.separator)) {
-            path = path.substring(0, path.length() - File.separator.length());
-          }
+          path = StringUtil.trimEnd(path, File.separator);
           int ind = path.lastIndexOf(File.separator);
           if (ind != -1) {
             String projectName = path.substring(ind + 1, path.length());

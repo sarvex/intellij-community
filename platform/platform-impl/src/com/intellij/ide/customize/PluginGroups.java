@@ -32,10 +32,13 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.io.File;
 import java.util.*;
+import java.util.concurrent.ExecutionException;
 
 public class PluginGroups {
   static final String CORE = "Core";
   private static final int MAX_DESCR_LENGTH = 55;
+  
+  public static final String IDEA_VIM_PLUGIN_ID = "IdeaVIM";
 
   final Map<String, Pair<Icon, List<String>>> myTree = new LinkedHashMap<String, Pair<Icon, List<String>>>();
   final Map<String, String> myFeaturedPlugins = new LinkedHashMap<String, String>();
@@ -47,18 +50,47 @@ public class PluginGroups {
   private IdeaPluginDescriptor[] myAllPlugins;
   private boolean myInitialized = false;
   private Set<String> myFeaturedIds = new HashSet<String>();
+  private Runnable myLoadingCallback = null;
 
   public PluginGroups() {
-    myAllPlugins = PluginManagerCore.loadDescriptors(null);
-    try {
-      myPluginsFromRepository.addAll(RepositoryHelper.loadPlugins(null));
-    }
-    catch (Exception e) {
-      //OK, it's offline
-    }
+    myAllPlugins = PluginManagerCore.loadDescriptors(null, ContainerUtil.<String>newArrayList());
+    SwingWorker worker = new SwingWorker<List<IdeaPluginDescriptor>, Object>() {
+      @Override
+      protected List<IdeaPluginDescriptor> doInBackground() throws Exception {
+        try {
+          return RepositoryHelper.loadPlugins(null);
+        }
+        catch (Exception e) {
+          //OK, it's offline
+          return Collections.emptyList();
+        }
+      }
+
+      @Override
+      protected void done() {
+        try {
+          myPluginsFromRepository.addAll(get());
+          if (myLoadingCallback != null) myLoadingCallback.run();
+        }
+        catch (InterruptedException e) {
+          if (myLoadingCallback != null) myLoadingCallback.run();
+        }
+        catch (ExecutionException e) {
+          if (myLoadingCallback != null) myLoadingCallback.run();
+        }
+      }
+    };
+    worker.execute();
     PluginManagerCore.loadDisabledPlugins(new File(PathManager.getConfigPath()).getPath(), myDisabledPluginIds);
 
     initGroups(myTree, myFeaturedPlugins);
+  }
+
+  public void setLoadingCallback(Runnable loadingCallback) {
+    myLoadingCallback = loadingCallback;
+    if (!myPluginsFromRepository.isEmpty()) {
+      myLoadingCallback.run();
+    }
   }
 
   protected void
@@ -103,7 +135,7 @@ public class PluginGroups {
       "com.intellij.freemarker",
       "com.intellij.tapestry",
       "com.intellij.velocity",
-      "GuiceyIDEA",
+      "Guice",
       "com.intellij.aspectj",
       "Osmorc"
     )));
@@ -202,7 +234,7 @@ public class PluginGroups {
   }
 
   protected static void addVimPlugin(Map<String, String> featuredPlugins) {
-    featuredPlugins.put("IdeaVIM", "Editor:Vim emulation plug-in for IDEs based on the IntelliJ platform:IdeaVIM");
+    featuredPlugins.put("IdeaVim", "Editor:Emulates Vim editor:" + IDEA_VIM_PLUGIN_ID);
   }
 
   protected static void addLuaPlugin(Map<String, String> featuredPlugins) {
@@ -210,7 +242,7 @@ public class PluginGroups {
   }
 
   protected static void addMarkdownPlugin(Map<String, String> featuredPlugins) {
-    featuredPlugins.put("Markdown", "Custom Languages:Markdown language integration:net.nicoulaj.idea.markdown");
+    featuredPlugins.put("Markdown", "Custom Languages:Markdown language support:org.intellij.plugins.markdown");
   }
 
   protected static void addConfigurationServerPlugin(Map<String, String> featuredPlugins) {

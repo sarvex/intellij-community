@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,27 +17,22 @@ package git4idea;
 
 import com.intellij.idea.IdeaTestApplication;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.components.ProjectComponent;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vcs.*;
-import com.intellij.openapi.vcs.changes.ChangeListManager;
 import com.intellij.openapi.vcs.changes.ChangeListManagerImpl;
-import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager;
 import com.intellij.openapi.vcs.impl.ProjectLevelVcsManagerImpl;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.testFramework.PlatformTestCase;
 import com.intellij.testFramework.TestLoggerFactory;
 import com.intellij.testFramework.fixtures.IdeaProjectTestFixture;
 import com.intellij.testFramework.fixtures.IdeaTestFixtureFactory;
 import com.intellij.util.ThrowableRunnable;
 import com.intellij.util.ui.UIUtil;
-import cucumber.annotation.After;
-import cucumber.annotation.Before;
-import cucumber.annotation.Order;
-import cucumber.runtime.ScenarioResult;
+import cucumber.api.Scenario;
+import cucumber.api.java.After;
+import cucumber.api.java.Before;
 import git4idea.commands.Git;
 import git4idea.commands.GitHttpAuthService;
 import git4idea.config.GitVcsSettings;
@@ -50,7 +45,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.io.File;
-import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -101,10 +95,8 @@ public class GitCucumberWorld {
   private String myTestName;
 
   @Before
-  @Order(0)
   public void setUp() throws Throwable {
-    PlatformTestCase.initPlatformLangPrefix();
-    IdeaTestApplication.getInstance(null);
+    IdeaTestApplication.getInstance();
 
     myTestName = createTestName();
     myProjectFixture = IdeaTestFixtureFactory.getFixtureFactory().createFixtureBuilder(myTestName).getFixture();
@@ -117,9 +109,6 @@ public class GitCucumberWorld {
     });
 
     myProject = myProjectFixture.getProject();
-
-    ((ProjectComponent)ChangeListManager.getInstance(myProject)).projectOpened();
-    ((ProjectComponent)VcsDirtyScopeManager.getInstance(myProject)).projectOpened();
 
     myProjectRoot = myProject.getBasePath();
     myProjectDir = myProject.getBaseDir();
@@ -160,35 +149,30 @@ public class GitCucumberWorld {
     return getClass().getName() + "-" + new Random().nextInt();
   }
 
-  @Before("@remote")
-  @Order(1)
+  @Before(value = "@remote", order = 1)
   public void setUpRemoteOperations() {
     myHttpAuthService = (GitHttpAuthTestService)ServiceManager.getService(GitHttpAuthService.class);
   }
 
-  @Before("@nestedroot")
-  @Order(2)
+  @Before(value = "@nestedroot", order = 2)
   public void setUpStandardMultipleRootsConfig() {
     cd(myProjectRoot);
     File community = mkdir("community");
     GitTestUtil.createRepository(myProject, community.getPath());
   }
 
-  @After("@remote")
-  @Order(5)
+  @After(value = "@remote", order = 5)
   public void tearDownRemoteOperations() {
   }
 
-  @After
-  @Order(4)
+  @After(order = 4)
   public void waitForPendingTasks() throws InterruptedException, ExecutionException, TimeoutException {
     for (Future future : myAsyncTasks) {
       future.get(30, TimeUnit.SECONDS);
     }
   }
 
-  @After
-  @Order(3)
+  @After(order = 3)
   public void tearDownFixture() throws Exception {
     edt(new ThrowableRunnable<Exception>() {
       @Override
@@ -198,14 +182,12 @@ public class GitCucumberWorld {
     });
   }
 
-  @After
-  @Order(2)
+  @After(order = 2)
   public void cleanupDir() {
     FileUtil.delete(new File(myTestRoot));
   }
 
-  @After
-  @Order(1)
+  @After(order = 1)
   public void cleanupWorld() throws IllegalAccessException {
     for (Field field : GitCucumberWorld.class.getDeclaredFields()) {
       if (Modifier.isStatic(field.getModifiers())) {
@@ -214,9 +196,8 @@ public class GitCucumberWorld {
     }
   }
 
-  @After
-  @Order(0)
-  public void dumpToLog(@NotNull ScenarioResult result) throws IOException {
+  @After(order = 0)
+  public void dumpToLog(@NotNull Scenario result) {
     if (result.isFailed()) {
       TestLoggerFactory.dumpLogToStdout(getStartTestMarker());
     }

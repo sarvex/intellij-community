@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.testFramework.IdeaTestCase;
 import com.intellij.testFramework.PsiTestUtil;
 import com.intellij.testFramework.UsefulTestCase;
 import com.intellij.testFramework.fixtures.IdeaProjectTestFixture;
@@ -41,6 +40,7 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.idea.maven.indices.MavenIndicesManager;
 import org.jetbrains.idea.maven.project.*;
+import org.jetbrains.idea.maven.server.MavenServerManager;
 import org.jetbrains.idea.maven.utils.MavenProgressIndicator;
 
 import java.awt.*;
@@ -50,6 +50,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 public abstract class MavenTestCase extends UsefulTestCase {
   protected static final MavenConsole NULL_MAVEN_CONSOLE = new NullMavenConsole();
@@ -67,10 +68,6 @@ public abstract class MavenTestCase extends UsefulTestCase {
 
   protected VirtualFile myProjectPom;
   protected List<VirtualFile> myAllPoms = new ArrayList<VirtualFile>();
-
-  static {
-    IdeaTestCase.initPlatformPrefix();
-  }
 
   @Override
   protected void setUp() throws Exception {
@@ -146,6 +143,8 @@ public abstract class MavenTestCase extends UsefulTestCase {
   @Override
   protected void tearDown() throws Exception {
     try {
+      MavenServerManager.getInstance().shutdown(true);
+      MavenArtifactDownloader.awaitQuiescence(100, TimeUnit.SECONDS);
       myProject = null;
       UIUtil.invokeAndWaitIfNeeded(new Runnable() {
         @Override
@@ -163,7 +162,10 @@ public abstract class MavenTestCase extends UsefulTestCase {
     }
     finally {
       super.tearDown();
-      if (!FileUtil.delete(myDir) && myDir.exists()) {
+      FileUtil.delete(myDir);
+      // cannot use reliably the result of the com.intellij.openapi.util.io.FileUtil.delete() method
+      // because com.intellij.openapi.util.io.FileUtilRt.deleteRecursivelyNIO() does not honor this contract
+      if (myDir.exists()) {
         System.err.println("Cannot delete " + myDir);
         //printDirectoryContent(myDir);
         myDir.deleteOnExit();
@@ -219,7 +221,7 @@ public abstract class MavenTestCase extends UsefulTestCase {
       if (runInWriteAction()) {
         new WriteAction() {
           @Override
-          protected void run(Result result) throws Throwable {
+          protected void run(@NotNull Result result) throws Throwable {
             MavenTestCase.super.runTest();
           }
         }.executeSilently().throwException();
@@ -325,14 +327,14 @@ public abstract class MavenTestCase extends UsefulTestCase {
     String mirror = System.getProperty("idea.maven.test.mirror",
                                        // use JB maven proxy server for internal use by default, see details at
                                        // https://confluence.jetbrains.com/display/JBINT/Maven+proxy+server
-                                       "http://maven.labs.intellij.net/repo");
+                                       "http://maven.labs.intellij.net/repo1");
     return "<settings>" +
            content +
            "<mirrors>" +
            "  <mirror>" +
            "    <id>jb-central-proxy</id>" +
            "    <url>" + mirror + "</url>" +
-           "    <mirrorOf>external:*</mirrorOf>" +
+           "    <mirrorOf>external:*,!flex-repository</mirrorOf>" +
            "  </mirror>" +
            "</mirrors>" +
            "</settings>";
@@ -349,7 +351,7 @@ public abstract class MavenTestCase extends UsefulTestCase {
   protected Module createModule(final String name, final ModuleType type) throws IOException {
     return new WriteCommandAction<Module>(myProject) {
       @Override
-      protected void run(Result<Module> moduleResult) throws Throwable {
+      protected void run(@NotNull Result<Module> moduleResult) throws Throwable {
         VirtualFile f = createProjectSubFile(name + "/" + name + ".iml");
         Module module = ModuleManager.getInstance(myProject).newModule(f.getPath(), type.getId());
         PsiTestUtil.addContentRoot(module, f.getParent());
@@ -371,7 +373,7 @@ public abstract class MavenTestCase extends UsefulTestCase {
     if (f == null) {
       f = new WriteAction<VirtualFile>() {
         @Override
-        protected void run(Result<VirtualFile> result) throws Throwable {
+        protected void run(@NotNull Result<VirtualFile> result) throws Throwable {
           VirtualFile res = dir.createChildData(null, "pom.xml");
           result.setResult(res);
         }
@@ -426,7 +428,7 @@ public abstract class MavenTestCase extends UsefulTestCase {
     if (f == null) {
       f = new WriteAction<VirtualFile>() {
         @Override
-        protected void run(Result<VirtualFile> result) throws Throwable {
+        protected void run(@NotNull Result<VirtualFile> result) throws Throwable {
           VirtualFile res = dir.createChildData(null, "profiles.xml");
           result.setResult(res);
         }
@@ -497,7 +499,7 @@ public abstract class MavenTestCase extends UsefulTestCase {
   private static void setFileContent(final VirtualFile file, final String content, final boolean advanceStamps) throws IOException {
     new WriteAction<VirtualFile>() {
       @Override
-      protected void run(Result<VirtualFile> result) throws Throwable {
+      protected void run(@NotNull Result<VirtualFile> result) throws Throwable {
         if (advanceStamps) {
           file.setBinaryContent(content.getBytes(), -1, file.getTimeStamp() + 4000);
         }

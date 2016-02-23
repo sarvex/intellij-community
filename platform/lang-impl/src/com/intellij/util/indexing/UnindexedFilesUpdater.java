@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package com.intellij.util.indexing;
 
 import com.intellij.ProjectTopics;
+import com.intellij.diagnostic.PerformanceWatcher;
 import com.intellij.ide.IdeBundle;
 import com.intellij.ide.caches.FileContent;
 import com.intellij.ide.startup.impl.StartupManagerImpl;
@@ -61,17 +62,22 @@ public class UnindexedFilesUpdater extends DumbModeTask {
   }
 
   private void updateUnindexedFiles(ProgressIndicator indicator) {
+    PerformanceWatcher.Snapshot snapshot = PerformanceWatcher.takeSnapshot();
     PushedFilePropertiesUpdater.getInstance(myProject).pushAllPropertiesNow();
+    snapshot.logResponsivenessSinceCreation("Pushing properties");
 
     indicator.setIndeterminate(true);
     indicator.setText(IdeBundle.message("progress.indexing.scanning"));
 
     CollectingContentIterator finder = myIndex.createContentIterator(indicator);
-    long l = System.currentTimeMillis();
-    myIndex.iterateIndexableFiles(finder, myProject, indicator);
+    snapshot = PerformanceWatcher.takeSnapshot();
+
+    myIndex.iterateIndexableFilesConcurrently(finder, myProject, indicator);
+
     myIndex.filesUpdateEnumerationFinished();
 
-    LOG.info("Indexable files iterated in " + (System.currentTimeMillis() - l) + " ms");
+    snapshot.logResponsivenessSinceCreation("Indexable file iteration");
+
     List<VirtualFile> files = finder.getFiles();
 
     if (myOnStartup && !ApplicationManager.getApplication().isUnitTestMode()) {
@@ -83,26 +89,23 @@ public class UnindexedFilesUpdater extends DumbModeTask {
       return;
     }
 
-    long started = System.currentTimeMillis();
+    snapshot = PerformanceWatcher.takeSnapshot();
+
     LOG.info("Unindexed files update started: " + files.size() + " files to update");
 
     indicator.setIndeterminate(false);
     indicator.setText(IdeBundle.message("progress.indexing.updating"));
 
     indexFiles(indicator, files);
-    LOG.info("Unindexed files update done in " + (System.currentTimeMillis() - started) + " ms");
+
+    snapshot.logResponsivenessSinceCreation("Unindexed files update");
   }
 
   private void indexFiles(ProgressIndicator indicator, List<VirtualFile> files) {
     CacheUpdateRunner.processFiles(indicator, true, files, myProject, new Consumer<FileContent>() {
       @Override
       public void consume(FileContent content) {
-        try {
-          myIndex.indexFileContent(myProject, content);
-        }
-        finally {
-          IndexingStamp.flushCache(content.getVirtualFile());
-        }
+        myIndex.indexFileContent(myProject, content);
       }
     });
   }
@@ -116,7 +119,8 @@ public class UnindexedFilesUpdater extends DumbModeTask {
     catch (ProcessCanceledException e) {
       LOG.info("Unindexed files update canceled");
       throw e;
-    } finally {
+    }
+    finally {
       myIndex.filesUpdateFinished(myProject);
     }
   }

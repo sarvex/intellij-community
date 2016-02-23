@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 package com.intellij.codeInsight.completion;
 
 import com.intellij.codeInsight.CodeInsightSettings;
-import com.intellij.codeInsight.TargetElementUtilBase;
+import com.intellij.codeInsight.TargetElementUtil;
 import com.intellij.codeInsight.completion.impl.CompletionServiceImpl;
 import com.intellij.codeInsight.completion.impl.CompletionSorterImpl;
 import com.intellij.codeInsight.editorActions.CompletionAutoPopupHandler;
@@ -29,17 +29,15 @@ import com.intellij.diagnostic.PerformanceWatcher;
 import com.intellij.featureStatistics.FeatureUsageTracker;
 import com.intellij.injected.editor.DocumentWindow;
 import com.intellij.injected.editor.EditorWindow;
-import com.intellij.lang.Language;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.IdeActions;
-import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.Result;
-import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Caret;
+import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.progress.ProcessCanceledException;
@@ -56,14 +54,13 @@ import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.patterns.ElementPattern;
+import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiReference;
 import com.intellij.psi.ReferenceRange;
-import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.ui.LightweightHint;
 import com.intellij.util.Alarm;
 import com.intellij.util.ObjectUtils;
-import com.intellij.util.ThreeState;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.MessageBusConnection;
@@ -110,10 +107,10 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
   private final LookupAdapter myLookupListener = new LookupAdapter() {
     @Override
     public void itemSelected(LookupEvent event) {
-      finishCompletionProcess(false);
-
       LookupElement item = event.getItem();
-      if (item == null) return;
+      boolean dispose = item == null;
+      finishCompletionProcess(dispose);
+      if (dispose) return;
 
       setMergeCommand();
 
@@ -130,7 +127,7 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
   private volatile boolean myHasPsiElements;
   private boolean myLookupUpdated;
   private final ConcurrentMap<LookupElement, CompletionSorterImpl> myItemSorters =
-    ContainerUtil.newConcurrentMap(ContainerUtil.<LookupElement>identityStrategy());
+    ContainerUtil.createConcurrentWeakMap(ContainerUtil.<LookupElement>identityStrategy());
   private final PropertyChangeListener myLookupManagerListener;
   private final Queue<Runnable> myAdvertiserChanges = new ConcurrentLinkedQueue<Runnable>();
   private final List<CompletionResult> myDelayedMiddleMatches = ContainerUtil.newArrayList();
@@ -227,9 +224,18 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
     if (!initContext.getOffsetMap().wasModified(CompletionInitializationContext.IDENTIFIER_END_OFFSET)) {
       try {
         final int selectionEndOffset = initContext.getSelectionEndOffset();
-        final PsiReference reference = TargetElementUtilBase.findReference(myEditor, selectionEndOffset);
+        final PsiReference reference = TargetElementUtil.findReference(myEditor, selectionEndOffset);
         if (reference != null) {
-          initContext.setReplacementOffset(findReplacementOffset(selectionEndOffset, reference));
+          final int replacementOffset = findReplacementOffset(selectionEndOffset, reference);
+          final Document document = initContext.getEditor().getDocument();
+          if (replacementOffset > document.getTextLength()) {
+            LOG.error("Invalid replacementOffset: " + replacementOffset + " returned by reference " + reference + " of " + reference.getClass() + 
+                      "; doc=" + document + 
+                      "; doc actual=" + (document == initContext.getFile().getViewProvider().getDocument()) + 
+                      "; doc committed=" + PsiDocumentManager.getInstance(getProject()).isCommitted(document));
+          } else {
+            initContext.setReplacementOffset(replacementOffset);
+          }
         }
       }
       catch (IndexNotReadyException ignored) {
@@ -446,7 +452,7 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
     CompletionServiceImpl.assertPhase(CompletionPhase.NoCompletion.getClass());
 
     if (hideLookup) {
-      LookupManager.getInstance(getProject()).hideActiveLookup();
+      myLookup.hideLookup(true);
     }
   }
 
@@ -476,13 +482,12 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
 
   void disposeIndicator() {
     // our offset map should be disposed under write action, so that duringCompletion (read action) won't access it after disposing
-    AccessToken token = WriteAction.start();
-    try {
-      Disposer.dispose(this);
-    }
-    finally {
-      token.finish();
-    }
+    ApplicationManager.getApplication().runWriteAction(new Runnable() {
+      @Override
+      public void run() {
+        Disposer.dispose(CompletionProgressIndicator.this);
+      }
+    });
   }
 
   @TestOnly
@@ -514,7 +519,7 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
         LOG.assertTrue(!getProject().isDisposed(), "project disposed");
 
         if (myEditor.isDisposed()) {
-          LookupManager.getInstance(getProject()).hideActiveLookup();
+          myLookup.hideLookup(false);
           CompletionServiceImpl.setCompletionPhase(CompletionPhase.NoCompletion);
           return;
         }
@@ -529,7 +534,7 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
         myLookup.setCalculating(false);
 
         if (myCount == 0) {
-          LookupManager.getInstance(getProject()).hideActiveLookup();
+          myLookup.hideLookup(false);
           if (!isAutopopupCompletion()) {
             final CompletionProgressIndicator current = CompletionServiceImpl.getCompletionService().getCurrentCompletion();
             LOG.assertTrue(current == null, current + "!=" + CompletionProgressIndicator.this);
@@ -666,6 +671,13 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
 
   public void scheduleRestart() {
     ApplicationManager.getApplication().assertIsDispatchThread();
+    if (ApplicationManager.getApplication().isUnitTestMode() && !CompletionAutoPopupHandler.ourTestingAutopopup) {
+      closeAndFinish(true);
+      PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
+      new CodeCompletionHandlerBase(myParameters.getCompletionType()).invokeCompletion(getProject(), myEditor, myParameters.getInvocationCount());
+      return;
+    }
+
     cancel();
 
     final CompletionProgressIndicator current = CompletionServiceImpl.getCompletionService().getCurrentCompletion();
@@ -765,27 +777,7 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
       }
     }
 
-    if (!ApplicationManager.getApplication().isUnitTestMode()) {
-      return true;
-    }
-
-    switch (CodeInsightSettings.getInstance().AUTOPOPUP_FOCUS_POLICY) {
-      case CodeInsightSettings.ALWAYS:
-        return true;
-      case CodeInsightSettings.NEVER:
-        return false;
-    }
-
-    final Language language = PsiUtilCore.getLanguageAtOffset(parameters.getPosition().getContainingFile(), parameters.getOffset());
-    for (CompletionConfidence confidence : CompletionConfidenceEP.forLanguage(language)) {
-      //noinspection deprecation
-      final ThreeState result = confidence.shouldFocusLookup(parameters);
-      if (result != ThreeState.UNSURE) {
-        LOG.debug(confidence + " has returned shouldFocusLookup=" + result);
-        return result == ThreeState.YES;
-      }
-    }
-    return false;
+    return true;
   }
 
   void startCompletion(final CompletionInitializationContext initContext) {
@@ -818,17 +810,15 @@ public class CompletionProgressIndicator extends ProgressIndicatorBase implement
     strategy.startThread(this, new CalculateItems());
   }
 
-  private LookupElement[] calculateItems(CompletionInitializationContext initContext, WeighingDelegate weigher) {
+  private void calculateItems(CompletionInitializationContext initContext, WeighingDelegate weigher) {
     duringCompletion(initContext);
     ProgressManager.checkCanceled();
 
-    LookupElement[] result = CompletionService.getCompletionService().performCompletion(myParameters, weigher);
+    CompletionService.getCompletionService().performCompletion(myParameters, weigher);
     ProgressManager.checkCanceled();
 
     weigher.waitFor();
     ProgressManager.checkCanceled();
-
-    return result;
   }
 
   public void addAdvertisement(@NotNull final String text, @Nullable final Color bgColor) {

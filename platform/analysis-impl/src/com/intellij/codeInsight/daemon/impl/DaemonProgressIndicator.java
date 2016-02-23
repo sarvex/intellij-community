@@ -29,7 +29,7 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class DaemonProgressIndicator extends AbstractProgressIndicatorBase implements StandardProgressIndicator, Disposable {
   private static boolean debug;
-  private final TraceableDisposable myTraceableDisposable = new TraceableDisposable(debug ? new Throwable() : null);
+  private final TraceableDisposable myTraceableDisposable = new TraceableDisposable(debug);
   private volatile boolean myDisposed;
 
   @Override
@@ -71,7 +71,7 @@ public class DaemonProgressIndicator extends AbstractProgressIndicatorBase imple
   }
 
   public void cancel(@NotNull Throwable cause) {
-    myTraceableDisposable.kill("Daemon Progress Canceled because of "+cause);
+    myTraceableDisposable.killExceptionally(cause);
     super.cancel();
   }
 
@@ -102,7 +102,7 @@ public class DaemonProgressIndicator extends AbstractProgressIndicatorBase imple
     return super.toString() + (debug ? "; "+myTraceableDisposable.getStackTrace()+"\n;" : "");
   }
 
-  public boolean isDisposed() {
+  boolean isDisposed() {
     return myDisposed;
   }
 }

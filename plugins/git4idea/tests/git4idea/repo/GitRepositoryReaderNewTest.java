@@ -17,9 +17,12 @@ package git4idea.repo;
 
 import com.intellij.dvcs.repo.Repository;
 import com.intellij.openapi.util.Condition;
+import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.util.ObjectUtils;
 import com.intellij.util.containers.ContainerUtil;
 import git4idea.GitLocalBranch;
 import git4idea.GitRemoteBranch;
+import git4idea.branch.GitBranchUtil;
 import git4idea.test.GitSingleRepoTest;
 import org.jetbrains.annotations.NotNull;
 
@@ -60,7 +63,7 @@ public class GitRepositoryReaderNewTest extends GitSingleRepoTest {
     final String INVALID_REMOTE_BRANCH = "master";
     git("update-ref refs/remotes/" + INVALID_REMOTE + "/" + INVALID_REMOTE_BRANCH + " HEAD");
 
-    Collection<GitRemoteBranch> remoteBranches = readState().getRemoteBranches();
+    Collection<GitRemoteBranch> remoteBranches = readState().getRemoteBranches().keySet();
     assertTrue("Remote branch not found", ContainerUtil.exists(remoteBranches, new Condition<GitRemoteBranch>() {
       @Override
       public boolean value(GitRemoteBranch branch) {
@@ -87,6 +90,22 @@ public class GitRepositoryReaderNewTest extends GitSingleRepoTest {
     assertTrue("There should be no local branches", state.getLocalBranches().isEmpty());
   }
 
+  public void test_tracking_remote_with_complex_name() throws IOException {
+    makeCommit("file.txt");
+    git("remote add my/remote http://my.remote.git");
+    git("update-ref refs/remotes/my/remote/master HEAD");
+    git("config branch.master.remote my/remote");
+    git("config branch.master.merge refs/heads/master");
+    myRepo.update();
+
+
+    GitBranchTrackInfo trackInfo = GitBranchUtil.getTrackInfoForBranch(myRepo, ObjectUtils.assertNotNull(myRepo.getCurrentBranch()));
+    assertNotNull(trackInfo);
+    GitRemote remote = trackInfo.getRemote();
+    assertEquals("my/remote", remote.getName());
+    assertEquals("http://my.remote.git", remote.getFirstUrl());
+  }
+
   @NotNull
   private static String getToDetachedHead() throws IOException {
     makeCommit("file.txt");
@@ -97,9 +116,9 @@ public class GitRepositoryReaderNewTest extends GitSingleRepoTest {
 
   @NotNull
   private GitBranchState readState() {
-    File gitDir = new File(myRepo.getRoot().getPath(), ".git");
-    GitConfig config = GitConfig.read(myPlatformFacade, new File(gitDir, "config"));
-    GitRepositoryReader reader = new GitRepositoryReader(gitDir);
+    VirtualFile gitDir = myRepo.getGitDir();
+    GitConfig config = GitConfig.read(myPlatformFacade, new File(gitDir.getPath(), "config"));
+    GitRepositoryReader reader = new GitRepositoryReader(GitRepositoryFiles.getInstance(gitDir));
     Collection<GitRemote> remotes = config.parseRemotes();
     return reader.readState(remotes);
   }

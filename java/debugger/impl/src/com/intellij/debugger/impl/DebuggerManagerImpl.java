@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,6 +40,7 @@ import com.intellij.openapi.editor.colors.EditorColorsListener;
 import com.intellij.openapi.editor.colors.EditorColorsManager;
 import com.intellij.openapi.editor.colors.EditorColorsScheme;
 import com.intellij.openapi.extensions.Extensions;
+import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.projectRoots.JavaSdk;
 import com.intellij.openapi.projectRoots.JavaSdkVersion;
@@ -60,49 +61,50 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.swing.*;
 import java.io.File;
 import java.util.*;
 import java.util.jar.Attributes;
 
-@State(name = "DebuggerManager", storages = {@Storage(file = StoragePathMacros.WORKSPACE_FILE)})
+@State(name = "DebuggerManager", storages = {@Storage(StoragePathMacros.WORKSPACE_FILE)})
 public class DebuggerManagerImpl extends DebuggerManagerEx implements PersistentStateComponent<Element> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.debugger.impl.DebuggerManagerImpl");
 
   private final Project myProject;
-  private final HashMap<ProcessHandler, DebuggerSession> mySessions = new HashMap<ProcessHandler, DebuggerSession>();
+  private final HashMap<ProcessHandler, DebuggerSession> mySessions = new HashMap<>();
   private final BreakpointManager myBreakpointManager;
   private final List<NameMapper> myNameMappers = ContainerUtil.createLockFreeCopyOnWriteList();
   private final List<Function<DebugProcess, PositionManager>> myCustomPositionManagerFactories =
-    new ArrayList<Function<DebugProcess, PositionManager>>();
+    new ArrayList<>();
 
   private final EventDispatcher<DebuggerManagerListener> myDispatcher = EventDispatcher.create(DebuggerManagerListener.class);
   private final MyDebuggerStateManager myDebuggerStateManager = new MyDebuggerStateManager();
 
   private final DebuggerContextListener mySessionListener = new DebuggerContextListener() {
     @Override
-    public void changeEvent(DebuggerContextImpl newContext, int event) {
+    public void changeEvent(@NotNull DebuggerContextImpl newContext, DebuggerSession.Event event) {
 
       final DebuggerSession session = newContext.getDebuggerSession();
-      if (event == DebuggerSession.EVENT_PAUSE && myDebuggerStateManager.myDebuggerSession != session) {
+      if (event == DebuggerSession.Event.PAUSE && myDebuggerStateManager.myDebuggerSession != session) {
         // if paused in non-active session; switch current session
-        myDebuggerStateManager.setState(newContext, session != null? session.getState() : DebuggerSession.STATE_DISPOSED, event, null);
+        myDebuggerStateManager.setState(newContext, session != null? session.getState() : DebuggerSession.State.DISPOSED, event, null);
         return;
       }
 
       if (myDebuggerStateManager.myDebuggerSession == session) {
         myDebuggerStateManager.fireStateChanged(newContext, event);
       }
-      if (event == DebuggerSession.EVENT_ATTACHED) {
+      if (event == DebuggerSession.Event.ATTACHED) {
         myDispatcher.getMulticaster().sessionAttached(session);
       }
-      else if (event == DebuggerSession.EVENT_DETACHED) {
+      else if (event == DebuggerSession.Event.DETACHED) {
         myDispatcher.getMulticaster().sessionDetached(session);
       }
-      else if (event == DebuggerSession.EVENT_DISPOSE) {
+      else if (event == DebuggerSession.Event.DISPOSE) {
         dispose(session);
         if (myDebuggerStateManager.myDebuggerSession == session) {
           myDebuggerStateManager
-            .setState(DebuggerContextImpl.EMPTY_CONTEXT, DebuggerSession.STATE_DISPOSED, DebuggerSession.EVENT_DISPOSE, null);
+            .setState(DebuggerContextImpl.EMPTY_CONTEXT, DebuggerSession.State.DISPOSED, DebuggerSession.Event.DISPOSE, null);
         }
       }
     }
@@ -153,6 +155,7 @@ public class DebuggerManagerImpl extends DebuggerManagerEx implements Persistent
     }
   }
 
+  @Nullable
   @Override
   public DebuggerSession getSession(DebugProcess process) {
     ApplicationManager.getApplication().assertIsDispatchThread();
@@ -162,11 +165,12 @@ public class DebuggerManagerImpl extends DebuggerManagerEx implements Persistent
     return null;
   }
 
+  @NotNull
   @Override
   public Collection<DebuggerSession> getSessions() {
     synchronized (mySessions) {
       final Collection<DebuggerSession> values = mySessions.values();
-      return values.isEmpty() ? Collections.<DebuggerSession>emptyList() : new ArrayList<DebuggerSession>(values);
+      return values.isEmpty() ? Collections.<DebuggerSession>emptyList() : new ArrayList<>(values);
     }
   }
 
@@ -239,15 +243,15 @@ public class DebuggerManagerImpl extends DebuggerManagerEx implements Persistent
         debugProcess.removeDebugProcessListener(this);
       }
     });
-    DebuggerSession session = new DebuggerSession(environment.getSessionName(), debugProcess);
-    final ExecutionResult executionResult = session.attach(environment);
+    DebuggerSession session = DebuggerSession.create(environment.getSessionName(), debugProcess, environment);
+    ExecutionResult executionResult = session.getProcess().getExecutionResult();
     if (executionResult == null) {
       return null;
     }
     session.getContextManager().addListener(mySessionListener);
     getContextManager()
       .setState(DebuggerContextUtil.createDebuggerContext(session, session.getContextManager().getContext().getSuspendContext()),
-                session.getState(), DebuggerSession.EVENT_CONTEXT, null);
+                session.getState(), DebuggerSession.Event.CONTEXT, null);
 
     final ProcessHandler processHandler = executionResult.getProcessHandler();
 
@@ -273,7 +277,18 @@ public class DebuggerManagerImpl extends DebuggerManagerEx implements Persistent
             // wait at most 10 seconds: the problem is that debugProcess.stop() can hang if there are troubles in the debuggee
             // if processWillTerminate() is called from AWT thread debugProcess.waitFor() will block it and the whole app will hang
             if (!DebuggerManagerThreadImpl.isManagerThread()) {
-              debugProcess.waitFor(10000);
+              if (SwingUtilities.isEventDispatchThread()) {
+                ProgressManager.getInstance().runProcessWithProgressSynchronously(new Runnable() {
+                  @Override
+                  public void run() {
+                    ProgressManager.getInstance().getProgressIndicator().setIndeterminate(true);
+                    debugProcess.waitFor(10000);
+                  }
+                }, "Waiting For Debugger Response", false, debugProcess.getProject());
+              }
+              else {
+                debugProcess.waitFor(10000);
+              }
             }
           }
         }
@@ -350,16 +365,19 @@ public class DebuggerManagerImpl extends DebuggerManagerEx implements Persistent
     return "DebuggerManager";
   }
 
+  @NotNull
   @Override
   public BreakpointManager getBreakpointManager() {
     return myBreakpointManager;
   }
 
+  @NotNull
   @Override
   public DebuggerContextImpl getContext() {
     return getContextManager().getContext();
   }
 
+  @NotNull
   @Override
   public DebuggerStateManager getContextManager() {
     return myDebuggerStateManager;
@@ -588,13 +606,14 @@ public class DebuggerManagerImpl extends DebuggerManagerEx implements Persistent
   private static class MyDebuggerStateManager extends DebuggerStateManager {
     private DebuggerSession myDebuggerSession;
 
+    @NotNull
     @Override
     public DebuggerContextImpl getContext() {
       return myDebuggerSession == null ? DebuggerContextImpl.EMPTY_CONTEXT : myDebuggerSession.getContextManager().getContext();
     }
 
     @Override
-    public void setState(final DebuggerContextImpl context, int state, int event, String description) {
+    public void setState(@NotNull final DebuggerContextImpl context, DebuggerSession.State state, DebuggerSession.Event event, String description) {
       ApplicationManager.getApplication().assertIsDispatchThread();
       myDebuggerSession = context.getDebuggerSession();
       if (myDebuggerSession != null) {

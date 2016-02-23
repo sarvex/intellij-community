@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -124,12 +124,9 @@ public class SvnBusyOnAddTest extends TestCase {
       final Semaphore semaphoreWokeUp = new Semaphore();
 
       final AtomicReference<Boolean> wasUp = new AtomicReference<Boolean>(false);
-      final ISVNStatusHandler handler = new ISVNStatusHandler() {
-        @Override
-        public void handleStatus(SVNStatus status) throws SVNException {
-          semaphore.waitFor();
-          wasUp.set(true);
-        }
+      final ISVNStatusHandler handler = status -> {
+        semaphore.waitFor();
+        wasUp.set(true);
       };
 
       semaphore.down();
@@ -137,19 +134,17 @@ public class SvnBusyOnAddTest extends TestCase {
       semaphoreWokeUp.down();
 
       final SVNException[] exception = new SVNException[1];
-      new Thread(new Runnable() {
-        @Override
-        public void run() {
-          try {
-            semaphoreMain.up();
-            readClient.doStatus(myWorkingCopyRoot, true, false, true, false, handler);
-            semaphoreWokeUp.up();
-          }
-          catch (SVNException e) {
-            exception[0] = e;
-          }
+      Thread thread = new Thread(() -> {
+        try {
+          semaphoreMain.up();
+          readClient.doStatus(myWorkingCopyRoot, true, false, true, false, handler);
+          semaphoreWokeUp.up();
         }
-      }).start();
+        catch (SVNException e) {
+          exception[0] = e;
+        }
+      }, "svn test");
+      thread.start();
 
       semaphoreMain.waitFor();
       TimeoutUtil.sleep(5);
@@ -162,7 +157,9 @@ public class SvnBusyOnAddTest extends TestCase {
       if (exception[0] != null) {
         throw exception[0];
       }
-    } finally {
+      thread.join();
+    }
+    finally {
       ioFile.delete();
     }
   }

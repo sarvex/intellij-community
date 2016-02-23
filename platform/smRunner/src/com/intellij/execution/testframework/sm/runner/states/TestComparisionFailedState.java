@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,11 @@
 package com.intellij.execution.testframework.sm.runner.states;
 
 import com.intellij.execution.process.ProcessOutputTypes;
-import com.intellij.execution.testframework.AbstractTestProxy;
 import com.intellij.execution.testframework.CompositePrintable;
 import com.intellij.execution.testframework.Printer;
 import com.intellij.execution.testframework.sm.runner.ui.TestsPresentationUtil;
 import com.intellij.execution.testframework.stacktrace.DiffHyperlink;
 import com.intellij.execution.ui.ConsoleViewContentType;
-import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -40,8 +38,25 @@ public class TestComparisionFailedState extends TestFailedState {
                                     @Nullable final String stackTrace,
                                     @NotNull final String actualText,
                                     @NotNull final String expectedText) {
+    this(localizedMessage, stackTrace, actualText, expectedText, null);
+  }
+
+  public TestComparisionFailedState(@Nullable final String localizedMessage,
+                                    @Nullable final String stackTrace,
+                                    @NotNull final String actualText,
+                                    @NotNull final String expectedText,
+                                    @Nullable final String filePath) {
+    this(localizedMessage, stackTrace, actualText, expectedText, filePath, null);
+  }
+  
+  public TestComparisionFailedState(@Nullable final String localizedMessage,
+                                    @Nullable final String stackTrace,
+                                    @NotNull final String actualText,
+                                    @NotNull final String expectedText,
+                                    @Nullable final String expectedFilePath,
+                                    @Nullable final String actualFilePath) {
     super(localizedMessage, stackTrace);
-    myHyperlink = new DiffHyperlink(expectedText, actualText, null);
+    myHyperlink = new DiffHyperlink(expectedText, actualText, expectedFilePath, actualFilePath, true);
 
     myErrorMsgPresentation = StringUtil.isEmptyOrSpaces(localizedMessage) ? "" : localizedMessage;
     myStacktracePresentation = StringUtil.isEmptyOrSpaces(stackTrace) ? "" : stackTrace;

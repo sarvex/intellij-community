@@ -63,6 +63,7 @@ import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiTypesUtil;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.proximity.PsiProximityComparator;
+import com.intellij.refactoring.util.RefactoringUtil;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.Processor;
 import com.intellij.util.containers.ContainerUtil;
@@ -138,8 +139,7 @@ public class CreateFromUsageUtils {
     JVMElementFactory factory = JVMElementFactories.getFactory(aClass.getLanguage(), aClass.getProject());
 
     LOG.assertTrue(!aClass.isInterface() ||
-                   method.hasModifierProperty(PsiModifier.DEFAULT) ||
-                   method.hasModifierProperty(PsiModifier.STATIC) ||
+                   PsiUtil.isLanguageLevel8OrHigher(method) ||
                    method.getLanguage() != JavaLanguage.INSTANCE, "Interface bodies should be already set up");
 
     FileType fileType = FileTypeManager.getInstance().getFileTypeByExtension(template.getExtension());
@@ -252,7 +252,7 @@ public class CreateFromUsageUtils {
       Pair<PsiExpression, PsiType> arg = arguments.get(i);
       PsiExpression exp = arg.first;
 
-      PsiType argType = exp == null ? arg.second : exp.getType();
+      PsiType argType = exp == null ? arg.second : RefactoringUtil.getTypeByExpression(exp);
       SuggestedNameInfo suggestedInfo = JavaCodeStyleManager.getInstance(psiManager.getProject()).suggestVariableName(
         VariableKind.PARAMETER, null, exp, argType);
       @NonNls String[] names = suggestedInfo.names; //TODO: callback about used name
@@ -300,9 +300,11 @@ public class CreateFromUsageUtils {
     assert !ApplicationManager.getApplication().isWriteAccessAllowed() : "You must not run createClass() from under write action";
     final String name = referenceElement.getReferenceName();
 
+    String qualifierName;
     final PsiElement qualifierElement;
     PsiElement qualifier = referenceElement.getQualifier();
     if (qualifier instanceof PsiJavaCodeReferenceElement) {
+      qualifierName = ((PsiJavaCodeReferenceElement)qualifier).getQualifiedName();
       qualifierElement = ((PsiJavaCodeReferenceElement)qualifier).resolve();
       if (qualifierElement instanceof PsiClass) {
         return ApplicationManager.getApplication().runWriteAction(
@@ -315,20 +317,24 @@ public class CreateFromUsageUtils {
       }
     }
     else {
+      qualifierName = null;
       qualifierElement = null;
     }
 
     final PsiManager manager = referenceElement.getManager();
     final PsiFile sourceFile = referenceElement.getContainingFile();
     final Module module = ModuleUtilCore.findModuleForPsiElement(sourceFile);
-    PsiPackage aPackage = findTargetPackage(qualifierElement, manager, sourceFile);
-    if (aPackage == null) return null;
+    if (qualifierName == null) {
+      PsiPackage aPackage = findTargetPackage(qualifierElement, manager, sourceFile);
+      if (aPackage == null) return null;
+      qualifierName = aPackage.getQualifiedName();
+    }
     final PsiDirectory targetDirectory;
     if (!ApplicationManager.getApplication().isUnitTestMode()) {
       Project project = manager.getProject();
       String title = QuickFixBundle.message("create.class.title", StringUtil.capitalize(classKind.getDescription()));
 
-      CreateClassDialog dialog = new CreateClassDialog(project, title, name, aPackage.getQualifiedName(), classKind, false, module){
+      CreateClassDialog dialog = new CreateClassDialog(project, title, name, qualifierName, classKind, false, module){
         @Override
         protected boolean reportBaseInSourceSelectionInTest() {
           return true;

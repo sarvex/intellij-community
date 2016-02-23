@@ -16,35 +16,29 @@
 package com.intellij.concurrency;
 
 import com.intellij.codeInsight.daemon.impl.DaemonProgressIndicator;
+import com.intellij.diagnostic.ThreadDumper;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.progress.EmptyProgressIndicator;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.util.AbstractProgressIndicatorBase;
 import com.intellij.openapi.progress.util.ProgressIndicatorBase;
-import com.intellij.testFramework.PlatformLangTestCase;
+import com.intellij.testFramework.PlatformTestCase;
+import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.util.Processor;
+import com.intellij.util.TimeoutUtil;
+import com.intellij.util.ui.UIUtil;
 
+import javax.swing.*;
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class JobUtilTest extends PlatformLangTestCase {
+public class JobUtilTest extends PlatformTestCase {
   private static final AtomicInteger COUNT = new AtomicInteger();
-
-  @Override
-  protected boolean isRunInWriteAction() {
-    return false;
-  }
 
   public void testUnbalancedTaskJobUtilPerformance() {
     List<Integer> things = new ArrayList<Integer>(Collections.<Integer>nCopies(10000, null));
@@ -356,7 +350,7 @@ public class JobUtilTest extends PlatformLangTestCase {
     }
   }
 
-  public void testTasksRunEvenWhenReadActionIsHardToGet() throws ExecutionException, InterruptedException {
+  public void testTasksRunEvenWhenReadActionIsHardToGet_Performance() throws ExecutionException, InterruptedException {
     final Processor<String> processor = new Processor<String>() {
       @Override
       public boolean process(String s) {
@@ -364,7 +358,8 @@ public class JobUtilTest extends PlatformLangTestCase {
         return true;
       }
     };
-    for (int i=0; i<1/*00*/; i++) {
+    for (int i=0; i<10/*0*/; i++) {
+      System.out.println("i = " + i);
       final ProgressIndicator indicator = new EmptyProgressIndicator();
       Future<?> future = ApplicationManager.getApplication().executeOnPooledThread(new Runnable() {
         @Override
@@ -382,6 +377,107 @@ public class JobUtilTest extends PlatformLangTestCase {
         });
       }
       future.get();
+    }
+  }
+
+  public void testAfterCancelInTheMiddleOfTheExecutionTaskIsDoneReturnsFalseUntilFinished() throws ExecutionException, InterruptedException {
+    Random random = new Random();
+    for (int i=0; i<100; i++) {
+      final AtomicBoolean finished = new AtomicBoolean();
+      final AtomicBoolean started = new AtomicBoolean();
+      Job<Void> job = JobLauncher.getInstance().submitToJobThread(new Runnable() {
+        @Override
+        public void run() {
+          started.set(true);
+          TimeoutUtil.sleep(100);
+          finished.set(true);
+        }
+      }, null);
+      assertFalse(job.isDone());
+      TimeoutUtil.sleep(random.nextInt(100));
+      job.cancel();
+      long start = System.currentTimeMillis();
+      while (!job.isDone() && (started.get() || System.currentTimeMillis() < start + 2000)) {
+        boolean wasDone = job.isDone();
+        boolean wasStarted = started.get();
+        boolean wasFinished = finished.get();
+        if (wasStarted && !wasFinished) {
+          assertFalse(wasDone);
+        }
+        // else no guarantees
+
+        // but can be finished=true but done=false still
+        if (wasDone) {
+          assertTrue(wasFinished);
+        }
+
+      }
+    }
+  }
+
+  public void testJobWaitForTerminationAfterCancelInTheMiddleOfTheExecutionWaitsUntilFinished() throws Exception {
+    for (int i=0; i<100; i++) {
+      final AtomicBoolean finished = new AtomicBoolean();
+      final AtomicBoolean started = new AtomicBoolean();
+      Job<Void> job = JobLauncher.getInstance().submitToJobThread(new Runnable() {
+        @Override
+        public void run() {
+          started.set(true);
+          TimeoutUtil.sleep(100);
+          finished.set(true);
+        }
+      }, null);
+      assertFalse(job.isDone());
+      while (!started.get());
+      job.cancel();
+      job.waitForCompletion(100000);
+      assertTrue(finished.get());
+    }
+  }
+
+  public void testDaemonDoesNotPauseWhenEventDispatcherHasEventsInTheQueue() throws Throwable {
+    assertTrue(SwingUtilities.isEventDispatchThread());
+
+    PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
+    final AtomicInteger jobsStarted = new AtomicInteger();
+    final int N_EVENTS = 50;
+    final int N_JOBS = 10000 * JobSchedulerImpl.CORES_COUNT;
+    ProgressIndicator indicator = new DaemonProgressIndicator();
+
+    Job<Void> job = JobLauncher.getInstance().submitToJobThread(
+      () -> JobLauncher.getInstance().invokeConcurrentlyUnderProgress(Collections.nCopies(N_JOBS, null), indicator, false, o -> {
+        jobsStarted.incrementAndGet();
+        TimeoutUtil.sleep(10);
+        return true;
+      }), null);
+
+    for (int i = 0; i < N_EVENTS; i++) {
+      //noinspection SSBasedInspection
+      SwingUtilities.invokeLater(() -> {
+        int jobs0 = jobsStarted.get();
+        long start = System.currentTimeMillis();
+        while (jobsStarted.get() < jobs0 + JobSchedulerImpl.CORES_COUNT && jobsStarted.get() < N_JOBS) {
+          if (System.currentTimeMillis() > start + 10000) {
+            System.err.println(ThreadDumper.dumpThreadsToString());
+            fail();
+            break;
+          }
+        }
+        //int jobs1 = jobsStarted.get();
+        //System.out.println("jobs0 = "+jobs0+"; jobs1 = "+jobs1);
+      });
+      UIUtil.dispatchAllInvocationEvents();
+    }
+    indicator.cancel();
+    job.cancel();
+    while (!job.isDone()) {
+      try {
+        job.waitForCompletion(1000);
+        UIUtil.dispatchAllInvocationEvents();
+        break;
+      }
+      catch (TimeoutException ignored) {
+      }
     }
   }
 }

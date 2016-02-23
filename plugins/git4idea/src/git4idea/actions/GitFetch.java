@@ -30,9 +30,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Git "fetch" action
- */
 public class GitFetch extends GitRepositoryAction {
   @Override
   @NotNull
@@ -45,7 +42,7 @@ public class GitFetch extends GitRepositoryAction {
                          @NotNull final VirtualFile defaultRoot,
                          final Set<VirtualFile> affectedRoots,
                          final List<VcsException> exceptions) throws VcsException {
-    GitVcs.runInBackground(new Task.Backgroundable(project, "Fetching...", false) {
+    GitVcs.runInBackground(new Task.Backgroundable(project, "Fetching...", true) {
       @Override
       public void run(@NotNull ProgressIndicator indicator) {
         GitRepositoryManager repositoryManager = GitUtil.getRepositoryManager(project);

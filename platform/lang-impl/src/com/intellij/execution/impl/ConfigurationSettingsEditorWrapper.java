@@ -13,13 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.intellij.execution.impl;
 
 import com.intellij.execution.BeforeRunTask;
 import com.intellij.execution.RunnerAndConfigurationSettings;
 import com.intellij.execution.configurations.RunConfiguration;
-import com.intellij.execution.configurations.UnknownRunConfiguration;
+import com.intellij.execution.configurations.WithoutOwnBeforeRunSteps;
 import com.intellij.execution.runners.ProgramRunner;
 import com.intellij.ide.DataManager;
 import com.intellij.ide.util.PropertiesComponent;
@@ -44,8 +43,9 @@ import java.util.List;
  */
 public class ConfigurationSettingsEditorWrapper extends SettingsEditor<RunnerAndConfigurationSettings>
   implements BeforeRunStepsPanel.StepsBeforeRunListener {
-  public static DataKey<ConfigurationSettingsEditorWrapper> CONFIGURATION_EDITOR_KEY = DataKey.create("ConfigurationSettingsEditor");
+  public static final DataKey<ConfigurationSettingsEditorWrapper> CONFIGURATION_EDITOR_KEY = DataKey.create("ConfigurationSettingsEditor");
   @NonNls private static final String EXPAND_PROPERTY_KEY = "ExpandBeforeRunStepsPanel";
+
   private JPanel myComponentPlace;
   private JPanel myWholePanel;
 
@@ -79,6 +79,7 @@ public class ConfigurationSettingsEditorWrapper extends SettingsEditor<RunnerAnd
         super.off();
         storeState();
       }
+
       private void storeState() {
         PropertiesComponent.getInstance().setValue(EXPAND_PROPERTY_KEY, String.valueOf(isExpanded()));
       }
@@ -91,7 +92,7 @@ public class ConfigurationSettingsEditorWrapper extends SettingsEditor<RunnerAnd
   private void doReset(RunnerAndConfigurationSettings settings) {
     final RunConfiguration runConfiguration = settings.getConfiguration();
     myBeforeRunStepsPanel.doReset(settings);
-    myBeforeLaunchContainer.setVisible(!(runConfiguration instanceof UnknownRunConfiguration));
+    myBeforeLaunchContainer.setVisible(!(runConfiguration instanceof WithoutOwnBeforeRunSteps));
   }
 
   @Override
@@ -129,8 +130,10 @@ public class ConfigurationSettingsEditorWrapper extends SettingsEditor<RunnerAnd
     RunnerAndConfigurationSettings runManagerSettings = runManager.getSettings(runConfiguration);
     if (runManagerSettings != null) {
       runManagerSettings.setEditBeforeRun(myBeforeRunStepsPanel.needEditBeforeRun());
+      runManagerSettings.setActivateToolWindowBeforeRun(myBeforeRunStepsPanel.needActivateToolWindowBeforeRun());
     } else {
       settings.setEditBeforeRun(myBeforeRunStepsPanel.needEditBeforeRun());
+      settings.setActivateToolWindowBeforeRun(myBeforeRunStepsPanel.needActivateToolWindowBeforeRun());
     }
   }
 
@@ -153,7 +156,6 @@ public class ConfigurationSettingsEditorWrapper extends SettingsEditor<RunnerAnd
   }
 
   private class MyDataProvider implements DataProvider {
-
     @Nullable
     @Override
     public Object getData(@NonNls String dataId) {

@@ -113,6 +113,7 @@ public interface CodeStyleSettingsCustomizable {
 
   enum WrappingOrBraceOption {
     RIGHT_MARGIN,
+    WRAP_ON_TYPING,
     KEEP_CONTROL_STATEMENT_IN_ONE_LINE,
     LINE_COMMENT_AT_FIRST_COLUMN,
     BLOCK_COMMENT_AT_FIRST_COLUMN,
@@ -143,6 +144,7 @@ public interface CodeStyleSettingsCustomizable {
     KEEP_SIMPLE_BLOCKS_IN_ONE_LINE,
     KEEP_SIMPLE_METHODS_IN_ONE_LINE,
     KEEP_SIMPLE_CLASSES_IN_ONE_LINE,
+    KEEP_SIMPLE_LAMBDAS_IN_ONE_LINE,
     KEEP_MULTIPLE_EXPRESSIONS_IN_ONE_LINE,
     FOR_STATEMENT_WRAP,
     FOR_STATEMENT_LPAREN_ON_NEXT_LINE,
@@ -167,6 +169,7 @@ public interface CodeStyleSettingsCustomizable {
     PARAMETER_ANNOTATION_WRAP,
     VARIABLE_ANNOTATION_WRAP,
     ALIGN_MULTILINE_CHAINED_METHODS,
+    WRAP_FIRST_METHOD_IN_CALL_CHAIN,
     ALIGN_MULTILINE_PARAMETERS,
     ALIGN_MULTILINE_PARAMETERS_IN_CALLS,
     ALIGN_MULTILINE_RESOURCES,
@@ -196,9 +199,13 @@ public interface CodeStyleSettingsCustomizable {
     SPECIAL_ELSE_IF_TREATMENT,
     ENUM_CONSTANTS_WRAP,
     ALIGN_CONSECUTIVE_VARIABLE_DECLARATIONS,
+    ALIGN_SUBSEQUENT_SIMPLE_METHODS,
     INDENT_BREAK_FROM_CASE
   }
   
+  enum CommenterOption {
+    LINE_COMMENT_ADD_SPACE
+  }
   
 
   String SPACES_AROUND_OPERATORS = ApplicationBundle.message("group.spaces.around.operators");
@@ -284,6 +291,17 @@ public interface CodeStyleSettingsCustomizable {
     CommonCodeStyleSettings.NEXT_LINE,
     CommonCodeStyleSettings.NEXT_LINE_SHIFTED,
     CommonCodeStyleSettings.NEXT_LINE_SHIFTED2
+  };
+
+  String[] WRAP_ON_TYPING_OPTIONS = {
+    ApplicationBundle.message("wrapping.wrap.on.typing.no.wrap"),
+    ApplicationBundle.message("wrapping.wrap.on.typing.wrap"),
+    ApplicationBundle.message("wrapping.wrap.on.typing.default")
+  };
+  int [] WRAP_ON_TYPING_VALUES = {
+    CommonCodeStyleSettings.WrapOnTyping.NO_WRAP.intValue,
+    CommonCodeStyleSettings.WrapOnTyping.WRAP.intValue,
+    CommonCodeStyleSettings.WrapOnTyping.DEFAULT.intValue
   };
 
   void showAllStandardOptions();

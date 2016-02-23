@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,7 @@ public class ClsMirrorBuildingTest extends LightIdeaTestCase {
   public void testNested() { doTest(); }
   public void testDeprecated() { doTest(); }
   public void testAnnotations() { doTest(); }
+  public void testMoreAnnotations() { doTest(); }
   public void testParameterNames() { doTest(); }
   public void testEmptyEnum() { doTest(); }
   public void test$BuckClass() { doTest(); }
@@ -82,6 +83,13 @@ public class ClsMirrorBuildingTest extends LightIdeaTestCase {
     doTest(clsPath, txtPath);
   }
 
+  public void testStaticMethodInInterface() {
+    String testDir = JavaTestUtil.getJavaTestDataPath();
+    String clsPath = testDir + "/../../mockJDK-1.8/jre/lib/rt.jar!/java/util/function/Function.class";
+    String txtPath = testDir + "/psi/cls/mirror/Function.txt";
+    doTest(clsPath, txtPath);
+  }
+
   public void testStrayInnersFiltering() throws IOException {
     String path = JavaTestUtil.getJavaTestDataPath() + "/../../mockJDK-1.8/jre/lib/rt.jar!/java/lang/Class.class";
     VirtualFile file = StandardFileSystems.jar().findFileByPath(path);
@@ -107,7 +115,7 @@ public class ClsMirrorBuildingTest extends LightIdeaTestCase {
       }
     };
     PsiJavaFileStubImpl stub = new PsiJavaFileStubImpl("do.not.know.yet", true);
-    StubBuildingVisitor<VirtualFile> visitor = new StubBuildingVisitor<VirtualFile>(file, strategy, stub, 0, null);
+    StubBuildingVisitor<VirtualFile> visitor = new StubBuildingVisitor<>(file, strategy, stub, 0, null);
     new ClassReader(file.contentsToByteArray()).accept(visitor, ClassReader.SKIP_FRAMES);
   }
 
@@ -153,6 +161,21 @@ public class ClsMirrorBuildingTest extends LightIdeaTestCase {
     }
   }
 
+  public void testInnerClassDetection() throws IOException {
+    assertTrue(isInner("pkg/Nested$Inner1"));
+    assertTrue(isInner("pkg/Nested$Inner1$Inner2"));
+    assertTrue(isInner("pkg/NormalClass$1"));
+    assertTrue(isInner("pkg/LocalClass$1MyRunnable"));
+    assertTrue(isInner("pkg/KindaInner$RealInner$"));
+    assertTrue(isInner("pkg/KindaInner$Real$Inner"));
+    assertTrue(isInner("pkg/Groovy$Inner"));
+    assertTrue(isInner("pkg/Groovy$_closure1"));
+    assertTrue(isInner("weird/ToStringStyle$1"));
+
+    assertFalse(isInner("pkg/KindaInner$Class"));
+    assertFalse(isInner("weird/ToStringStyle"));
+  }
+
   private static String getTestDataDir() {
     return JavaTestUtil.getJavaTestDataPath() + "/psi/cls/mirror/";
   }
@@ -179,5 +202,11 @@ public class ClsMirrorBuildingTest extends LightIdeaTestCase {
     }
 
     assertEquals(expected, ClsFileImpl.decompile(file).toString());
+  }
+
+  private static boolean isInner(String name) throws IOException {
+    VirtualFile file = StandardFileSystems.local().findFileByPath(getTestDataDir() + name + ".class");
+    assertNotNull(file);
+    return ClassFileViewProvider.isInnerClass(file, file.contentsToByteArray(false));
   }
 }

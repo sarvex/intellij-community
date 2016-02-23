@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.intellij.codeInspection.LocalInspectionTool;
 import com.intellij.codeInspection.ex.InspectionProfileImpl;
 import com.intellij.codeInspection.ex.InspectionProfileWrapper;
 import com.intellij.codeInspection.ex.LocalInspectionToolWrapper;
+import com.intellij.openapi.editor.SpellCheckingEditorCustomizationProvider;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiDocumentManager;
@@ -29,7 +30,7 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.spellchecker.inspections.SpellCheckingInspection;
 import com.intellij.ui.SimpleEditorCustomization;
-import com.intellij.util.Function;
+import com.intellij.util.NotNullFunction;
 import com.intellij.util.containers.WeakHashMap;
 import org.jetbrains.annotations.NotNull;
 
@@ -45,19 +46,25 @@ import java.util.Map;
  * @since Aug 20, 2010 3:54:42 PM
  */
 public class SpellCheckingEditorCustomization extends SimpleEditorCustomization {
+  /**
+   * @deprecated use {@link SpellCheckingEditorCustomizationProvider#getEnabledCustomization()} instead
+   */
+  public static final SpellCheckingEditorCustomization ENABLED = (SpellCheckingEditorCustomization)SpellCheckingEditorCustomizationProvider.getInstance().getEnabledCustomization();
 
-  public static final SpellCheckingEditorCustomization ENABLED = new SpellCheckingEditorCustomization(true);
-  public static final SpellCheckingEditorCustomization DISABLED = new SpellCheckingEditorCustomization(false);
+  /**
+   * @deprecated use {@link SpellCheckingEditorCustomizationProvider#getDisabledCustomization()} instead
+   */
+  public static final SpellCheckingEditorCustomization DISABLED = (SpellCheckingEditorCustomization)SpellCheckingEditorCustomizationProvider.getInstance().getDisabledCustomization();
 
   private static final Map<String, LocalInspectionToolWrapper> SPELL_CHECK_TOOLS = new HashMap<String, LocalInspectionToolWrapper>();
   private static final boolean READY = init();
 
   @NotNull
   public static SpellCheckingEditorCustomization getInstance(boolean enabled) {
-    return enabled ? ENABLED : DISABLED;
+    return (SpellCheckingEditorCustomization)SpellCheckingEditorCustomizationProvider.getInstance().getCustomization(enabled);
   }
 
-  private SpellCheckingEditorCustomization(boolean enabled) {
+  SpellCheckingEditorCustomization(boolean enabled) {
     super(enabled);
   }
 
@@ -97,7 +104,7 @@ public class SpellCheckingEditorCustomization extends SimpleEditorCustomization 
       return;
     }
 
-    Function<InspectionProfileWrapper, InspectionProfileWrapper> strategy = file.getUserData(InspectionProfileWrapper.CUSTOMIZATION_KEY);
+    NotNullFunction<InspectionProfileWrapper, InspectionProfileWrapper> strategy = file.getUserData(InspectionProfileWrapper.CUSTOMIZATION_KEY);
     if (strategy == null) {
       file.putUserData(InspectionProfileWrapper.CUSTOMIZATION_KEY, strategy = new MyInspectionProfileStrategy());
     }
@@ -119,12 +126,13 @@ public class SpellCheckingEditorCustomization extends SimpleEditorCustomization 
     }
   }
 
-  private static class MyInspectionProfileStrategy implements Function<InspectionProfileWrapper, InspectionProfileWrapper> {
+  private static class MyInspectionProfileStrategy implements NotNullFunction<InspectionProfileWrapper, InspectionProfileWrapper> {
 
     private final Map<InspectionProfileWrapper, MyInspectionProfileWrapper> myWrappers
       = new WeakHashMap<InspectionProfileWrapper, MyInspectionProfileWrapper>();
     private boolean myUseSpellCheck;
 
+    @NotNull
     @Override
     public InspectionProfileWrapper fun(InspectionProfileWrapper inspectionProfileWrapper) {
       if (!READY) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package com.intellij.codeInsight.daemon.impl.analysis;
 
 import com.intellij.codeInsight.daemon.impl.HighlightInfo;
 import com.intellij.codeInsight.daemon.impl.HighlightInfoType;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.psi.*;
 import com.intellij.psi.util.MethodSignature;
 import com.intellij.psi.util.PsiTypesUtil;
@@ -25,19 +26,23 @@ import com.intellij.psi.util.TypeConversionUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * User: anna
  */
 public class LambdaHighlightingUtil {
+  private static final Logger LOG = Logger.getInstance("#" + LambdaHighlightingUtil.class.getName());
+
   @Nullable
   public static String checkInterfaceFunctional(@NotNull PsiClass psiClass) {
     return checkInterfaceFunctional(psiClass, "Target type of a lambda conversion must be an interface");
   }
 
   @Nullable
-  public static String checkInterfaceFunctional(@NotNull PsiClass psiClass, String interfaceNonFunctionalMessage) {
+  static String checkInterfaceFunctional(@NotNull PsiClass psiClass, String interfaceNonFunctionalMessage) {
     if (psiClass instanceof PsiTypeParameter) return null; //should be logged as cyclic inference
     final List<HierarchicalMethodSignature> signatures = LambdaUtil.findFunctionCandidates(psiClass);
     if (signatures == null) return interfaceNonFunctionalMessage;
@@ -49,9 +54,9 @@ public class LambdaHighlightingUtil {
   }
 
   @Nullable
-  public static HighlightInfo checkParametersCompatible(PsiLambdaExpression expression,
-                                                        PsiParameter[] methodParameters,
-                                                        PsiSubstitutor substitutor) {
+  static HighlightInfo checkParametersCompatible(PsiLambdaExpression expression,
+                                                 PsiParameter[] methodParameters,
+                                                 PsiSubstitutor substitutor) {
     final PsiParameter[] lambdaParameters = expression.getParameterList().getParameters();
     String incompatibleTypesMessage = "Incompatible parameter types in lambda expression: ";
     if (lambdaParameters.length != methodParameters.length) {
@@ -61,34 +66,26 @@ public class LambdaHighlightingUtil {
         .descriptionAndTooltip(incompatibleTypesMessage)
         .create();
     }
-    else {
-      boolean hasFormalParameterTypes = expression.hasFormalParameterTypes();
-      for (int i = 0; i < lambdaParameters.length; i++) {
-        PsiParameter lambdaParameter = lambdaParameters[i];
-        PsiType lambdaParameterType = lambdaParameter.getType();
-        PsiType substitutedParamType = substitutor.substitute(methodParameters[i].getType());
-        if (hasFormalParameterTypes &&!PsiTypesUtil.compareTypes(lambdaParameterType, substitutedParamType, true) || 
-            !TypeConversionUtil.isAssignable(substitutedParamType, lambdaParameterType)) {
-          final String expectedType = substitutedParamType != null ? substitutedParamType.getPresentableText() : null;
-          final String actualType = lambdaParameterType.getPresentableText();
-          return HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR)
-            .range(expression.getParameterList())
-            .descriptionAndTooltip(incompatibleTypesMessage + "expected " + expectedType + " but found " + actualType)
-            .create();
-        }
+    boolean hasFormalParameterTypes = expression.hasFormalParameterTypes();
+    for (int i = 0; i < lambdaParameters.length; i++) {
+      PsiParameter lambdaParameter = lambdaParameters[i];
+      PsiType lambdaParameterType = lambdaParameter.getType();
+      PsiType substitutedParamType = substitutor.substitute(methodParameters[i].getType());
+      if (hasFormalParameterTypes &&!PsiTypesUtil.compareTypes(lambdaParameterType, substitutedParamType, true) ||
+          !TypeConversionUtil.isAssignable(substitutedParamType, lambdaParameterType)) {
+        final String expectedType = substitutedParamType != null ? substitutedParamType.getPresentableText() : null;
+        final String actualType = lambdaParameterType.getPresentableText();
+        return HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR)
+          .range(expression.getParameterList())
+          .descriptionAndTooltip(incompatibleTypesMessage + "expected " + expectedType + " but found " + actualType)
+          .create();
       }
     }
     return null;
   }
 
   public static boolean insertSemicolonAfter(PsiLambdaExpression lambdaExpression) {
-     if (lambdaExpression.getBody() instanceof PsiCodeBlock) {
-       return true;
-     }
-    if (insertSemicolon(lambdaExpression.getParent())) {
-      return false;
-    }
-    return true;
+    return lambdaExpression.getBody() instanceof PsiCodeBlock || !insertSemicolon(lambdaExpression.getParent());
   }
 
   public static boolean insertSemicolon(PsiElement parent) {
@@ -98,14 +95,16 @@ public class LambdaHighlightingUtil {
   @Nullable
   public static String checkInterfaceFunctional(PsiType functionalInterfaceType) {
     if (functionalInterfaceType instanceof PsiIntersectionType) {
-      int count = 0;
+      final Set<MethodSignature> signatures = new HashSet<MethodSignature>();
       for (PsiType type : ((PsiIntersectionType)functionalInterfaceType).getConjuncts()) {
         if (checkInterfaceFunctional(type) == null) {
-          count++;
+          final MethodSignature signature = LambdaUtil.getFunction(PsiUtil.resolveClassInType(type));
+          LOG.assertTrue(signature != null, type.getCanonicalText());
+          signatures.add(signature);
         }
       }
 
-      if (count > 1) {
+      if (signatures.size() > 1) {
         return "Multiple non-overriding abstract methods found in " + functionalInterfaceType.getPresentableText();
       }
       return null;
@@ -133,9 +132,9 @@ public class LambdaHighlightingUtil {
 
     for (PsiTypeParameter parameter : aClass.getTypeParameters()) {
       if (parameter.getExtendsListTypes().length == 0) continue;
-      boolean depends = false;
       final PsiType substitution = resolveResult.getSubstitutor().substitute(parameter);
       if (substitution instanceof PsiWildcardType && !((PsiWildcardType)substitution).isBounded()) {
+        boolean depends = false;
         for (PsiType paramType : methodSignature.getParameterTypes()) {
           if (LambdaUtil.depends(paramType, new LambdaUtil.TypeParamsChecker((PsiMethod)null, aClass) {
             @Override

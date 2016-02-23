@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,19 +21,18 @@ import com.intellij.ide.todo.TodoConfiguration;
 import com.intellij.ide.todo.TodoIndexPatternProvider;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.util.io.FileUtil;
-import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.impl.cache.CacheManager;
 import com.intellij.psi.impl.cache.TodoCacheManager;
-import com.intellij.psi.impl.cache.impl.id.IdIndex;
-import com.intellij.psi.impl.cache.impl.todo.TodoIndex;
-import com.intellij.psi.search.*;
+import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.psi.search.TodoAttributesUtil;
+import com.intellij.psi.search.TodoPattern;
+import com.intellij.psi.search.UsageSearchContext;
 import com.intellij.testFramework.IdeaTestUtil;
 import com.intellij.testFramework.PsiTestUtil;
 import com.intellij.util.ArrayUtil;
-import com.intellij.util.indexing.FileBasedIndex;
 
 import java.io.File;
 import java.util.Arrays;
@@ -47,9 +46,6 @@ public class IdCacheTest extends CodeInsightTestCase{
   @Override
   protected void setUp() throws Exception {
     super.setUp();
-
-    FileBasedIndex.getInstance().requestRebuild(IdIndex.NAME);
-    FileBasedIndex.getInstance().requestRebuild(TodoIndex.NAME);
 
     String root = JavaTestUtil.getJavaTestDataPath()+ "/psi/impl/cache/";
 
@@ -73,14 +69,14 @@ public class IdCacheTest extends CodeInsightTestCase{
   }
 
   public void testUpdateCache1() throws Exception {
-    myRootDir.createChildData(null, "4.java");
+    createChildData(myRootDir, "4.java");
     Thread.sleep(1000);
     checkCache(CacheManager.SERVICE.getInstance(myProject), TodoCacheManager.SERVICE.getInstance(myProject));
   }
 
   public void testUpdateCache2() throws Exception {
     VirtualFile child = myRootDir.findChild("1.java");
-    VfsUtil.saveText(child, "xxx");
+    setFileText(child, "xxx");
 
     PsiDocumentManager.getInstance(myProject).commitAllDocuments();
     FileDocumentManager.getInstance().saveAllDocuments();
@@ -103,7 +99,7 @@ public class IdCacheTest extends CodeInsightTestCase{
 
   public void testUpdateCache3() throws Exception {
     VirtualFile child = myRootDir.findChild("1.java");
-    child.delete(null);
+    delete(child);
 
     final CacheManager cache2 = CacheManager.SERVICE.getInstance(myProject);
     final TodoCacheManager todocache2 = TodoCacheManager.SERVICE.getInstance(myProject);
@@ -121,7 +117,7 @@ public class IdCacheTest extends CodeInsightTestCase{
   }
 
   public void testUpdateCacheNoTodo() throws Exception {
-    myRootDir.createChildData(null, "4.java");
+    createChildData(myRootDir, "4.java");
     final GlobalSearchScope scope = GlobalSearchScope.projectScope(myProject);
     final CacheManager cache = CacheManager.SERVICE.getInstance(myProject);
     checkResult(new String[]{"1.java", "2.java"}, convert(cache.getFilesWithWord("b", UsageSearchContext.ANY, scope, false)));
@@ -153,7 +149,8 @@ public class IdCacheTest extends CodeInsightTestCase{
 
     checkCache(cache, todocache);
 
-    VfsUtil.saveText(child, "xxx");
+    setFileText(child, "xxx");
+    setFileText(child, "xxx");
     PsiDocumentManager.getInstance(myProject).commitAllDocuments();
 
     final GlobalSearchScope scope = GlobalSearchScope.projectScope(myProject);
@@ -176,7 +173,7 @@ public class IdCacheTest extends CodeInsightTestCase{
     checkCache(cache, todocache);
 
     VirtualFile child = myRootDir.findChild("1.java");
-    child.delete(null);
+    delete(child);
 
     final GlobalSearchScope scope = GlobalSearchScope.projectScope(myProject);
     checkResult(new String[]{}, convert(cache.getFilesWithWord("xxx", UsageSearchContext.ANY, scope, false)));
@@ -196,8 +193,8 @@ public class IdCacheTest extends CodeInsightTestCase{
     final TodoCacheManager todocache = TodoCacheManager.SERVICE.getInstance(myProject);
     checkCache(cache, todocache);
 
-    VirtualFile child = myRootDir.createChildData(null, "4.java");
-    VfsUtil.saveText(child, "xxx //todo");
+    VirtualFile child = createChildData(myRootDir, "4.java");
+    setFileText(child, "xxx //todo");
     PsiDocumentManager.getInstance(myProject).commitAllDocuments();
 
     final GlobalSearchScope scope = GlobalSearchScope.projectScope(myProject);

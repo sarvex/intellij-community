@@ -23,13 +23,10 @@
 package com.theoryinpractice.testng.ui;
 
 import com.intellij.codeInsight.AnnotationUtil;
-import com.intellij.execution.ExecutionBundle;
-import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.testframework.*;
 import com.intellij.execution.testframework.actions.ScrollToTestSourceAction;
 import com.intellij.execution.testframework.ui.TestResultsPanel;
-import com.intellij.icons.AllIcons;
-import com.intellij.openapi.actionSystem.DefaultActionGroup;
+import com.intellij.execution.testframework.ui.TestsProgressAnimator;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.progress.util.ColorProgressBar;
 import com.intellij.openapi.project.Project;
@@ -43,7 +40,6 @@ import com.intellij.ui.DoubleClickListener;
 import com.intellij.ui.ScrollPaneFactory;
 import com.intellij.ui.table.TableView;
 import com.intellij.util.OpenSourceUtil;
-import com.intellij.util.config.ToggleBooleanProperty;
 import com.theoryinpractice.testng.configuration.TestNGConfiguration;
 import com.theoryinpractice.testng.model.*;
 import com.theoryinpractice.testng.util.TestNGUtil;
@@ -68,6 +64,7 @@ public class TestNGResults extends TestResultsPanel implements TestFrameworkRunn
   private final TableView resultsTable;
 
   private final TestNGResultsTableModel model;
+  private final TestNGConfiguration configuration;
   private TestNGTestTreeView tree;
 
   private final Project project;
@@ -79,7 +76,6 @@ public class TestNGResults extends TestResultsPanel implements TestFrameworkRunn
   private long start;
   private long end;
   private TestTreeBuilder treeBuilder;
-  private Animator animator;
 
   private final TreeRootNode rootNode;
   private static final String NO_PACKAGE = "No Package";
@@ -87,13 +83,14 @@ public class TestNGResults extends TestResultsPanel implements TestFrameworkRunn
   private int myStatus = MessageHelper.PASSED_TEST;
   private Set<String> startedMethods = new HashSet<String>();
   private TestProxy myLastSelected;
+  private TestsProgressAnimator animator;
 
   public TestNGResults(final JComponent component,
                        final TestNGConfiguration configuration,
-                       final TestNGConsoleView console,
-                       final ExecutionEnvironment environment) {
+                       final TestNGConsoleView console) {
     super(component, console.getConsole().createConsoleActions(), console.getProperties(),
-          environment, TESTNG_SPLITTER_PROPERTY, 0.5f);
+          TESTNG_SPLITTER_PROPERTY, 0.5f);
+    this.configuration = configuration;
     this.project = configuration.getProject();
 
     model = new TestNGResultsTableModel(project);
@@ -133,7 +130,7 @@ public class TestNGResults extends TestResultsPanel implements TestFrameworkRunn
     treeBuilder = new TestTreeBuilder(tree, structure);
     Disposer.register(this, treeBuilder);
 
-    animator = new Animator(this, treeBuilder);
+    animator = new TestsProgressAnimator(treeBuilder);
 
     openSourceListener = new OpenSourceSelectionListener();
     tree.getSelectionModel().addTreeSelectionListener(openSourceListener);
@@ -150,19 +147,7 @@ public class TestNGResults extends TestResultsPanel implements TestFrameworkRunn
 
   @Override
   protected ToolbarPanel createToolbarPanel() {
-    final ToolbarPanel panel = new ToolbarPanel(getProperties(), myEnvironment, this){
-      @Override
-      protected void appendAdditionalActions(DefaultActionGroup actionGroup,
-                                             TestConsoleProperties properties,
-                                             ExecutionEnvironment environment, JComponent parent) {
-        super.appendAdditionalActions(actionGroup, properties, environment, parent);
-        actionGroup.addAction(new ToggleBooleanProperty(
-          ExecutionBundle.message("junit.runing.info.include.non.started.in.rerun.failed.action.name"),
-                                                    null,
-                                                    AllIcons.RunConfigurations.IncludeNonStartedTests_Rerun,
-                                                    properties, TestConsoleProperties.INCLUDE_NON_STARTED_IN_RERUN_FAILED)).setAsSecondary(true);
-      }
-    };
+    final ToolbarPanel panel = new ToolbarPanel(getProperties(), this);
     panel.setModel(this);
     return panel;
   }
@@ -324,7 +309,7 @@ public class TestNGResults extends TestResultsPanel implements TestFrameworkRunn
     }
     myStatusLine.setFraction((double)count / total);
     updateStatusLine();
-    TestsUIUtil.showIconProgress(project, count, total, failed.size());
+    TestsUIUtil.showIconProgress(project, count, total, failed.size(), false);
   }
 
   private TestProxy getPackageClassNodeFor(final TestResultMessage result) {
@@ -398,7 +383,6 @@ public class TestNGResults extends TestResultsPanel implements TestFrameworkRunn
           myStatusLine.setStatusColor(ColorProgressBar.GREEN);
         }
         rootNode.setInProgress(false);
-        TestStatusListener.notifySuiteFinished(rootNode, project);
         if (TestNGConsoleProperties.SELECT_FIRST_DEFECT.value(myProperties)) {
           selectTest(rootNode.getFirstDefect());
         }
@@ -409,7 +393,10 @@ public class TestNGResults extends TestResultsPanel implements TestFrameworkRunn
           }
         }
         tree.repaint();
-        TestsUIUtil.notifyByBalloon(project, started, rootNode, getProperties(), "in " + getTime());
+        if (total > 0 ||
+            !ResetConfigurationModuleAdapter.tryWithAnotherModule(configuration, getProperties().isDebug())) {
+          TestsUIUtil.notifyByBalloon(project, started, rootNode, getProperties(), "in " + getTime());
+        }
       }
     });
   }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import com.intellij.psi.*;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.searches.MethodReferencesSearch;
 import com.intellij.psi.search.searches.OverridingMethodsSearch;
-import com.intellij.psi.util.PropertyUtil;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.refactoring.BaseRefactoringProcessor;
 import com.intellij.refactoring.IntroduceParameterRefactoring;
@@ -124,8 +123,12 @@ public class IntroduceParameterProcessor extends BaseRefactoringProcessor implem
     myInitializerWrapper = expressionToSearch == null ? null : new JavaExpressionWrapper(expressionToSearch);
   }
 
+  public void setParameterInitializer(PsiExpression parameterInitializer) {
+    myParameterInitializer = parameterInitializer;
+  }
+
   @NotNull
-  protected UsageViewDescriptor createUsageViewDescriptor(UsageInfo[] usages) {
+  protected UsageViewDescriptor createUsageViewDescriptor(@NotNull UsageInfo[] usages) {
     return new IntroduceParameterViewDescriptor(myMethodToSearchFor);
   }
 
@@ -225,7 +228,7 @@ public class IntroduceParameterProcessor extends BaseRefactoringProcessor implem
     }
   }
 
-  protected boolean preprocessUsages(Ref<UsageInfo[]> refUsages) {
+  protected boolean preprocessUsages(@NotNull Ref<UsageInfo[]> refUsages) {
     UsageInfo[] usagesIn = refUsages.get();
     MultiMap<PsiElement, String> conflicts = new MultiMap<PsiElement, String>();
 
@@ -324,6 +327,11 @@ public class IntroduceParameterProcessor extends BaseRefactoringProcessor implem
 
     @Override public void visitVariable(PsiVariable variable) {
       if (variable == myLocalVariable) return;
+      if (variable instanceof PsiParameter && ((PsiParameter)variable).getDeclarationScope() == myMethodToReplaceIn) {
+        if (getParametersToRemove().contains(myMethodToReplaceIn.getParameterList().getParameterIndex((PsiParameter)variable))){
+          return;
+        }
+      }
       if (myParameterName.equals(variable.getName())) {
         String descr = RefactoringBundle.message("there.is.already.a.0.it.will.conflict.with.an.introduced.parameter",
                                                  RefactoringUIUtil.getDescription(variable, true));
@@ -357,14 +365,14 @@ public class IntroduceParameterProcessor extends BaseRefactoringProcessor implem
 
   @Nullable
   @Override
-  protected RefactoringEventData getAfterData(UsageInfo[] usages) {
+  protected RefactoringEventData getAfterData(@NotNull UsageInfo[] usages) {
     final PsiParameter parameter = JavaIntroduceParameterMethodUsagesProcessor.getAnchorParameter(myMethodToReplaceIn);
     final RefactoringEventData afterData = new RefactoringEventData();
     afterData.addElement(parameter);
     return afterData;
   }
 
-  protected void performRefactoring(UsageInfo[] usages) {
+  protected void performRefactoring(@NotNull UsageInfo[] usages) {
     try {
       PsiElementFactory factory = JavaPsiFacade.getInstance(myManager.getProject()).getElementFactory();
       PsiType initializerType = getInitializerType(myForcedType, myParameterInitializer, myLocalVariable);

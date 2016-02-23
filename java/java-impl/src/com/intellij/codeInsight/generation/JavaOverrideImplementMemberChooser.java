@@ -1,3 +1,18 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.codeInsight.generation;
 
 import com.intellij.codeInsight.CodeInsightBundle;
@@ -10,6 +25,7 @@ import com.intellij.openapi.keymap.KeymapManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.util.NotNullLazyValue;
+import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.infos.CandidateInfo;
 import com.intellij.psi.util.PsiUtil;
@@ -22,7 +38,6 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -41,7 +56,7 @@ public class JavaOverrideImplementMemberChooser extends MemberChooser<PsiMethodM
   private final PsiMethodMember[] myOnlyPrimaryElements;
   private final NotNullLazyValue<PsiMethodWithOverridingPercentMember[]> myLazyElementsWithPercent;
   private final boolean myToImplement;
-  private Project myProject;
+  private final Project myProject;
   private boolean myMerge;
   private boolean mySortedByOverriding;
 
@@ -69,10 +84,15 @@ public class JavaOverrideImplementMemberChooser extends MemberChooser<PsiMethodM
         }
       };
     final boolean merge = PropertiesComponent.getInstance(project).getBoolean(PROP_COMBINED_OVERRIDE_IMPLEMENT, true);
+
+    final LanguageLevel languageLevel = PsiUtil.getLanguageLevel(aClass);
+    //hide option if implement interface for 1.5 language level
+    final boolean overrideVisible = languageLevel.isAtLeast(LanguageLevel.JDK_1_6) || languageLevel.equals(LanguageLevel.JDK_1_5) && !toImplement;
+
     final JavaOverrideImplementMemberChooser javaOverrideImplementMemberChooser =
-      new JavaOverrideImplementMemberChooser(all, onlyPrimary, lazyElementsWithPercent, project, PsiUtil.isLanguageLevel5OrHigher(aClass),
+      new JavaOverrideImplementMemberChooser(all, onlyPrimary, lazyElementsWithPercent, project, overrideVisible,
                                              merge, toImplement, PropertiesComponent.getInstance(project)
-        .getBoolean(PROP_OVERRIDING_SORTED_OVERRIDE_IMPLEMENT, false));
+        .getBoolean(PROP_OVERRIDING_SORTED_OVERRIDE_IMPLEMENT));
     javaOverrideImplementMemberChooser.setTitle(getChooserTitle(toImplement, merge));
 
     javaOverrideImplementMemberChooser.setCopyJavadocVisible(true);
@@ -137,8 +157,8 @@ public class JavaOverrideImplementMemberChooser extends MemberChooser<PsiMethodM
   @Override
   protected void doOKAction() {
     super.doOKAction();
-    PropertiesComponent.getInstance(myProject).setValue(PROP_COMBINED_OVERRIDE_IMPLEMENT, String.valueOf(myMerge));
-    PropertiesComponent.getInstance(myProject).setValue(PROP_OVERRIDING_SORTED_OVERRIDE_IMPLEMENT, String.valueOf(mySortedByOverriding));
+    PropertiesComponent.getInstance(myProject).setValue(PROP_COMBINED_OVERRIDE_IMPLEMENT, myMerge, true);
+    PropertiesComponent.getInstance(myProject).setValue(PROP_OVERRIDING_SORTED_OVERRIDE_IMPLEMENT, mySortedByOverriding);
   }
 
   @Override

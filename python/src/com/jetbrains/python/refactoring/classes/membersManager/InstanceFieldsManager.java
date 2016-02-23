@@ -60,7 +60,6 @@ class InstanceFieldsManager extends FieldsManager {
     if (fromInitMethod != null) { // If class has no init method that means all its fields declared in other methods, so nothing to remove
       deleteElements(Collections2.filter(statements, new InitsOnly(fromInitMethod)));
       //We can't leave class constructor with empty body
-      PyClassRefactoringUtil.insertPassIfNeeded(fromInitMethod);
     }
     return result;
   }
@@ -94,7 +93,7 @@ class InstanceFieldsManager extends FieldsManager {
   //TODO: Move to utils?
   @NotNull
   private static PyFunction createInitMethod(@NotNull final PyClass to) {
-    final PyFunctionBuilder functionBuilder = new PyFunctionBuilder(PyNames.INIT);
+    final PyFunctionBuilder functionBuilder = new PyFunctionBuilder(PyNames.INIT, to);
     functionBuilder.parameter(PyNames.CANONICAL_SELF); //TODO: Take param from codestyle?
     final PyFunction function = functionBuilder.buildFunction(to.getProject(), LanguageLevel.forElement(to));
     return PyClassRefactoringUtil.addMethods(to, true, function).get(0);

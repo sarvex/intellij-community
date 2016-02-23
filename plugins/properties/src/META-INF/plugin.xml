@@ -14,7 +14,6 @@
 
   <extensions defaultExtensionNs="com.intellij">
     <typeIcon className="com.intellij.lang.properties.editor.ResourceBundleAsVirtualFile" icon="AllIcons.Nodes.ResourceBundle"/>
-    <errorHandler implementation="com.intellij.diagnostic.ITNReporter"/>
     <applicationService serviceInterface="com.intellij.lang.properties.LastSelectedPropertiesFileStore"
                         serviceImplementation="com.intellij.lang.properties.LastSelectedPropertiesFileStore"/>
     <applicationService serviceInterface="com.intellij.lang.properties.PropertiesQuickFixFactory"
@@ -70,7 +69,8 @@
                      key="unused.property.inspection.display.name"
                      groupKey="properties.files.inspection.group.display.name" enabledByDefault="true" level="WARNING"
                      implementationClass="com.intellij.codeInspection.unused.UnusedPropertyInspection"/>
-    <globalInspection shortName="DuplicatePropertyInspection" bundle="messages.InspectionsBundle" key="duplicate.property.display.name"
+    <globalInspection language="Properties" shortName="DuplicatePropertyInspection" bundle="messages.InspectionsBundle"
+                      key="duplicate.property.display.name"
                       groupKey="group.names.properties.files" enabledByDefault="false" level="WARNING"
                       implementationClass="com.intellij.codeInspection.duplicatePropertyInspection.DuplicatePropertyInspection"/>
     <localInspection language="Properties" shortName="TrailingSpacesInProperty" bundle="messages.PropertiesBundle"
@@ -83,8 +83,12 @@
                      implementationClass="com.intellij.codeInspection.unsorted.AlphaUnsortedPropertiesFileInspection"/>
     <localInspection language="Properties" shortName="WrongPropertyKeyValueDelimiter" bundle="messages.PropertiesBundle"
                      key="wrong.property.key.value.delimiter.inspection.display.name" groupKey="properties.files.inspection.group.display.name"
-                     enabledByDefault="true" level="WEAK WARNING"
+                     enabledByDefault="true" level="WEAK WARNING" cleanupTool="true"
                      implementationClass="com.intellij.codeInspection.WrongPropertyKeyValueDelimiterInspection"/>
+    <localInspection language="Properties" shortName="IncompleteProperty" unfair="true" bundle="messages.PropertiesBundle"
+                     key="incomplete.property.inspection.display.name" groupKey="properties.files.inspection.group.display.name"
+                     enabledByDefault="true" level="ERROR"
+                     implementationClass="com.intellij.lang.properties.editor.inspections.incomplete.IncompletePropertyInspection"/>
 
     <idIndexer filetype="Properties" implementationClass="com.intellij.psi.impl.cache.impl.idCache.PropertiesIdIndexer"/>
     <todoIndexer filetype="Properties" implementationClass="com.intellij.psi.impl.cache.impl.idCache.PropertiesTodoIndexer"/>
@@ -105,6 +109,10 @@
     <gotoRelatedProvider implementation="com.intellij.lang.properties.editor.GotoPropertyDeclarationsProvider"/>
 
     <codeStyleSettingsProvider implementation="com.intellij.lang.properties.psi.codeStyle.PropertiesCodeStyleSettingsProvider"/>
+
+    <internalFileTemplate name="XML Properties File.xml"/>
+    <refactoring.copyHandler implementation="com.intellij.lang.properties.editor.PropertiesCopyHandler"/>
+    <lang.formatter language="Properties" implementationClass="com.intellij.lang.properties.formatting.PropertiesFormattingModelBuilder"/>
   </extensions>
 
   <project-components>
@@ -134,5 +142,20 @@
             description="Add Property to Resource Bundle">
       <add-to-group group-id="NewGroup" anchor="first"/>
     </action>
+    <action id="GotoNextIncompletePropertyAction"
+            class="com.intellij.lang.properties.editor.GotoNextIncompletePropertyAction"
+            text="Go to next incomplete property"
+            use-shortcut-of="GotoNextError"/>
+
+    <action id="AddNewPropertyFile" class="com.intellij.lang.properties.create.AddNewPropertyFileAction">
+      <add-to-group group-id="NewGroup" anchor="first"/>
+    </action>
+    <action id="CreateResourceBundle" class="com.intellij.lang.properties.create.CreateResourceBundleAction">
+      <add-to-group group-id="NewGroup" anchor="after" relative-to-action="NewFromTemplate"/>
+    </action>
+    <action id="ResourceBundleEditorShowIntentions"
+            class="com.intellij.lang.properties.editor.ResourceBundleEditorShowQuickFixesAction"
+            use-shortcut-of="ShowIntentionActions"/>
+
   </actions>
 </idea-plugin>

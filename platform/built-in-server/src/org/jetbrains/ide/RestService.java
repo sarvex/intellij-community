@@ -41,8 +41,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.io.Responses;
 
+import java.awt.*;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.util.List;
 
@@ -135,6 +137,13 @@ public abstract class RestService extends HttpRequestHandler {
     return true;
   }
 
+  protected final void activateLastFocusedFrame() {
+    IdeFrame frame = IdeFocusManager.getGlobalInstance().getLastFocusedFrame();
+    if (frame instanceof Window) {
+      ((Window)frame).toFront();
+    }
+  }
+
   @Nullable("error text or null if successful")
   /**
    * Return error or send response using {@link #sendOk(FullHttpRequest, ChannelHandlerContext)}, {@link #send(BufferExposingByteArrayOutputStream, FullHttpRequest, ChannelHandlerContext)}
@@ -149,7 +158,7 @@ public abstract class RestService extends HttpRequestHandler {
   }
 
   @NotNull
-  protected static JsonWriter createJsonWriter(@NotNull BufferExposingByteArrayOutputStream out) {
+  protected static JsonWriter createJsonWriter(@NotNull OutputStream out) {
     JsonWriter writer = new JsonWriter(new OutputStreamWriter(out, CharsetToolkit.UTF8_CHARSET));
     writer.setIndent("  ");
     return writer;
@@ -167,16 +176,16 @@ public abstract class RestService extends HttpRequestHandler {
   }
 
   protected static void sendOk(@NotNull FullHttpRequest request, @NotNull ChannelHandlerContext context) {
-    sendStatus(HttpResponseStatus.OK, HttpHeaderUtil.isKeepAlive(request), context.channel());
+    sendStatus(HttpResponseStatus.OK, HttpUtil.isKeepAlive(request), context.channel());
   }
 
   protected static void sendStatus(@NotNull HttpResponseStatus status, boolean keepAlive, @NotNull Channel channel) {
     DefaultFullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status);
-    HttpHeaderUtil.setContentLength(response, 0);
+    HttpUtil.setContentLength(response, 0);
     Responses.addCommonHeaders(response);
     Responses.addNoCache(response);
     if (keepAlive) {
-      HttpHeaderUtil.setKeepAlive(response, true);
+      HttpUtil.setKeepAlive(response, true);
     }
     Responses.send(response, channel, !keepAlive);
   }

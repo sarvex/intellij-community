@@ -148,7 +148,7 @@ public class DialogBuilder implements Disposable {
     return myActions;
   }
 
-  public void setActionDescriptors(ActionDescriptor[] descriptors) {
+  public void setActionDescriptors(ActionDescriptor... descriptors) {
     removeAllActions();
     ContainerUtil.addAll(myActions, descriptors);
   }
@@ -463,5 +463,9 @@ public class DialogBuilder implements Disposable {
       if (myHelpId != null) actions.add(getHelpAction());
       return actions.toArray(new Action[actions.size()]);
     }
+  }
+
+  public void setErrorText(@Nullable final String text) {
+    myDialogWrapper.setErrorText(text);
   }
 }

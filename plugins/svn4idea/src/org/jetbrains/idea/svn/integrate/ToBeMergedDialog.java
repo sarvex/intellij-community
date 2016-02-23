@@ -265,7 +265,7 @@ public class ToBeMergedDialog extends DialogWrapper implements MergeDialogI {
           final List<SvnChangeList> svnChangeLists = ContainerUtil.findAll(changeLists, SvnChangeList.class);
 
           for (SvnChangeList svnChangeList : svnChangeLists) {
-            final Collection<String> notMerged = myMergeChecker.getNotMergedPaths(svnChangeList.getNumber());
+            final Collection<String> notMerged = myMergeChecker.getNotMergedPaths(svnChangeList);
 
             if (!ContainerUtil.isEmpty(notMerged)) {
               for (String path : svnChangeList.getAffectedPaths()) {
@@ -296,7 +296,7 @@ public class ToBeMergedDialog extends DialogWrapper implements MergeDialogI {
         selectionListener.valueChanged(e);
       }
     };
-    myRevisionsList.getExpandableItemsHandler().setEnabled(false);
+    myRevisionsList.setExpandableItemsEnabled(false);
     new TableViewSpeedSearch<CommittedChangeList>(myRevisionsList) {
       @Override
       protected String getItemText(@NotNull CommittedChangeList element) {
@@ -350,7 +350,7 @@ public class ToBeMergedDialog extends DialogWrapper implements MergeDialogI {
     flatModel.fireTableDataChanged();
 
     myRepositoryChangesBrowser = new RepositoryChangesBrowser(myProject, Collections.<CommittedChangeList>emptyList(), Collections.<Change>emptyList(), null);
-    myRepositoryChangesBrowser.getDiffAction().registerCustomShortcutSet(CommonShortcuts.getDiff(), myRevisionsList);
+    myRepositoryChangesBrowser.getDiffAction().registerCustomShortcutSet(myRepositoryChangesBrowser.getDiffAction().getShortcutSet(), myRevisionsList);
     setChangesDecorator();
     mySplitter.setSecondComponent(myRepositoryChangesBrowser);
     mySplitter.setDividerWidth(2);

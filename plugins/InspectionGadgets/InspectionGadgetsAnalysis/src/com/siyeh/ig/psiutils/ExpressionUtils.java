@@ -15,6 +15,7 @@
  */
 package com.siyeh.ig.psiutils;
 
+import com.intellij.codeInsight.NullableNotNullManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
 import com.intellij.psi.tree.IElementType;
@@ -60,6 +61,20 @@ public class ExpressionUtils {
     }
     final PsiType type = field.getType();
     return ClassUtils.isImmutable(type);
+  }
+
+  public static boolean hasExpressionCount(@Nullable PsiExpressionList expressionList, int count) {
+    return ControlFlowUtils.hasChildrenOfTypeCount(expressionList, count, PsiExpression.class);
+  }
+
+  @Nullable
+  public static PsiExpression getFirstExpressionInList(@Nullable PsiExpressionList expressionList) {
+    return PsiTreeUtil.getChildOfType(expressionList, PsiExpression.class);
+  }
+
+  @Nullable
+  public static PsiExpression getOnlyExpressionInList(@Nullable PsiExpressionList expressionList) {
+    return ControlFlowUtils.getOnlyChildOfType(expressionList, PsiExpression.class);
   }
 
   public static boolean isDeclaredConstant(PsiExpression expression) {
@@ -498,8 +513,9 @@ public class ExpressionUtils {
       int index = -1;
       for (int i = 0, length = operands.length; i < length; i++) {
         final PsiExpression operand = operands[i];
-        if (expression.equals(operand)) {
+        if (PsiTreeUtil.isAncestor(operand, expression, false)) {
           index = i;
+          break;
         }
       }
       if (index > 0) {
@@ -592,5 +608,82 @@ public class ExpressionUtils {
     final PsiPrefixExpression prefixExpression = (PsiPrefixExpression)parent;
     final IElementType tokenType = prefixExpression.getOperationTokenType();
     return JavaTokenType.MINUS.equals(tokenType);
+  }
+
+  @Nullable
+  public static PsiVariable getVariableFromNullComparison(PsiExpression expression, boolean equals) {
+    expression = ParenthesesUtils.stripParentheses(expression);
+    if (!(expression instanceof PsiPolyadicExpression)) {
+      return null;
+    }
+    final PsiPolyadicExpression polyadicExpression = (PsiPolyadicExpression)expression;
+    final IElementType tokenType = polyadicExpression.getOperationTokenType();
+    if (equals) {
+      if (!JavaTokenType.EQEQ.equals(tokenType)) {
+        return null;
+      }
+    }
+    else {
+      if (!JavaTokenType.NE.equals(tokenType)) {
+        return null;
+      }
+    }
+    final PsiExpression[] operands = polyadicExpression.getOperands();
+    if (operands.length != 2) {
+      return null;
+    }
+    if (PsiType.NULL.equals(operands[0].getType())) {
+      return getVariable(operands[1]);
+    }
+    else if (PsiType.NULL.equals(operands[1].getType())) {
+      return getVariable(operands[0]);
+    }
+    return null;
+  }
+
+  public static PsiVariable getVariable(PsiExpression expression) {
+    expression = ParenthesesUtils.stripParentheses(expression);
+    if (!(expression instanceof PsiReferenceExpression)) {
+      return null;
+    }
+    final PsiReferenceExpression referenceExpression = (PsiReferenceExpression)expression;
+    final PsiElement target = referenceExpression.resolve();
+    if (!(target instanceof PsiVariable)) {
+      return null;
+    }
+    return (PsiVariable)target;
+  }
+
+  public static boolean isConcatenation(PsiElement element) {
+    if (!(element instanceof PsiPolyadicExpression)) {
+      return false;
+    }
+    final PsiPolyadicExpression expression = (PsiPolyadicExpression)element;
+    final PsiType type = expression.getType();
+    return type != null && type.equalsToText(CommonClassNames.JAVA_LANG_STRING);
+  }
+
+  public static boolean isAnnotatedNotNull(PsiExpression expression) {
+    return isAnnotated(expression, false);
+  }
+
+  public static boolean isAnnotatedNullable(PsiExpression expression) {
+    return isAnnotated(expression, true);
+  }
+
+  private static boolean isAnnotated(PsiExpression expression, boolean nullable) {
+    expression = ParenthesesUtils.stripParentheses(expression);
+    if (!(expression instanceof PsiReferenceExpression)) {
+      return false;
+    }
+    final PsiReferenceExpression referenceExpression = (PsiReferenceExpression)expression;
+    final PsiElement target = referenceExpression.resolve();
+    if (!(target instanceof PsiModifierListOwner)) {
+      return false;
+    }
+    final PsiModifierListOwner modifierListOwner = (PsiModifierListOwner)target;
+    return nullable ?
+           NullableNotNullManager.isNullable(modifierListOwner):
+           NullableNotNullManager.isNotNull(modifierListOwner);
   }
 }

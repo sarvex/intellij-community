@@ -15,7 +15,10 @@
  */
 package com.intellij.openapi.application;
 
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.NamedJDOMExternalizable;
+import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.SystemInfoRt;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.io.URLUtil;
@@ -24,6 +27,8 @@ import com.sun.jna.platform.FileUtils;
 import gnu.trove.THashSet;
 import org.apache.log4j.Appender;
 import org.apache.oro.text.regex.PatternMatcher;
+import org.intellij.lang.annotations.Flow;
+import org.iq80.snappy.Snappy;
 import org.jdom.Document;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
@@ -40,9 +45,11 @@ import static com.intellij.util.SystemProperties.getUserHome;
 
 public class PathManager {
   public static final String PROPERTIES_FILE = "idea.properties.file";
+  public static final String PROPERTIES_FILE_NAME = "idea.properties";
   public static final String PROPERTY_HOME_PATH = "idea.home.path";
   public static final String PROPERTY_CONFIG_PATH = "idea.config.path";
   public static final String PROPERTY_SYSTEM_PATH = "idea.system.path";
+  public static final String PROPERTY_SCRATCH_PATH = "idea.scratch.path";
   public static final String PROPERTY_PLUGINS_PATH = "idea.plugins.path";
   public static final String PROPERTY_LOG_PATH = "idea.log.path";
   public static final String PROPERTY_PATHS_SELECTOR = "idea.paths.selector";
@@ -64,6 +71,7 @@ public class PathManager {
   private static String ourHomePath;
   private static String ourConfigPath;
   private static String ourSystemPath;
+  private static String ourScratchPath;
   private static String ourPluginsPath;
   private static String ourLogPath;
 
@@ -115,13 +123,20 @@ public class PathManager {
   }
 
   private static boolean isIdeaHome(final File root) {
-    return new File(root, FileUtil.toSystemDependentName("bin/idea.properties")).exists() ||
-           new File(root, FileUtil.toSystemDependentName("community/bin/idea.properties")).exists();
+    return new File(root, FileUtil.toSystemDependentName("bin/" + PROPERTIES_FILE_NAME)).exists() ||
+           new File(root, FileUtil.toSystemDependentName("bin/" + getOSSpecificBinSubdir() + "/" + PROPERTIES_FILE_NAME)).exists() ||
+           new File(root, FileUtil.toSystemDependentName("community/bin/" + PROPERTIES_FILE_NAME)).exists();
   }
 
   @NotNull
   public static String getBinPath() {
     return getHomePath() + File.separator + BIN_FOLDER;
+  }
+
+  private static String getOSSpecificBinSubdir() {
+    if (SystemInfo.isWindows) return "win";
+    if (SystemInfo.isMac) return "mac";
+    return "linux";
   }
 
   @NotNull
@@ -157,6 +172,20 @@ public class PathManager {
     }
 
     return ourConfigPath;
+  }
+
+  @NotNull
+  public static String getScratchPath() {
+    if (ourScratchPath != null) return ourScratchPath;
+
+    if (System.getProperty(PROPERTY_SCRATCH_PATH) != null) {
+      ourScratchPath = getAbsolutePath(trimPathQuotes(System.getProperty(PROPERTY_SCRATCH_PATH)));
+    }
+    else {
+      ourScratchPath = getConfigPath();
+    }
+
+    return ourScratchPath;
   }
 
   @NotNull
@@ -203,6 +232,12 @@ public class PathManager {
   @NotNull
   public static String getDefaultPluginPathFor(@NotNull String selector) {
     return platformPath(selector, "Library/Application Support", PLUGINS_FOLDER);
+  }
+
+  @Nullable
+  public static String getCustomOptionsDirectory() {
+    // do not use getConfigPath() here - as it may be not yet defined
+    return PATHS_SELECTOR != null ? platformPath(PATHS_SELECTOR, "Library/Preferences", "") : null;
   }
 
   // runtime paths
@@ -255,7 +290,7 @@ public class PathManager {
   }
 
   @NotNull
-  public static String getPluginTempPath () {
+  public static String getPluginTempPath() {
     return getSystemPath() + File.separator + PLUGINS_FOLDER;
   }
 
@@ -305,6 +340,9 @@ public class PathManager {
       return null;
     }
 
+    if (SystemInfo.isWindows && resultPath.startsWith("/")) {
+      resultPath = resultPath.substring(1);
+    }
     resultPath = StringUtil.trimEnd(resultPath, File.separator);
     resultPath = URLUtil.unescapePercentSequences(resultPath);
 
@@ -314,10 +352,11 @@ public class PathManager {
   public static void loadProperties() {
     String[] propFiles = {
       System.getProperty(PROPERTIES_FILE),
-      getUserPropertiesPath(),
-      getUserHome() + "/idea.properties",
-      getHomePath() + "/bin/idea.properties",
-      getHomePath() + "/community/bin/idea.properties"};
+      getCustomPropertiesFile(),
+      getUserHome() + "/" + PROPERTIES_FILE_NAME,
+      getHomePath() + "/bin/" + PROPERTIES_FILE_NAME,
+      getHomePath() + "/bin/" + getOSSpecificBinSubdir() + "/" + PROPERTIES_FILE_NAME,
+      getHomePath() + "/community/bin/" + PROPERTIES_FILE_NAME};
 
     for (String path : propFiles) {
       if (path != null) {
@@ -354,14 +393,9 @@ public class PathManager {
     }
   }
 
-  private static String getUserPropertiesPath() {
-    if (PATHS_SELECTOR != null) {
-      // do not use getConfigPath() here - as it may be not yet defined
-      return platformPath(PATHS_SELECTOR, "Library/Preferences", /*"APPDATA", "XDG_CONFIG_HOME", ".config",*/ "") + "/idea.properties";
-    }
-    else {
-      return null;
-    }
+  private static String getCustomPropertiesFile() {
+    String configPath = getCustomOptionsDirectory();
+    return configPath != null ? configPath + File.separator + PROPERTIES_FILE_NAME : null;
   }
 
   @Contract("null -> null")
@@ -422,15 +456,16 @@ public class PathManager {
   public static Collection<String> getUtilClassPath() {
     final Class<?>[] classes = {
       PathManager.class,            // module 'util'
-      NotNull.class,                // module 'annotations'
+      Flow.class,                   // module 'annotations'
       SystemInfoRt.class,           // module 'util-rt'
       Document.class,               // jDOM
       Appender.class,               // log4j
       THashSet.class,               // trove4j
       PicoContainer.class,          // PicoContainer
       TypeMapper.class,             // JNA
-      FileUtils.class,              // JNA (jna-utils)
-      PatternMatcher.class          // OROMatcher
+      FileUtils.class,              // JNA (jna-platform)
+      PatternMatcher.class,          // OROMatcher
+      Snappy.class                   // Snappy
     };
 
     final Set<String> classPath = new HashSet<String>();
@@ -438,6 +473,16 @@ public class PathManager {
       final String path = getJarPathForClass(aClass);
       if (path != null) {
         classPath.add(path);
+      }
+    }
+
+    final String annotationsRoot = getJarPathForClass(Flow.class);
+    if (annotationsRoot != null && !annotationsRoot.endsWith(".jar")) {
+      // We're running IDEA built from sources. Flow.class is under annotations-common, and NotNull.class is under annotations. Add both
+      // roots to classpath.
+      final File notNullRoot = new File(new File(annotationsRoot).getParentFile(), "annotations");
+      if (notNullRoot.exists()) {
+        classPath.add(notNullRoot.getAbsolutePath());
       }
     }
 
@@ -461,12 +506,9 @@ public class PathManager {
     return FileUtil.toCanonicalPath(new File(path).getAbsolutePath());
   }
 
-  private static String trimPathQuotes(String path){
-    if (!(path != null && !(path.length() < 3))){
-      return path;
-    }
-    if (StringUtil.startsWithChar(path, '\"') && StringUtil.endsWithChar(path, '\"')){
-      return path.substring(1, path.length() - 1);
+  private static String trimPathQuotes(String path) {
+    if (path != null && path.length() >= 3 && StringUtil.startsWithChar(path, '\"') && StringUtil.endsWithChar(path, '\"')) {
+      path = path.substring(1, path.length() - 1);
     }
     return path;
   }
@@ -512,41 +554,5 @@ public class PathManager {
       }
     }
     return false;
-  }
-
-  // outdated stuff
-
-  /** @deprecated use {@link #getPluginsPath()} (to remove in IDEA 14) */
-  @SuppressWarnings("UnusedDeclaration") public static final String PLUGINS_DIRECTORY = PLUGINS_FOLDER;
-
-  /** @deprecated use {@link #getPreInstalledPluginsPath()} (to remove in IDEA 14) */
-  @SuppressWarnings({"UnusedDeclaration", "MethodNamesDifferingOnlyByCase", "SpellCheckingInspection"})
-  public static String getPreinstalledPluginsPath() {
-    return getPreInstalledPluginsPath();
-  }
-
-  /** @deprecated use {@link #getConfigPath()} (to remove in IDEA 14) */
-  @SuppressWarnings("UnusedDeclaration")
-  public static String getConfigPath(boolean createIfNotExists) {
-    ensureConfigFolderExists();
-    return ourConfigPath;
-  }
-
-  /** @deprecated use {@link #ensureConfigFolderExists()} (to remove in IDEA 14) */
-  @SuppressWarnings("UnusedDeclaration")
-  public static boolean ensureConfigFolderExists(boolean createIfNotExists) {
-    return checkAndCreate(getConfigPath(), createIfNotExists);
-  }
-
-  /** @deprecated use {@link #getOptionsPath()} (to remove in IDEA 14) */
-  @SuppressWarnings("UnusedDeclaration")
-  public static String getOptionsPathWithoutDialog() {
-    return getOptionsPath();
-  }
-
-  /** @deprecated use {@link #getOptionsFile(String)} (to remove in IDEA 14) */
-  @SuppressWarnings("UnusedDeclaration")
-  public static File getDefaultOptionsFile() {
-    return new File(getOptionsPath(), DEFAULT_OPTIONS_FILE_NAME + ".xml");
   }
 }

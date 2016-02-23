@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package org.jetbrains.plugins.groovy.completion
 
 import com.intellij.codeInsight.CodeInsightSettings
+import com.intellij.codeInsight.JavaProjectCodeInsightSettings
 import com.intellij.codeInsight.completion.CompletionType
 import com.intellij.codeInsight.completion.impl.CamelHumpMatcher
 import com.intellij.codeInsight.lookup.LookupElement
@@ -954,20 +955,20 @@ class Fopppp {
 
   public void testExcludeStringBuffer() {
     assert doContainsTest('StringBuffer', 'StringBuff<caret>f')
-    CodeInsightSettings.instance.EXCLUDED_PACKAGES = [StringBuffer.name] as String[]
-    try {
-      assert !doContainsTest('StringBuffer', 'StringBuff<caret>f')
-    }
-    finally {
-      CodeInsightSettings.instance.EXCLUDED_PACKAGES = new String[0]
-    }
+    JavaProjectCodeInsightSettings.setExcludedNames(project, testRootDisposable, StringBuffer.name)
+    assert !doContainsTest('StringBuffer', 'StringBuff<caret>f')
+  }
+
+  public void testStaticMethodOnExcludedClass() {
+    JavaProjectCodeInsightSettings.setExcludedNames(project, testRootDisposable, String.name)
+    assert doContainsTest('valueOf', 'String.val<caret>f')
   }
 
   private doContainsTest(String itemToCheck, String text) {
     myFixture.configureByText "a.groovy", text
 
     final LookupElement[] completion = myFixture.completeBasic()
-    return completion.find { println it.lookupString; itemToCheck == it.lookupString }
+    return completion.find { itemToCheck == it.lookupString }
   }
 
   public void testWordCompletionInLiterals() {

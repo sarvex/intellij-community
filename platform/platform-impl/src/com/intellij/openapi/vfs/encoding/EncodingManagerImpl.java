@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,13 +22,12 @@
  */
 package com.intellij.openapi.vfs.encoding;
 
+import com.intellij.concurrency.JobSchedulerImpl;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.impl.TransferToPooledThreadQueue;
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
-import com.intellij.openapi.components.StoragePathMacros;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.EditorFactory;
 import com.intellij.openapi.editor.event.DocumentAdapter;
@@ -48,13 +47,14 @@ import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Alarm;
 import com.intellij.util.ObjectUtils;
-import com.intellij.util.Processor;
+import com.intellij.util.concurrency.BoundedTaskExecutor;
 import com.intellij.util.xmlb.annotations.Attribute;
 import gnu.trove.Equality;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.ide.PooledThreadExecutor;
 
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
@@ -63,15 +63,8 @@ import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
 import java.nio.charset.Charset;
 import java.util.Collection;
-import java.util.Set;
 
-
-@State(
-  name = "Encoding",
-  storages = {
-    @Storage(file = StoragePathMacros.APP_CONFIG + "/encoding.xml")
-  }
-)
+@State(name = "Encoding", storages = @Storage("encoding.xml"))
 public class EncodingManagerImpl extends EncodingManager implements PersistentStateComponent<EncodingManagerImpl.State>, Disposable {
   private static final Equality<Reference<Document>> REFERENCE_EQUALITY = new Equality<Reference<Document>>() {
     @Override
@@ -105,19 +98,8 @@ public class EncodingManagerImpl extends EncodingManager implements PersistentSt
   private final Alarm updateEncodingFromContent = new Alarm(Alarm.ThreadToUse.POOLED_THREAD, this);
   private static final Key<Charset> CACHED_CHARSET_FROM_CONTENT = Key.create("CACHED_CHARSET_FROM_CONTENT");
 
-  private final TransferToPooledThreadQueue<Reference<Document>> myChangedDocuments = new TransferToPooledThreadQueue<Reference<Document>>(
-    "Encoding detection thread",
-    ApplicationManager.getApplication().getDisposed(),
-    -1, // drain the whole queue, do not reschedule
-    new Processor<Reference<Document>>() {
-      @Override
-      public boolean process(Reference<Document> ref) {
-        Document document = ref.get();
-        if (document == null) return true; // document gced, don't bother
-        handleDocument(document);
-        return true;
-      }
-    });
+  private final BoundedTaskExecutor changedDocumentExecutor =
+    new BoundedTaskExecutor(PooledThreadExecutor.INSTANCE, JobSchedulerImpl.CORES_COUNT, this);
 
   public EncodingManagerImpl(@NotNull EditorFactory editorFactory) {
     editorFactory.getEventMulticaster().addDocumentListener(new DocumentAdapter() {
@@ -136,15 +118,22 @@ public class EncodingManagerImpl extends EncodingManager implements PersistentSt
 
   @NonNls public static final String PROP_CACHED_ENCODING_CHANGED = "cachedEncoding";
 
+  private static final Key<String> DETECTING_ENCODING_KEY = Key.create("DETECTING_ENCODING_KEY");
   private void handleDocument(@NotNull final Document document) {
-    VirtualFile virtualFile = FileDocumentManager.getInstance().getFile(document);
-    if (virtualFile == null) return;
-    Project project = guessProject(virtualFile);
-    if (project != null && project.isDisposed()) return;
-    Charset charset = LoadTextUtil.charsetFromContentOrNull(project, virtualFile, document.getImmutableCharSequence());
-    Charset oldCached = getCachedCharsetFromContent(document);
-    if (!Comparing.equal(charset, oldCached)) {
-      setCachedCharsetFromContent(charset, oldCached, document);
+    if (document.getUserData(DETECTING_ENCODING_KEY) == null) return;
+    try {
+      VirtualFile virtualFile = FileDocumentManager.getInstance().getFile(document);
+      if (virtualFile == null) return;
+      Project project = guessProject(virtualFile);
+      if (project != null && project.isDisposed()) return;
+      Charset charset = LoadTextUtil.charsetFromContentOrNull(project, virtualFile, document.getImmutableCharSequence());
+      Charset oldCached = getCachedCharsetFromContent(document);
+      if (!Comparing.equal(charset, oldCached)) {
+        setCachedCharsetFromContent(charset, oldCached, document);
+      }
+    }
+    finally {
+      document.putUserData(DETECTING_ENCODING_KEY, null);
     }
   }
 
@@ -154,7 +143,7 @@ public class EncodingManagerImpl extends EncodingManager implements PersistentSt
   }
 
   @Nullable("returns null if charset set cannot be determined from content")
-  public Charset computeCharsetFromContent(@NotNull final VirtualFile virtualFile) {
+  Charset computeCharsetFromContent(@NotNull final VirtualFile virtualFile) {
     final Document document = FileDocumentManager.getInstance().getDocument(virtualFile);
     if (document == null) {
       return null;
@@ -183,8 +172,24 @@ public class EncodingManagerImpl extends EncodingManager implements PersistentSt
     clearDocumentQueue();
   }
 
-  public void queueUpdateEncodingFromContent(@NotNull Document document) {
-    myChangedDocuments.offerIfAbsent(new WeakReference<Document>(document), REFERENCE_EQUALITY);
+  void queueUpdateEncodingFromContent(@NotNull Document document) {
+    document.putUserData(DETECTING_ENCODING_KEY, "");
+    changedDocumentExecutor.execute(new DocumentEncodingDetectRequest(document));
+  }
+
+  private static class DocumentEncodingDetectRequest implements Runnable {
+    private final Reference<Document> ref;
+
+    private DocumentEncodingDetectRequest(@NotNull Document document) {
+      ref = new WeakReference<Document>(document);
+    }
+
+    @Override
+    public void run() {
+      Document document = ref.get();
+      if (document == null) return; // document gced, don't bother
+      ((EncodingManagerImpl)getInstance()).handleDocument(document);
+    }
   }
 
   @Override
@@ -206,11 +211,12 @@ public class EncodingManagerImpl extends EncodingManager implements PersistentSt
   @Override
   @NotNull
   public Collection<Charset> getFavorites() {
-    Set<Charset> result = new THashSet<Charset>();
+    Collection<Charset> result = new THashSet<Charset>();
     Project[] projects = ProjectManager.getInstance().getOpenProjects();
     for (Project project : projects) {
       result.addAll(EncodingProjectManager.getInstance(project).getFavorites());
     }
+    result.addAll(EncodingProjectManagerImpl.widelyKnownCharsets());
     return result;
   }
 
@@ -225,7 +231,7 @@ public class EncodingManagerImpl extends EncodingManager implements PersistentSt
   }
 
   public void clearDocumentQueue() {
-    myChangedDocuments.stop();
+    changedDocumentExecutor.clearAndCancelAll();
   }
 
   @Nullable

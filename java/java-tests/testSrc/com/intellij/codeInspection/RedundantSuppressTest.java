@@ -1,9 +1,11 @@
 package com.intellij.codeInspection;
 
+import com.intellij.codeInspection.deadCode.UnusedDeclarationInspection;
 import com.intellij.codeInspection.emptyMethod.EmptyMethodInspection;
 import com.intellij.codeInspection.ex.*;
 import com.intellij.codeInspection.i18n.I18nInspection;
 import com.intellij.psi.PsiElement;
+import com.intellij.psi.impl.source.tree.injected.MyTestInjector;
 import com.intellij.testFramework.InspectionTestCase;
 import com.siyeh.ig.migration.RawUseOfParameterizedTypeInspection;
 import org.jetbrains.annotations.NotNull;
@@ -18,7 +20,8 @@ public class RedundantSuppressTest extends InspectionTestCase {
     myInspectionToolWrappers = new InspectionToolWrapper[]{
       new LocalInspectionToolWrapper(new I18nInspection()),
       new LocalInspectionToolWrapper(new RawUseOfParameterizedTypeInspection()),
-      new GlobalInspectionToolWrapper(new EmptyMethodInspection())};
+      new GlobalInspectionToolWrapper(new EmptyMethodInspection()),
+      new GlobalInspectionToolWrapper(new UnusedDeclarationInspection())};
 
     myWrapper = new GlobalInspectionToolWrapper(new RedundantSuppressInspection() {
       @Override
@@ -36,6 +39,10 @@ public class RedundantSuppressTest extends InspectionTestCase {
     doTest();
   }
 
+  public void testIgnoreUnused() throws Exception {
+    doTest();
+  }
+
   public void testSuppressAll() throws Exception {
     try {
       ((RedundantSuppressInspection)myWrapper.getTool()).IGNORE_ALL = true;
@@ -44,6 +51,13 @@ public class RedundantSuppressTest extends InspectionTestCase {
     finally {
       ((RedundantSuppressInspection)myWrapper.getTool()).IGNORE_ALL = false;
     }
+  }
+
+  public void testInjections() throws Exception {
+    MyTestInjector testInjector = new MyTestInjector(getPsiManager());
+    testInjector.injectAll(myTestRootDisposable);
+    
+    doTest();
   }
 
   private void doTest() throws Exception {

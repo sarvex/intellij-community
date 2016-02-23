@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.Result;
 import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.project.DumbModePermission;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.roots.OrderRootType;
@@ -278,6 +280,7 @@ public class LibraryOptionsPanel implements Disposable {
     }
     else {
       selectedOption = Choice.USE_LIBRARY;
+      doCreate(true);
     }
     myButtonEnumModel.setSelected(selectedOption);
 
@@ -295,12 +298,17 @@ public class LibraryOptionsPanel implements Disposable {
     myCreateButton.addActionListener(new ActionListener() {
       @Override
       public void actionPerformed(ActionEvent e) {
-        doCreate();
+        doCreate(false);
       }
     });
     myConfigureButton.addActionListener(new ActionListener() {
       public void actionPerformed(final ActionEvent e) {
-        doConfigure();
+        DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, new Runnable() {
+          @Override
+          public void run() {
+            doConfigure();
+          }
+        });
       }
     });
     updateState();
@@ -334,7 +342,7 @@ public class LibraryOptionsPanel implements Disposable {
           dialog.show();
           if (item instanceof ExistingLibraryEditor) {
             new WriteAction() {
-              protected void run(final Result result) {
+              protected void run(@NotNull final Result result) {
                 ((ExistingLibraryEditor)item).commit();
               }
             }.execute();
@@ -374,8 +382,10 @@ public class LibraryOptionsPanel implements Disposable {
     }
   }
 
-  private void doCreate() {
-    final NewLibraryConfiguration libraryConfiguration = myLibraryDescription.createNewLibrary(myCreateButton, getBaseDirectory());
+  private void doCreate(boolean useDefaultSettings) {
+    final NewLibraryConfiguration libraryConfiguration = useDefaultSettings
+                                                         ? myLibraryDescription.createNewLibraryWithDefaultSettings(getBaseDirectory())
+                                                         : myLibraryDescription.createNewLibrary(myCreateButton, getBaseDirectory());
     if (libraryConfiguration != null) {
       final NewLibraryEditor libraryEditor = new NewLibraryEditor(libraryConfiguration.getLibraryType(), libraryConfiguration.getProperties());
       libraryEditor.setName(myLibrariesContainer.suggestUniqueLibraryName(libraryConfiguration.getDefaultLibraryName()));

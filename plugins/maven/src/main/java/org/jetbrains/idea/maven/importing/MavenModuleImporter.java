@@ -18,7 +18,10 @@ package org.jetbrains.idea.maven.importing;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.intellij.openapi.application.AccessToken;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.ReadAction;
+import com.intellij.openapi.externalSystem.service.project.IdeModifiableModelsProvider;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleType;
 import com.intellij.openapi.roots.*;
@@ -63,7 +66,7 @@ public class MavenModuleImporter {
   private final MavenProjectChanges myMavenProjectChanges;
   private final Map<MavenProject, String> myMavenProjectToModuleName;
   private final MavenImportingSettings mySettings;
-  private final MavenModifiableModelsProvider myModifiableModelsProvider;
+  private final IdeModifiableModelsProvider myModifiableModelsProvider;
   private MavenRootModelAdapter myRootModelAdapter;
 
   public MavenModuleImporter(Module module,
@@ -72,7 +75,7 @@ public class MavenModuleImporter {
                              @Nullable MavenProjectChanges changes,
                              Map<MavenProject, String> mavenProjectToModuleName,
                              MavenImportingSettings settings,
-                             MavenModifiableModelsProvider modifiableModelsProvider) {
+                             IdeModifiableModelsProvider modifiableModelsProvider) {
     myModule = module;
     myMavenTree = mavenTree;
     myMavenProject = mavenProject;
@@ -121,6 +124,43 @@ public class MavenModuleImporter {
   }
 
   public void configFacets(final List<MavenProjectsProcessorTask> postTasks) {
+    MavenUtil.smartInvokeAndWait(myModule.getProject(), ModalityState.defaultModalityState(), new Runnable() {
+      public void run() {
+        if (myModule.isDisposed()) return;
+
+        final ModuleType moduleType = ModuleType.get(myModule);
+
+        ApplicationManager.getApplication().runWriteAction(new Runnable() {
+          @Override
+          public void run() {
+            for (final MavenImporter importer : getSuitableImporters()) {
+              final MavenProjectChanges changes;
+              if (myMavenProjectChanges == null) {
+                if (importer.processChangedModulesOnly()) continue;
+                changes = MavenProjectChanges.NONE;
+              }
+              else {
+                changes = myMavenProjectChanges;
+              }
+
+              if (importer.getModuleType() == moduleType) {
+                importer.process(myModifiableModelsProvider,
+                                 myModule,
+                                 myRootModelAdapter,
+                                 myMavenTree,
+                                 myMavenProject,
+                                 changes,
+                                 myMavenProjectToModuleName,
+                                 postTasks);
+              }
+            }
+          }
+        });
+      }
+    });
+  }
+
+  public void postConfigFacets() {
     MavenUtil.invokeAndWaitWriteAction(myModule.getProject(), new Runnable() {
       public void run() {
         if (myModule.isDisposed()) return;
@@ -138,14 +178,7 @@ public class MavenModuleImporter {
           }
 
           if (importer.getModuleType() == moduleType) {
-            importer.process(myModifiableModelsProvider,
-                             myModule,
-                             myRootModelAdapter,
-                             myMavenTree,
-                             myMavenProject,
-                             changes,
-                             myMavenProjectToModuleName,
-                             postTasks);
+            importer.postProcess(myModule, myMavenProject, changes, myModifiableModelsProvider);
           }
         }
       }
@@ -300,7 +333,7 @@ public class MavenModuleImporter {
           if (library == null) {
             library = myModifiableModelsProvider.createLibrary(libraryName);
           }
-          libraryModel = myModifiableModelsProvider.getLibraryModel(library);
+          libraryModel = myModifiableModelsProvider.getModifiableLibraryModel(library);
 
           LibraryOrderEntry entry = myRootModelAdapter.getRootModel().addLibraryEntry(library);
           entry.setScope(scope);

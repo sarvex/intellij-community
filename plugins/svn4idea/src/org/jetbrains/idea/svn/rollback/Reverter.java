@@ -16,12 +16,11 @@
 package org.jetbrains.idea.svn.rollback;
 
 import com.intellij.openapi.util.io.FileUtil;
-import com.intellij.openapi.vcs.FilePathImpl;
 import com.intellij.openapi.vcs.VcsException;
 import com.intellij.openapi.vcs.rollback.RollbackProgressListener;
-import com.intellij.util.ArrayUtil;
 import com.intellij.util.Processor;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.idea.svn.SvnFileSystemListener;
 import org.jetbrains.idea.svn.SvnVcs;
@@ -67,8 +66,7 @@ public class Reverter {
     File target = files.iterator().next();
     try {
       // Files passed here are split into groups by root and working copy format - thus we could determine factory based on first file
-      myVcs.getFactory(target).createRevertClient()
-        .revert(ArrayUtil.toObjectArray(files, File.class), Depth.allOrEmpty(recursive), myHandler);
+      myVcs.getFactory(target).createRevertClient().revert(files, Depth.allOrEmpty(recursive), myHandler);
     }
     catch (VcsException e) {
       processRevertError(e);
@@ -225,7 +223,7 @@ public class Reverter {
     return new PropertyConsumer() {
       @Override
       public void handleProperty(File path, PropertyData property) throws SVNException {
-        final ThroughRenameInfo info = collector.findToFile(new FilePathImpl(path, path.isDirectory()), null);
+        final ThroughRenameInfo info = collector.findToFile(VcsUtil.getFilePath(path), null);
         if (info != null) {
           if (!properties.containsKey(info.getTo())) {
             properties.put(info.getTo(), new PropertiesMap());

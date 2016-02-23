@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@ package com.intellij.refactoring;
 import com.intellij.JavaTestUtil;
 import com.intellij.codeInsight.CodeInsightUtil;
 import com.intellij.lang.java.JavaLanguage;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.Pair;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CodeStyleSettings;
 import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
@@ -36,7 +36,6 @@ import com.intellij.util.IncorrectOperationException;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
 import java.util.List;
 
 public class ExtractMethodTest extends LightCodeInsightTestCase {
@@ -222,6 +221,10 @@ public class ExtractMethodTest extends LightCodeInsightTestCase {
   }
 
   public void testCodeDuplicatesWithContinue() throws Exception {
+    doDuplicatesTest();
+  }
+
+  public void testDuplicatesFromAnonymous() throws Exception {
     doDuplicatesTest();
   }
 
@@ -580,6 +583,14 @@ public class ExtractMethodTest extends LightCodeInsightTestCase {
     doTest();
   }
 
+  public void testFromLambdaBodyToAnonymous() throws Exception {
+    doTest();
+  }
+  
+  public void testFromLambdaBodyToToplevelInsideCodeBlock() throws Exception {
+    doTest();
+  }
+
   public void testFromLambdaBodyWithReturn() throws Exception {
     doTest();
   }
@@ -660,6 +671,10 @@ public class ExtractMethodTest extends LightCodeInsightTestCase {
     doDuplicatesTest();
   }
 
+  public void testSuggestChangeSignatureWithFolding() throws Exception {
+    doDuplicatesTest();
+  }
+
   public void testSuggestChangeSignatureWithChangedParameterName() throws Exception {
     configureByFile(BASE_PATH + getTestName(false) + ".java");
     boolean success = performExtractMethod(true, true, getEditor(), getFile(), getProject(), false, null, false, "p");
@@ -692,6 +707,10 @@ public class ExtractMethodTest extends LightCodeInsightTestCase {
   }
 
   public void testInferredNotNullInReturnStatement() throws Exception {
+    doTest();
+  }
+
+  public void testSkipThrowsDeclaredInLambda() throws Exception {
     doTest();
   }
 
@@ -743,6 +762,14 @@ public class ExtractMethodTest extends LightCodeInsightTestCase {
     }
     catch (PrepareFailedException ignore) {
     }
+  }
+
+  public void testConditionalExitCombinedWithNullabilityShouldPreserveVarsUsedInExitStatements() throws Exception {
+    doTest();
+  }
+
+  public void testSingleExitPOintWithTryFinally() throws Exception {
+    doTest();
   }
 
   private void doTestDisabledParam() throws PrepareFailedException {
@@ -893,7 +920,12 @@ public class ExtractMethodTest extends LightCodeInsightTestCase {
         for (final Match match : duplicates) {
           if (!match.getMatchStart().isValid() || !match.getMatchEnd().isValid()) continue;
           PsiDocumentManager.getInstance(project).commitAllDocuments();
-          processor.processMatch(match);
+          ApplicationManager.getApplication().runWriteAction(new Runnable() {
+            @Override
+            public void run() {
+              processor.processMatch(match);
+            }
+          });
         }
       }
     }

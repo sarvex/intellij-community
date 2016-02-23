@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import com.intellij.lang.Language;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiFile;
 import com.intellij.psi.meta.PsiMetaData;
 import com.intellij.psi.meta.PsiMetaOwner;
 import org.jetbrains.annotations.NotNull;
@@ -26,11 +27,13 @@ import org.jetbrains.annotations.NotNull;
 public class DescriptiveNameUtil {
   private static final Logger LOG = Logger.getInstance("#com.intellij.lang.findUsages.DescriptiveNameUtil");
 
-  public static String getMetaDataName(final PsiMetaData metaData) {
+  @NotNull
+  public static String getMetaDataName(@NotNull PsiMetaData metaData) {
     final String name = metaData.getName();
     return StringUtil.isEmpty(name) ? "''" : name;
   }
 
+  @NotNull
   public static String getDescriptiveName(@NotNull PsiElement psiElement) {
     LOG.assertTrue(psiElement.isValid());
 
@@ -40,6 +43,10 @@ public class DescriptiveNameUtil {
       if (metaData != null) return getMetaDataName(metaData);
     }
 
+    if (psiElement instanceof PsiFile) {
+      return ((PsiFile)psiElement).getName();
+    }
+    
     final Language lang = psiElement.getLanguage();
     final FindUsagesProvider provider = LanguageFindUsages.INSTANCE.forLanguage(lang);
     assert provider != null : lang;

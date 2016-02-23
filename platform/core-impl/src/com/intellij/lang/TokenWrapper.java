@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,9 +24,10 @@ import org.jetbrains.annotations.NotNull;
 
 public class TokenWrapper extends IElementType {
   private final IElementType myDelegate;
+  @NotNull
   private final String myValue;
 
-  public TokenWrapper(@NotNull IElementType delegate, CharSequence value) {
+  public TokenWrapper(@NotNull IElementType delegate, @NotNull CharSequence value) {
     super("Wrapper", delegate.getLanguage(), false);
     myDelegate = delegate;
     myValue = value.toString();
@@ -37,6 +38,7 @@ public class TokenWrapper extends IElementType {
     return myDelegate;
   }
 
+  @NotNull
   public String getValue() {
     return myValue;
   }

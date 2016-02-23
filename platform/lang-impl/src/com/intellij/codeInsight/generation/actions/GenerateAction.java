@@ -18,7 +18,6 @@ package com.intellij.codeInsight.generation.actions;
 
 import com.intellij.codeInsight.CodeInsightBundle;
 import com.intellij.openapi.actionSystem.*;
-import com.intellij.openapi.actionSystem.impl.ActionManagerImpl;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.DumbService;
@@ -29,7 +28,7 @@ import com.intellij.util.ObjectUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class GenerateAction extends DumbAwareAction implements PreloadableAction {
+public class GenerateAction extends DumbAwareAction {
   @Override
   public void actionPerformed(final AnActionEvent e) {
     DataContext dataContext = e.getDataContext();
@@ -94,11 +93,6 @@ public class GenerateAction extends DumbAwareAction implements PreloadableAction
     return copy;
   }
 
-  @Override
-  public void preload() {
-    ((ActionManagerImpl) ActionManager.getInstance()).preloadActionGroup(IdeActions.GROUP_GENERATE);
-  }
-
   private static class GenerateWrappingGroup extends ActionGroup {
 
     private final AnAction myAction;
@@ -124,7 +118,16 @@ public class GenerateAction extends DumbAwareAction implements PreloadableAction
 
     @Override
     public void actionPerformed(AnActionEvent e) {
-      myAction.actionPerformed(e);
+      final Project project = getEventProject(e);
+      assert project != null;
+      final DumbService dumbService = DumbService.getInstance(project);
+      try {
+        dumbService.setAlternativeResolveEnabled(true);
+        myAction.actionPerformed(e);
+      }
+      finally {
+        dumbService.setAlternativeResolveEnabled(false);
+      }
     }
   }
 }

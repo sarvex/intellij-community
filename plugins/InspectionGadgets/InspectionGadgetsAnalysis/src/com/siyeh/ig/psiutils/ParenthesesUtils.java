@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2014 Dave Griffith, Bas Leijdekkers
+ * Copyright 2003-2015 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ import java.util.Map;
 
 public class ParenthesesUtils {
 
+  public static final Map<IElementType, IElementType> tokenMap = new HashMap<IElementType, IElementType>();
+
   private ParenthesesUtils() {}
 
   public static final int PARENTHESIZED_PRECEDENCE = 0;
@@ -50,6 +52,21 @@ public class ParenthesesUtils {
 
   private static final Map<IElementType, Integer> s_binaryOperatorPrecedence = new HashMap<IElementType, Integer>(NUM_PRECEDENCES);
 
+
+  static {
+    tokenMap.put(JavaTokenType.PLUSEQ, JavaTokenType.PLUS);
+    tokenMap.put(JavaTokenType.MINUSEQ, JavaTokenType.MINUS);
+    tokenMap.put(JavaTokenType.ASTERISKEQ, JavaTokenType.ASTERISK);
+    tokenMap.put(JavaTokenType.DIVEQ, JavaTokenType.DIV);
+    tokenMap.put(JavaTokenType.ANDEQ, JavaTokenType.AND);
+    tokenMap.put(JavaTokenType.OREQ, JavaTokenType.OR);
+    tokenMap.put(JavaTokenType.XOREQ, JavaTokenType.XOR);
+    tokenMap.put(JavaTokenType.PERCEQ, JavaTokenType.PERC);
+    tokenMap.put(JavaTokenType.LTLTEQ, JavaTokenType.LTLT);
+    tokenMap.put(JavaTokenType.GTGTEQ, JavaTokenType.GTGT);
+    tokenMap.put(JavaTokenType.GTGTGTEQ, JavaTokenType.GTGTGT);
+  }
+  
   static {
     s_binaryOperatorPrecedence.put(JavaTokenType.PLUS, ADDITIVE_PRECEDENCE);
     s_binaryOperatorPrecedence.put(JavaTokenType.MINUS, ADDITIVE_PRECEDENCE);
@@ -70,6 +87,13 @@ public class ParenthesesUtils {
     s_binaryOperatorPrecedence.put(JavaTokenType.LE, RELATIONAL_PRECEDENCE);
     s_binaryOperatorPrecedence.put(JavaTokenType.EQEQ, EQUALITY_PRECEDENCE);
     s_binaryOperatorPrecedence.put(JavaTokenType.NE, EQUALITY_PRECEDENCE);
+  }
+
+  public static String getText(@NotNull PsiExpression expression, int precedence) {
+    if (getPrecedence(expression) >= precedence) {
+      return '(' + expression.getText() + ')';
+    }
+    return expression.getText();
   }
 
   @Nullable public static PsiElement getParentSkipParentheses(PsiElement element) {
@@ -113,9 +137,9 @@ public class ParenthesesUtils {
       return false;
     }
     if (JavaTokenType.PLUS == tokenType || JavaTokenType.ASTERISK == tokenType) {
-      return primitiveType != PsiType.FLOAT && primitiveType != PsiType.DOUBLE;
+      return !PsiType.FLOAT.equals(primitiveType) && !PsiType.DOUBLE.equals(primitiveType);
     } else if (JavaTokenType.EQEQ == tokenType || JavaTokenType.NE == tokenType) {
-      return primitiveType == PsiType.BOOLEAN;
+      return PsiType.BOOLEAN.equals(primitiveType);
     } else if (JavaTokenType.AND == tokenType || JavaTokenType.OR == tokenType || JavaTokenType.XOR == tokenType) {
       return true;
     } else if (JavaTokenType.OROR == tokenType || JavaTokenType.ANDAND == tokenType) {
@@ -525,5 +549,19 @@ public class ParenthesesUtils {
       return PsiTreeUtil.isAncestor(condition, expression, true);
     }
     return parentPrecedence < childPrecedence;
+  }
+
+  public static boolean areParenthesesNeeded(PsiJavaToken sign, PsiExpression rhs) {
+    if (rhs instanceof PsiPolyadicExpression) {
+      final PsiPolyadicExpression binaryExpression = (PsiPolyadicExpression)rhs;
+      final int precedence1 = getPrecedenceForOperator(binaryExpression.getOperationTokenType());
+      final IElementType signTokenType = sign.getTokenType();
+      final IElementType newOperatorToken = tokenMap.get(signTokenType);
+      final int precedence2 = getPrecedenceForOperator(newOperatorToken);
+      return precedence1 >= precedence2 || !isCommutativeOperator(newOperatorToken);
+    }
+    else {
+      return rhs instanceof PsiConditionalExpression;
+    }
   }
 }

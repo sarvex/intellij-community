@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ import java.util.*;
 
 @State(
   name = "VcsManagerConfiguration",
-  storages = @Storage(file = StoragePathMacros.WORKSPACE_FILE)
+  storages = @Storage(StoragePathMacros.WORKSPACE_FILE)
 )
 public final class VcsConfiguration implements PersistentStateComponent<VcsConfiguration> {
   public final static long ourMaximumFileForBaseRevisionSize = 500 * 1000;
@@ -76,13 +76,6 @@ public final class VcsConfiguration implements PersistentStateComponent<VcsConfi
   public boolean INCLUDE_TEXT_INTO_SHELF = false;
   public Boolean SHOW_PATCH_IN_EXPLORER = null;
   public boolean SHOW_FILE_HISTORY_DETAILS = true;
-
-  /**
-   * To remove in IDEA 15
-   */
-  @Deprecated
-  public boolean SHOW_VCS_ERROR_NOTIFICATIONS = true;
-
   public boolean SHOW_DIRTY_RECURSIVELY = false;
   public boolean LIMIT_HISTORY = true;
   public int MAXIMUM_HISTORY_ROWS = 1000;
@@ -137,6 +130,7 @@ public final class VcsConfiguration implements PersistentStateComponent<VcsConfi
   public List<String> myLastCommitMessages = new ArrayList<String>();
   public String LAST_COMMIT_MESSAGE = null;
   public boolean MAKE_NEW_CHANGELIST_ACTIVE = false;
+  public boolean PRESELECT_EXISTING_CHANGELIST = true;
 
   public boolean OPTIMIZE_IMPORTS_BEFORE_PROJECT_COMMIT = false;
   public boolean CHECK_FILES_UP_TO_DATE_BEFORE_COMMIT = false;
@@ -147,9 +141,6 @@ public final class VcsConfiguration implements PersistentStateComponent<VcsConfi
   public boolean REARRANGE_BEFORE_PROJECT_COMMIT = false;
 
   public Map<String, ChangeBrowserSettings> CHANGE_BROWSER_SETTINGS = new HashMap<String, ChangeBrowserSettings>();
-
-  public float FILE_HISTORY_DIALOG_COMMENTS_SPLITTER_PROPORTION = 0.8f;
-  public float FILE_HISTORY_DIALOG_SPLITTER_PROPORTION = 0.5f;
 
   public boolean UPDATE_GROUP_BY_PACKAGES = false;
   public boolean UPDATE_GROUP_BY_CHANGELIST = false;
@@ -175,7 +166,7 @@ public final class VcsConfiguration implements PersistentStateComponent<VcsConfi
     XmlSerializerUtil.copyBean(state, this);
   }
 
-  public static VcsConfiguration getInstance(Project project) {
+  public static VcsConfiguration getInstance(@NotNull Project project) {
     return ServiceManager.getService(project, VcsConfiguration.class);
   }
 

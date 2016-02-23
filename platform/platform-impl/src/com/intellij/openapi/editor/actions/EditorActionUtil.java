@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,19 +32,21 @@ import com.intellij.openapi.actionSystem.ActionPopupMenu;
 import com.intellij.openapi.editor.*;
 import com.intellij.openapi.editor.event.EditorMouseEvent;
 import com.intellij.openapi.editor.event.EditorMouseEventArea;
-import com.intellij.openapi.editor.event.EditorMouseListener;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.editor.ex.util.EditorUtil;
 import com.intellij.openapi.editor.highlighter.EditorHighlighter;
 import com.intellij.openapi.editor.highlighter.HighlighterIterator;
 import com.intellij.openapi.editor.impl.EditorImpl;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
+import com.intellij.psi.tree.IElementType;
 import com.intellij.util.EditorPopupHandler;
+import com.intellij.util.text.CharArrayUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.awt.*;
@@ -52,21 +54,6 @@ import java.awt.event.MouseEvent;
 import java.util.List;
 
 public class EditorActionUtil {
-
-  /**
-   * Editor actions may be invoked multiple ways - programmatically, via keyboard/mouse shortcut, main/context menu etc.
-   * Action processing may also interfere with standard editor behavior (caret position change, selection change etc).
-   * <p/>
-   * E.g. consider a situation when context menu is shown on right mouse click -
-   * {@link EditorMouseListener#mousePressed(EditorMouseEvent) the contract says} that no common actions have been performed yet.
-   * However, some actions may operate on an 'active element' (an element under caret), hence, they would incorrectly because the
-   * caret position has not been changed yet.
-   * <p/>
-   * We address that problem by providing a special key that is intended to hold 'expected caret offset', i.e. offset where we
-   * expect the caret to be located at the near future.
-   */
-  public static final Key<Integer> EXPECTED_CARET_OFFSET = Key.create("expectedEditorOffset");
-  
   protected static final Object EDIT_COMMAND_GROUP = Key.create("EditGroup");
   public static final Object DELETE_COMMAND_GROUP = Key.create("DeleteGroup");
 
@@ -252,11 +239,21 @@ public class EditorActionUtil {
     return isWordEnd(chars, offset, isCamel) || !isWordStart(chars, offset, isCamel) && isLexemeBoundary(editor, offset);
   }
 
+  /**
+   * Finds out whether there's a boundary between two lexemes of different type at given offset.
+   */
   public static boolean isLexemeBoundary(@NotNull Editor editor, int offset) {
     if (!(editor instanceof EditorEx) || offset <= 0 || offset >= editor.getDocument().getTextLength()) return false;
+    if (CharArrayUtil.isEmptyOrSpaces(editor.getDocument().getImmutableCharSequence(), offset - 1, offset + 1)) return false;
     EditorHighlighter highlighter = ((EditorEx)editor).getHighlighter();
     HighlighterIterator it = highlighter.createIterator(offset);
-    return it.getStart() == offset;
+    if (it.getStart() != offset) {
+      return false;
+    }
+    IElementType rightToken = it.getTokenType();
+    it.retreat();
+    IElementType leftToken = it.getTokenType();
+    return !Comparing.equal(leftToken, rightToken);
   }
 
   public static boolean isWordStart(@NotNull CharSequence text, int offset, boolean isCamel) {
@@ -366,15 +363,19 @@ public class EditorActionUtil {
     else {
       LogicalPosition logLineEndLog = editor.offsetToLogicalPosition(document.getLineEndOffset(logLineToUse));
       VisualPosition logLineEndVis = editor.logicalToVisualPosition(logLineEndLog);
-      if (logLineEndLog.softWrapLinesOnCurrentLogicalLine > 0) {
-        moveCaretToStartOfSoftWrappedLine(editor, logLineEndVis, logLineEndLog.softWrapLinesOnCurrentLogicalLine);
+      int softWrapCount = EditorUtil.getSoftWrapCountAfterLineStart(editor, logLineEndLog);
+      if (softWrapCount > 0) {
+        moveCaretToStartOfSoftWrappedLine(editor, logLineEndVis, softWrapCount);
       }
       else {
         int line = logLineEndVis.line;
-        if (currentVisCaret.column == 0 && editorSettings.isSmartHome()) {
-          findSmartIndentColumn(editor, line);
-        }
         int column = 0;
+        if (currentVisCaret.column > 0) {
+          int firstNonSpaceColumnOnTheLine = findFirstNonSpaceColumnOnTheLine(editor, currentVisCaret.line);
+          if (firstNonSpaceColumnOnTheLine < currentVisCaret.column) {
+            column = firstNonSpaceColumnOnTheLine;
+          }
+        }
         caretModel.moveToVisualPosition(new VisualPosition(line, column));
       }
     }
@@ -450,12 +451,14 @@ public class EditorActionUtil {
     int logLineEndOffset = document.getLineEndOffset(logLine);
     LogicalPosition logLineStart = editor.offsetToLogicalPosition(logLineStartOffset);
     VisualPosition visLineStart = editor.logicalToVisualPosition(logLineStart);
+    boolean newRendering = editor instanceof EditorImpl && ((EditorImpl)editor).myUseNewRendering;
 
     boolean softWrapIntroducedLine = visLineStart.line != visualLineNumber;
     if (!softWrapIntroducedLine) {
       int offset = findFirstNonSpaceOffsetInRange(document.getCharsSequence(), logLineStartOffset, logLineEndOffset);
       if (offset >= 0) {
-        return EditorUtil.calcColumnNumber(editor, document.getCharsSequence(), logLineStartOffset, offset);
+        return newRendering ? editor.offsetToVisualPosition(offset).column : 
+               EditorUtil.calcColumnNumber(editor, document.getCharsSequence(), logLineStartOffset, offset);
       }
       else {
         return -1;
@@ -490,6 +493,7 @@ public class EditorActionUtil {
 
         int end = findFirstNonSpaceOffsetInRange(softWrapText, j, softWrapTextLength);
         if (end >= 0) {
+          assert !newRendering : "Unexpected soft wrap text";
           // Non space symbol is contained at soft wrap text after offset that corresponds to the target visual line start.
           if (nextSoftWrapLineFeedOffset < 0 || end < nextSoftWrapLineFeedOffset) {
             return EditorUtil.calcColumnNumber(editor, softWrapText, j, end);
@@ -506,7 +510,8 @@ public class EditorActionUtil {
       }
       int end = findFirstNonSpaceOffsetInRange(document.getCharsSequence(), softWrap.getStart(), logLineEndOffset);
       if (end >= 0) {
-        return EditorUtil.calcColumnNumber(editor, document.getCharsSequence(), softWrap.getStart(), end);
+        return newRendering ? editor.offsetToVisualPosition(end).column : 
+               EditorUtil.calcColumnNumber(editor, document.getCharsSequence(), softWrap.getStart(), end);
       }
       else {
         return -1;
@@ -542,6 +547,18 @@ public class EditorActionUtil {
   }
 
   public static void moveCaretToLineEnd(@NotNull Editor editor, boolean isWithSelection) {
+    moveCaretToLineEnd(editor, isWithSelection, true);
+  }
+
+  /**
+   * Moves caret to visual line end.
+   * 
+   * @param editor target editor
+   * @param isWithSelection whether selection should be set from original caret position to its target position
+   * @param ignoreTrailingWhitespace if <code>true</code>, line end will be determined while ignoring trailing whitespace, unless caret is
+   *                                 already at so-determined target position, in which case trailing whitespace will be taken into account
+   */
+  public static void moveCaretToLineEnd(@NotNull Editor editor, boolean isWithSelection, boolean ignoreTrailingWhitespace) {
     Document document = editor.getDocument();
     SelectionModel selectionModel = editor.getSelectionModel();
     int selectionStart = selectionModel.getLeadSelectionOffset();
@@ -559,7 +576,7 @@ public class EditorActionUtil {
     }
     VisualPosition currentVisualCaret = editor.getCaretModel().getVisualPosition();
     VisualPosition visualEndOfLineWithCaret
-      = new VisualPosition(currentVisualCaret.line, EditorUtil.getLastVisualLineColumnNumber(editor, currentVisualCaret.line));
+      = new VisualPosition(currentVisualCaret.line, EditorUtil.getLastVisualLineColumnNumber(editor, currentVisualCaret.line), true);
 
     // There is a possible case that the caret is already located at the visual end of line and the line is soft wrapped.
     // We want to move the caret to the end of the next visual line then.
@@ -581,7 +598,7 @@ public class EditorActionUtil {
           line++;
           column = EditorUtil.getLastVisualLineColumnNumber(editor, line);
         }
-        visualEndOfLineWithCaret = new VisualPosition(line, column);
+        visualEndOfLineWithCaret = new VisualPosition(line, column, true);
       }
     }
 
@@ -604,11 +621,16 @@ public class EditorActionUtil {
 
     // Move to the calculated end of visual line if caret is located on a last non-white space symbols on a line and there are
     // remaining white space symbols.
-    if (newOffset == offset || newOffset == caretModel.getOffset()) {
+    if (newOffset == offset || newOffset == caretModel.getOffset() || !ignoreTrailingWhitespace) {
       caretModel.moveToVisualPosition(visualEndOfLineWithCaret);
     }
     else {
-      caretModel.moveToOffset(newOffset);
+      if (editor instanceof EditorImpl && ((EditorImpl)editor).myUseNewRendering) {
+        caretModel.moveToLogicalPosition(editor.offsetToLogicalPosition(newOffset).leanForward(true));
+      }
+      else {
+        caretModel.moveToOffset(newOffset);
+      }
     }
 
     EditorModificationUtil.scrollToCaret(editor);
@@ -653,6 +675,12 @@ public class EditorActionUtil {
       FoldRegion foldRegion = editor.getFoldingModel().getCollapsedRegionAtOffset(newOffset);
       if (foldRegion != null) {
         newOffset = foldRegion.getStartOffset();
+      }
+    }
+    if (editor instanceof EditorImpl) {
+      int boundaryOffset = ((EditorImpl)editor).findNearestDirectionBoundary(offset, true);
+      if (boundaryOffset >= 0) {
+        newOffset = Math.min(boundaryOffset, newOffset);
       }
     }
     caretModel.moveToOffset(newOffset);
@@ -737,7 +765,16 @@ public class EditorActionUtil {
       }
     }
 
-    editor.getCaretModel().moveToOffset(newOffset);
+    if (editor instanceof EditorImpl && ((EditorImpl)editor).myUseNewRendering) {
+      int boundaryOffset = ((EditorImpl)editor).findNearestDirectionBoundary(offset, false);
+      if (boundaryOffset >= 0) {
+        newOffset = Math.max(boundaryOffset, newOffset);
+      }
+      caretModel.moveToLogicalPosition(editor.offsetToLogicalPosition(newOffset).leanForward(true));
+    }
+    else {
+      editor.getCaretModel().moveToOffset(newOffset);
+    }
     EditorModificationUtil.scrollToCaret(editor);
 
     setupSelection(editor, isWithSelection, selectionStart, blockSelectionStart);
@@ -785,7 +822,7 @@ public class EditorActionUtil {
     CaretModel caretModel = editor.getCaretModel();
     LogicalPosition blockSelectionStart = caretModel.getLogicalPosition();
     Rectangle visibleArea = editor.getScrollingModel().getVisibleArea();
-    int lineNumber = (visibleArea.y + visibleArea.height) / lineHeight - 1;
+    int lineNumber = Math.max(0, (visibleArea.y + visibleArea.height) / lineHeight - 1);
     VisualPosition pos = new VisualPosition(lineNumber, editor.getCaretModel().getVisualPosition().column);
     editor.getCaretModel().moveToVisualPosition(pos);
     setupSelection(editor, isWithSelection, selectionStart, blockSelectionStart);
@@ -825,6 +862,7 @@ public class EditorActionUtil {
   }
 
   public static boolean isHumpBound(@NotNull CharSequence editorText, int offset, boolean start) {
+    if (offset <= 0 || offset >= editorText.length()) return false;
     final char prevChar = editorText.charAt(offset - 1);
     final char curChar = editorText.charAt(offset);
     final char nextChar = offset + 1 < editorText.length() ? editorText.charAt(offset + 1) : 0; // 0x00 is not lowercase.

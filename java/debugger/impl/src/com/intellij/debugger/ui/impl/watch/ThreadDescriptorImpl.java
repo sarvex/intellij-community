@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -99,8 +99,8 @@ public class ThreadDescriptorImpl extends NodeDescriptorImpl implements ThreadDe
       myIsSuspended = false;
     }
     myIsExpandable   = calcExpandable(myIsSuspended);
-    mySuspendContext = SuspendManagerUtil.getSuspendContextForThread(suspendContext, thread);
-    myIsAtBreakpoint = suspendManager != null? SuspendManagerUtil.findContextByThread(suspendManager, thread) != null : thread.isAtBreakpoint();
+    mySuspendContext = suspendManager != null ? SuspendManagerUtil.findContextByThread(suspendManager, thread) : suspendContext;
+    myIsAtBreakpoint = thread.isAtBreakpoint();
     myIsCurrent      = suspendContext != null? suspendContext.getThread() == thread : false;
     myIsFrozen       = suspendManager != null? suspendManager.isFrozen(thread) : myIsSuspended;
   }
@@ -150,16 +150,16 @@ public class ThreadDescriptorImpl extends NodeDescriptorImpl implements ThreadDe
   }
 
   public Icon getIcon() {
-    if(isCurrent()) {
+    if (isCurrent()) {
       return AllIcons.Debugger.ThreadCurrent;
     }
-    if(isFrozen()) {
-      return AllIcons.Debugger.ThreadFrozen;
-    }
-    if(isAtBreakpoint()) {
+    if (isAtBreakpoint()) {
       return AllIcons.Debugger.ThreadAtBreakpoint;
     }
-    if(isSuspended()) {
+    if (isFrozen()) {
+      return AllIcons.Debugger.ThreadFrozen;
+    }
+    if (isSuspended()) {
       return AllIcons.Debugger.ThreadSuspended;
     }
     return AllIcons.Debugger.ThreadRunning;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,23 +16,25 @@
 package com.intellij.spellchecker.ui;
 
 import com.intellij.codeInspection.ex.InspectionProfileImpl;
+import com.intellij.openapi.editor.SpellCheckingEditorCustomizationProvider;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.fileTypes.PlainTextFileType;
 import com.intellij.spellchecker.inspections.SpellCheckingInspection;
 import com.intellij.testFramework.fixtures.LightPlatformCodeInsightFixtureTestCase;
-import com.intellij.testFramework.fixtures.impl.CodeInsightTestFixtureImpl;
+import com.intellij.ui.EditorCustomization;
 
+@SuppressWarnings("SpellCheckingInspection")
 public class SpellCheckingEditorCustomizationTest extends LightPlatformCodeInsightFixtureTestCase {
-  public void testEnabled() throws Exception {
+  public void testEnabled() {
     doTest(true, "<TYPO descr=\"Typo: In word 'missspelling'\">missspelling</TYPO>");
   }
 
-  public void testDisabled() throws Exception {
+  public void testDisabled() {
     doTest(false, "missspelling");
   }
 
   public void testEnabledEvenIfDisabledInMainProfile() throws Exception {
-    ((CodeInsightTestFixtureImpl)myFixture).myDisabledInspections.add(SpellCheckingInspection.SPELL_CHECKING_INSPECTION_TOOL_NAME);
+    //todo[batrak] ((CodeInsightTestFixtureImpl)myFixture).myDisabledInspections.add(SpellCheckingInspection.SPELL_CHECKING_INSPECTION_TOOL_NAME);
     testEnabled();
   }
 
@@ -47,7 +49,9 @@ public class SpellCheckingEditorCustomizationTest extends LightPlatformCodeInsig
       myFixture.configureByText(PlainTextFileType.INSTANCE, document);
       myFixture.enableInspections(new SpellCheckingInspection());
 
-      SpellCheckingEditorCustomization.getInstance(enabled).customize((EditorEx)myFixture.getEditor());
+      EditorCustomization customization = SpellCheckingEditorCustomizationProvider.getInstance().getCustomization(enabled);
+      assertNotNull(customization);
+      customization.customize((EditorEx)myFixture.getEditor());
 
       myFixture.checkHighlighting();
     }

@@ -16,10 +16,14 @@
 package org.jetbrains.plugins.gradle.execution.test.runner.events;
 
 import com.intellij.execution.testframework.sm.runner.SMTestProxy;
+import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.Couple;
-import org.jetbrains.plugins.gradle.execution.test.runner.GradleTestsExecutionConsoleManager;
+import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.util.ObjectUtils;
+import org.jetbrains.plugins.gradle.execution.test.runner.GradleTestsExecutionConsole;
 import org.jetbrains.plugins.gradle.util.XmlXpathHelper;
 
+import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,8 +32,8 @@ import java.util.regex.Pattern;
  * @since 2/28/14
  */
 public class AfterTestEvent extends AbstractTestEvent {
-  public AfterTestEvent(GradleTestsExecutionConsoleManager consoleManager) {
-    super(consoleManager);
+  public AfterTestEvent(GradleTestsExecutionConsole executionConsole) {
+    super(executionConsole);
   }
 
   @Override
@@ -42,7 +46,7 @@ public class AfterTestEvent extends AbstractTestEvent {
     final String exceptionMsg = eventXml.queryXml("/ijLog/event/test/result/errorMsg");
     final String stackTrace = eventXml.queryXml("/ijLog/event/test/result/stackTrace");
 
-    final SMTestProxy testProxy = getConsoleManager().getTestsMap().get(testId);
+    final SMTestProxy testProxy = findTestProxy(testId);
     if (testProxy == null) return;
 
     try {
@@ -51,14 +55,14 @@ public class AfterTestEvent extends AbstractTestEvent {
     catch (NumberFormatException ignored) {
     }
 
+    final CompositeRunnable runInEdt = new CompositeRunnable();
     final TestEventResult result = getTestEventResultType(eventXml);
     switch (result) {
       case SUCCESS:
-        addToInvokeLater(new Runnable() {
+        runInEdt.add(new Runnable() {
           @Override
           public void run() {
             testProxy.setFinished();
-            getResultsViewer().onTestFinished(testProxy);
           }
         });
         break;
@@ -67,7 +71,17 @@ public class AfterTestEvent extends AbstractTestEvent {
         if ("comparison".equals(failureType)) {
           String actualText = eventXml.queryXml("/ijLog/event/test/result/actual");
           String expectedText = eventXml.queryXml("/ijLog/event/test/result/expected");
-          testProxy.setTestComparisonFailed(exceptionMsg, stackTrace, actualText, expectedText);
+          final Condition<String> emptyString = new Condition<String>() {
+            @Override
+            public boolean value(String s) {
+              return StringUtil.isEmpty(s);
+            }
+          };
+          String filePath = ObjectUtils.nullizeByCondition(
+            eventXml.queryXml("/ijLog/event/test/result/filePath"), emptyString);
+          String actualFilePath = ObjectUtils.nullizeByCondition(
+            eventXml.queryXml("/ijLog/event/test/result/actualFilePath"), emptyString);
+          testProxy.setTestComparisonFailed(exceptionMsg, stackTrace, actualText, expectedText, filePath, actualFilePath);
         }
         else {
           Couple<String> comparisonPair =
@@ -89,7 +103,7 @@ public class AfterTestEvent extends AbstractTestEvent {
           }
 
           final Couple<String> finalComparisonPair = comparisonPair;
-          addToInvokeLater(new Runnable() {
+          runInEdt.add(new Runnable() {
             @Override
             public void run() {
               if (finalComparisonPair != null) {
@@ -98,9 +112,10 @@ public class AfterTestEvent extends AbstractTestEvent {
               else {
                 testProxy.setTestFailed(exceptionMsg, stackTrace, "error".equals(failureType));
               }
-            }});
+            }
+          });
         }
-        addToInvokeLater(new Runnable() {
+        runInEdt.add(new Runnable() {
           @Override
           public void run() {
             getResultsViewer().onTestFailed(testProxy);
@@ -108,10 +123,10 @@ public class AfterTestEvent extends AbstractTestEvent {
         });
         break;
       case SKIPPED:
-        testProxy.setTestIgnored(null, null);
-        addToInvokeLater(new Runnable() {
+        runInEdt.add(new Runnable() {
           @Override
           public void run() {
+            testProxy.setTestIgnored(null, null);
             getResultsViewer().onTestIgnored(testProxy);
           }
         });
@@ -119,6 +134,15 @@ public class AfterTestEvent extends AbstractTestEvent {
       case UNKNOWN_RESULT:
         break;
     }
+
+    runInEdt.add(new Runnable() {
+      @Override
+      public void run() {
+        getResultsViewer().onTestFinished(testProxy);
+      }
+    });
+
+    addToInvokeLater(runInEdt);
   }
 
   private static Couple<String> parseComparisonMessage(String message, final String regex) {
@@ -127,5 +151,14 @@ public class AfterTestEvent extends AbstractTestEvent {
       return Couple.of(matcher.group(1).replaceAll("\\\\n", "\n"), matcher.group(2).replaceAll("\\\\n", "\n"));
     }
     return null;
+  }
+
+  private static class CompositeRunnable extends ArrayList<Runnable> implements Runnable {
+    @Override
+    public void run() {
+      for (Runnable runnable : this) {
+        runnable.run();
+      }
+    }
   }
 }

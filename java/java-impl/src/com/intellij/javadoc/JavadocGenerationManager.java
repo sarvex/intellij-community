@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,10 @@ import com.intellij.analysis.AnalysisScope;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.executors.DefaultRunExecutor;
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
-import com.intellij.execution.runners.ExecutionUtil;
 import com.intellij.execution.util.ExecutionErrorDialog;
-import com.intellij.openapi.components.*;
+import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.ServiceManager;
+import com.intellij.openapi.components.State;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.InvalidDataException;
@@ -30,13 +31,7 @@ import com.intellij.openapi.util.WriteExternalException;
 import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 
-@State(name = "JavadocGenerationManager",
-       storages = {
-         @Storage(
-           file = StoragePathMacros.PROJECT_FILE
-         )
-       }
-)
+@State(name = "JavadocGenerationManager")
 public final class JavadocGenerationManager implements PersistentStateComponent<Element> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.javadoc.JavadocGenerationManager");
   private final JavadocConfiguration myConfiguration;
@@ -48,7 +43,7 @@ public final class JavadocGenerationManager implements PersistentStateComponent<
 
   JavadocGenerationManager(Project project) {
     myProject = project;
-    myConfiguration = new JavadocConfiguration(project);
+    myConfiguration = new JavadocConfiguration();
   }
 
   @Override
@@ -78,9 +73,9 @@ public final class JavadocGenerationManager implements PersistentStateComponent<
   }
 
   public void generateJavadoc(AnalysisScope scope) {
-    myConfiguration.setGenerationScope(scope);
     try {
-      ExecutionEnvironmentBuilder.create(myProject, DefaultRunExecutor.getRunExecutorInstance(), myConfiguration).buildAndExecute();
+      JavadocGeneratorRunProfile profile = new JavadocGeneratorRunProfile(myProject, scope, myConfiguration);
+      ExecutionEnvironmentBuilder.create(myProject, DefaultRunExecutor.getRunExecutorInstance(), profile).buildAndExecute();
     }
     catch (ExecutionException e) {
       ExecutionErrorDialog.show(e, CommonBundle.getErrorTitle(), myProject);

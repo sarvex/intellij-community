@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2014 Dave Griffith, Bas Leijdekkers
+ * Copyright 2003-2015 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,11 @@ package com.siyeh.ig;
 import com.intellij.codeInsight.daemon.HighlightDisplayKey;
 import com.intellij.codeInspection.BaseJavaBatchLocalInspectionTool;
 import com.intellij.codeInspection.InspectionProfileEntry;
-import com.intellij.codeInspection.LocalInspectionToolSession;
 import com.intellij.codeInspection.ProblemsHolder;
 import com.intellij.codeInspection.ex.InspectionProfileImpl;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.util.DefaultJDOMExternalizer;
+import com.intellij.openapi.util.WriteExternalException;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.profile.codeInspection.InspectionProjectProfileManager;
 import com.intellij.psi.PsiElement;
@@ -30,7 +31,7 @@ import com.intellij.psi.PsiFile;
 import com.intellij.ui.DocumentAdapter;
 import com.intellij.util.ReflectionUtil;
 import com.intellij.util.ui.UIUtil;
-import com.siyeh.ig.telemetry.InspectionGadgetsTelemetry;
+import org.jdom.Element;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -39,6 +40,7 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.text.Document;
+import java.lang.reflect.Field;
 import java.text.NumberFormat;
 import java.text.ParseException;
 import java.util.List;
@@ -47,7 +49,6 @@ public abstract class BaseInspection extends BaseJavaBatchLocalInspectionTool {
   private static final Logger LOG = Logger.getInstance("#com.siyeh.ig.BaseInspection");
 
   private String m_shortName = null;
-  private long timestamp = -1L;
 
   @Override
   @NotNull
@@ -90,6 +91,30 @@ public abstract class BaseInspection extends BaseJavaBatchLocalInspectionTool {
   @NotNull
   protected InspectionGadgetsFix[] buildFixes(Object... infos) {
     return InspectionGadgetsFix.EMPTY_ARRAY;
+  }
+
+  protected void writeBooleanOption(@NotNull Element node, @NotNull @NonNls String property, boolean defaultValueToIgnore) {
+    final Boolean value = ReflectionUtil.getField(this.getClass(), this, boolean.class, property);
+    assert value != null;
+    if (defaultValueToIgnore == value.booleanValue()) {
+      return;
+    }
+    node.addContent(new Element("option").setAttribute("name", property).setAttribute("value", value.toString()));
+  }
+
+  protected void defaultWriteSettings(@NotNull Element node, final String... excludedProperties) throws WriteExternalException {
+    DefaultJDOMExternalizer.writeExternal(this, node, new DefaultJDOMExternalizer.JDOMFilter() {
+      @Override
+      public boolean isAccept(@NotNull Field field) {
+        final String name = field.getName();
+        for (String property : excludedProperties) {
+          if (name.equals(property)) {
+            return false;
+          }
+        }
+        return true;
+      }
+    });
   }
 
   public abstract BaseInspectionVisitor buildVisitor();
@@ -147,7 +172,7 @@ public abstract class BaseInspection extends BaseJavaBatchLocalInspectionTool {
     return valueField;
   }
 
-  protected static void parseString(String string, List<String>... outs) {
+  public static void parseString(String string, List<String>... outs) {
     final List<String> strings = StringUtil.split(string, ",");
     for (List<String> out : outs) {
       out.clear();
@@ -166,7 +191,7 @@ public abstract class BaseInspection extends BaseJavaBatchLocalInspectionTool {
     }
   }
 
-  protected static String formatString(List<String>... strings) {
+  public static String formatString(List<String>... strings) {
     final StringBuilder buffer = new StringBuilder();
     final int size = strings[0].size();
     if (size > 0) {
@@ -179,36 +204,11 @@ public abstract class BaseInspection extends BaseJavaBatchLocalInspectionTool {
     return buffer.toString();
   }
 
-  private static void formatString(List<String>[] strings, int index,
-                                   StringBuilder out) {
+  private static void formatString(List<String>[] strings, int index, StringBuilder out) {
     out.append(strings[0].get(index));
     for (int i = 1; i < strings.length; i++) {
       out.append(',');
       out.append(strings[i].get(index));
-    }
-  }
-
-  @Override
-  public void inspectionStarted(@NotNull LocalInspectionToolSession session, boolean isOnTheFly) {
-    super.inspectionStarted(session, isOnTheFly);
-    if (InspectionGadgetsTelemetry.isEnabled()) {
-      timestamp = System.currentTimeMillis();
-    }
-  }
-
-  @Override
-  public void inspectionFinished(@NotNull LocalInspectionToolSession session,
-                                 @NotNull ProblemsHolder problemsHolder) {
-    super.inspectionFinished(session, problemsHolder);
-    if (InspectionGadgetsTelemetry.isEnabled()) {
-      if (timestamp < 0L) {
-        LOG.warn("finish reported without corresponding start");
-        return;
-      }
-      final long end = System.currentTimeMillis();
-      final String displayName = getDisplayName();
-      InspectionGadgetsTelemetry.getInstance().reportRun(displayName, end - timestamp);
-      timestamp = -1L;
     }
   }
 

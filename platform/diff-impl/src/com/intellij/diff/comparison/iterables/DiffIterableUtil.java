@@ -16,8 +16,10 @@
 package com.intellij.diff.comparison.iterables;
 
 import com.intellij.diff.comparison.DiffTooBigException;
+import com.intellij.diff.comparison.TrimUtil;
 import com.intellij.diff.fragments.DiffFragment;
 import com.intellij.diff.fragments.DiffFragmentImpl;
+import com.intellij.diff.util.Range;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Pair;
@@ -27,12 +29,32 @@ import com.intellij.util.diff.Diff;
 import com.intellij.util.diff.FilesTooBigForDiffException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
 public class DiffIterableUtil {
+  private static boolean SHOULD_VERIFY_ITERABLE = Registry.is("diff.verify.iterable");
+
+  /*
+   * Compare two integer arrays
+   */
+  @NotNull
+  public static <T> FairDiffIterable diff(@NotNull int[] data1, @NotNull int[] data2, @NotNull ProgressIndicator indicator) {
+    indicator.checkCanceled();
+
+    try {
+      // TODO: use ProgressIndicator inside
+      Diff.Change change = Diff.buildChanges(data1, data2);
+      return fair(create(change, data1.length, data2.length));
+    }
+    catch (FilesTooBigForDiffException e) {
+      throw new DiffTooBigException();
+    }
+  }
+
   /*
    * Compare two arrays, basing on equals() and hashCode() of it's elements
    */
@@ -104,6 +126,7 @@ public class DiffIterableUtil {
 
   @NotNull
   public static FairDiffIterable fair(@NotNull DiffIterable iterable) {
+    if (iterable instanceof FairDiffIterable) return (FairDiffIterable)iterable;
     FairDiffIterable wrapper = new FairDiffIterableWrapper(iterable);
     verifyFair(wrapper);
     return wrapper;
@@ -179,16 +202,17 @@ public class DiffIterableUtil {
     };
   }
 
-  public static boolean isEmpty(@NotNull Range range) {
-    return range.start1 == range.end1 && range.start2 == range.end2;
-  }
-
   //
   // Verification
   //
 
+  @TestOnly
+  public static void setVerifyEnabled(boolean value) {
+    SHOULD_VERIFY_ITERABLE = value;
+  }
+
   private static boolean isVerifyEnabled() {
-    return Registry.is("diff.verify.iterable"); // TODO: Leave verification for tests only ?
+    return SHOULD_VERIFY_ITERABLE;
   }
 
   public static void verify(@NotNull DiffIterable iterable) {
@@ -260,7 +284,7 @@ public class DiffIterableUtil {
       myLength2 = length2;
     }
 
-    private void addChange(int start1, int start2, int end1, int end2) {
+    protected void addChange(int start1, int start2, int end1, int end2) {
       Diff.Change change = new Diff.Change(start1, start2, end1 - start1, end2 - start2, null);
       if (myLastChange != null) {
         myLastChange.link = change;
@@ -296,7 +320,7 @@ public class DiffIterableUtil {
       myIndex2 = end2;
     }
 
-    private void finish(int length1, int length2) {
+    protected void finish(int length1, int length2) {
       assert myIndex1 <= length1;
       assert myIndex2 <= length2;
 
@@ -312,27 +336,63 @@ public class DiffIterableUtil {
     }
   }
 
-  public static class Range {
-    public final int start1;
-    public final int end1;
-    public final int start2;
-    public final int end2;
+  public static class ExpandChangeBuilder extends ChangeBuilder {
+    @NotNull private final List<?> myObjects1;
+    @NotNull private final List<?> myObjects2;
 
-    public Range(int start1, int end1, int start2, int end2) {
-      this.start1 = start1;
-      this.end1 = end1;
-      this.start2 = start2;
-      this.end2 = end2;
+    public ExpandChangeBuilder(@NotNull List<?> objects1, @NotNull List<?> objects2) {
+      super(objects1.size(), objects2.size());
+      myObjects1 = objects1;
+      myObjects2 = objects2;
+    }
+
+    @Override
+    protected void addChange(int start1, int start2, int end1, int end2) {
+      Range range = TrimUtil.expand(myObjects1, myObjects2, start1, start2, end1, end2);
+      if (!range.isEmpty()) super.addChange(range.start1, range.start2, range.end1, range.end2);
     }
   }
 
-  public static class IntPair {
-    public final int val1;
-    public final int val2;
+  //
+  // Debug
+  //
 
-    public IntPair(int val1, int val2) {
-      this.val1 = val1;
-      this.val2 = val2;
+  @SuppressWarnings("unused")
+  @NotNull
+  public static <T> List<LineRangeData> extractDataRanges(@NotNull List<T> objects1,
+                                                          @NotNull List<T> objects2,
+                                                          @NotNull DiffIterable iterable) {
+    List<LineRangeData> result = ContainerUtil.newArrayList();
+
+    for (Pair<Range, Boolean> pair : iterateAll(iterable)) {
+      Range range = pair.first;
+      boolean equals = pair.second;
+
+      List<T> data1 = new ArrayList<T>();
+      List<T> data2 = new ArrayList<T>();
+
+      for (int i = range.start1; i < range.end1; i++) {
+        data1.add(objects1.get(i));
+      }
+      for (int i = range.start2; i < range.end2; i++) {
+        data2.add(objects2.get(i));
+      }
+
+      result.add(new LineRangeData<T>(data1, data2, equals));
+    }
+
+    return result;
+  }
+
+  public static class LineRangeData<T> {
+    public final boolean equals;
+    @NotNull public final List<T> objects1;
+    @NotNull public final List<T> objects2;
+
+    public LineRangeData(@NotNull List<T> objects1, @NotNull List<T> objects2, boolean equals) {
+      this.equals = equals;
+      this.objects1 = objects1;
+      this.objects2 = objects2;
     }
   }
 }

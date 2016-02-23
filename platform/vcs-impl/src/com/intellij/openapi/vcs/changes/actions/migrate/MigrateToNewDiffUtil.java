@@ -1,5 +1,6 @@
 package com.intellij.openapi.vcs.changes.actions.migrate;
 
+import com.intellij.diff.contents.FileContentImpl;
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
@@ -22,7 +23,6 @@ import com.intellij.diff.chains.DiffRequestChain;
 import com.intellij.diff.chains.DiffRequestProducer;
 import com.intellij.diff.chains.DiffRequestProducerException;
 import com.intellij.diff.chains.SimpleDiffRequestChain;
-import com.intellij.diff.contents.BinaryFileContentImpl;
 import com.intellij.diff.contents.DiffContent;
 import com.intellij.diff.contents.DocumentContentImpl;
 import com.intellij.diff.contents.EmptyContent;
@@ -31,6 +31,7 @@ import com.intellij.diff.requests.ErrorDiffRequest;
 import com.intellij.diff.requests.SimpleDiffRequest;
 import com.intellij.diff.util.DiffUserDataKeys;
 import com.intellij.diff.util.DiffUserDataKeysEx;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vcs.VcsDataKeys;
 import com.intellij.openapi.vcs.VcsException;
 import com.intellij.openapi.vcs.changes.Change;
@@ -118,7 +119,7 @@ public class MigrateToNewDiffUtil {
     if (oldContent.isBinary()) {
       VirtualFile file = oldContent.getFile();
       if (file == null) return null;
-      return new BinaryFileContentImpl(project, file);
+      return new FileContentImpl(project, file);
     }
     else {
       Document document = oldContent.getDocument();
@@ -277,7 +278,7 @@ public class MigrateToNewDiffUtil {
 
     @Override
     public void update(AnActionEvent e) {
-      if (!ApplicationManager.getApplication().isInternal()) {
+      if (!Registry.is("diff.show.old.diff.action.enabled")) {
         e.getPresentation().setEnabledAndVisible(false);
         return;
       }

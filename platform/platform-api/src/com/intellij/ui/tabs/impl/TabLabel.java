@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,9 +32,10 @@ import com.intellij.ui.tabs.impl.table.TableLayout;
 import com.intellij.util.PairConsumer;
 import com.intellij.util.ui.Centerizer;
 import com.intellij.util.ui.UIUtil;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.accessibility.Accessible;
+import javax.accessibility.AccessibleContext;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
@@ -42,7 +43,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 
-public class TabLabel extends JPanel {
+public class TabLabel extends JPanel implements Accessible {
   protected final SimpleColoredComponent myLabel;
 
   private final LayeredIcon myIcon;
@@ -126,16 +127,12 @@ public class TabLabel extends JPanel {
 
       @Override
       protected void doPaint(Graphics2D g) {
-        if (UISettings.getInstance().HIDE_TABS_IF_NEED || tabs.getTabsPosition() == JBTabsPosition.left || tabs.getTabsPosition() == JBTabsPosition.right) {
-          super.doPaint(g);
-          return;
-        }
         Rectangle clip = getVisibleRect();
-        if (getPreferredSize().width <= clip.width) {
+        if (getPreferredSize().width <= clip.width + 2) {
           super.doPaint(g);
           return;
         }
-        int dimSize = 30;
+        int dimSize = 10;
         int dimStep = 2;
         Composite oldComposite = g.getComposite();
         Shape oldClip = g.getClip();
@@ -151,13 +148,6 @@ public class TabLabel extends JPanel {
         } finally {
           g.setComposite(oldComposite);
           g.setClip(oldClip);
-        }
-      }
-
-      @Override
-      protected void applyAdditionalHints(@NotNull Graphics2D g) {
-        if (!SystemInfo.isJavaVersionAtLeast("1.7") && g.getComposite() instanceof AlphaComposite && (((AlphaComposite)g.getComposite()).getAlpha() < 1)) {
-          g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_GASP);
         }
       }
     };
@@ -617,5 +607,38 @@ public class TabLabel extends JPanel {
 
   public JComponent getLabelComponent() {
     return myLabel;
+  }
+
+
+  @Override
+  public AccessibleContext getAccessibleContext() {
+    if (accessibleContext == null) {
+      accessibleContext = new AccessibleTabLabel();
+    }
+    return accessibleContext;
+  }
+
+  protected class AccessibleTabLabel extends AccessibleJPanel {
+    @Override
+    public String getAccessibleName() {
+      String name = super.getAccessibleName();
+      if (name == null) {
+        if (myLabel.getAccessibleContext() != null){
+          name = myLabel.getAccessibleContext().getAccessibleName();
+        }
+      }
+      return name;
+    }
+
+    @Override
+    public String getAccessibleDescription() {
+      String name = super.getAccessibleDescription();
+      if (name == null) {
+        if (myLabel.getAccessibleContext() != null){
+          name = myLabel.getAccessibleContext().getAccessibleDescription();
+        }
+      }
+      return name;
+    }
   }
 }

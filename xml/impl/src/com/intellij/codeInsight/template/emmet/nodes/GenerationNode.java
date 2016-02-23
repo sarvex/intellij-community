@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -189,13 +189,13 @@ public class GenerationNode extends UserDataHolderBase {
       indentStr = StringUtil.repeatSymbol(' ', tabSize);
     }
 
-    LiveTemplateBuilder builder = new LiveTemplateBuilder(segmentsLimit);
+    LiveTemplateBuilder builder = new LiveTemplateBuilder(EmmetOptions.getInstance().isAddEditPointAtTheEndOfTemplate(), segmentsLimit);
     int end = -1;
     boolean hasChildren = myChildren.size() > 0;
 
     TemplateImpl parentTemplate;
     Map<String, String> predefinedValues;
-    if (myTemplateToken instanceof TemplateToken && generator instanceof XmlZenCodingGenerator) {
+    if (generator instanceof XmlZenCodingGenerator) {
       TemplateToken xmlTemplateToken = myTemplateToken;
       parentTemplate = invokeXmlTemplate(xmlTemplateToken, callback, generator, hasChildren);
       predefinedValues = buildPredefinedValues(xmlTemplateToken.getAttributes(), (XmlZenCodingGenerator)generator, hasChildren);
@@ -256,7 +256,7 @@ public class GenerationNode extends UserDataHolderBase {
     return builder.buildTemplate();
   }
 
-  private static TemplateImpl invokeTemplate(TemplateToken token,
+  private static TemplateImpl invokeTemplate(@NotNull TemplateToken token,
                                              boolean hasChildren,
                                              final CustomTemplateCallback callback,
                                              @Nullable ZenCodingGenerator generator) {
@@ -324,7 +324,7 @@ public class GenerationNode extends UserDataHolderBase {
   }
 
   private static String prepareVariableName(@NotNull String attributeName) {
-    char[] toReplace = {'-', '+', ':'};
+    char[] toReplace = {'$', '-', '+', ':'};
     StringBuilder builder = new StringBuilder(attributeName.length());
     for (int i = 0; i < attributeName.length(); i++) {
       char c = attributeName.charAt(i);
@@ -348,7 +348,7 @@ public class GenerationNode extends UserDataHolderBase {
                                              Map<String, String> predefinedVarValues,
                                              String surroundedText,
                                              int segmentsLimit) {
-    LiveTemplateBuilder builder = new LiveTemplateBuilder(segmentsLimit);
+    LiveTemplateBuilder builder = new LiveTemplateBuilder(EmmetOptions.getInstance().isAddEditPointAtTheEndOfTemplate(), segmentsLimit);
     if (predefinedVarValues == null && surroundedText == null) {
       return template;
     }
@@ -491,7 +491,7 @@ public class GenerationNode extends UserDataHolderBase {
     for (XmlAttribute xmlAttribute : tag.getAttributes()) {
       final String attributeName = xmlAttribute.getName();
       final XmlAttributeValue xmlAttributeValueElement = xmlAttribute.getValueElement();
-      if (xmlAttributeValueElement != null && !attributes.containsKey(attributeName)) {
+      if ((xmlAttributeValueElement != null && !attributes.containsKey(attributeName)) || !ZenCodingUtil.isXML11ValidQName(attributeName)) {
         continue;
       }
 

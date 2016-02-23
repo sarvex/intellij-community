@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,8 @@ import org.tmatesoft.svn.core.SVNURL;
 import org.tmatesoft.svn.core.io.ISVNSession;
 import org.tmatesoft.svn.core.io.SVNRepository;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
@@ -110,7 +112,7 @@ public class SvnCachingRepositoryPoolTest extends FileBasedTest {
       public void run() {
         ((ProgressManagerImpl)ProgressManager.getInstance()).executeProcessUnderProgress(target, indicator);
       }
-    });
+    }, "svn cache repo");
     thread.start();
 
     TimeoutUtil.sleep(10);
@@ -127,6 +129,7 @@ public class SvnCachingRepositoryPoolTest extends FileBasedTest {
       }
     }
     Assert.assertTrue(!thread.isAlive());
+    thread.join();
     Assert.assertNotNull(exc[0]);
     //repository1.fireConnectionClosed(); // also test that used are also closed.. in dispose
 
@@ -151,7 +154,7 @@ public class SvnCachingRepositoryPoolTest extends FileBasedTest {
     Assert.assertEquals(0, group.getInactiveSize());
   }
 
-  private void testBigFlow(final SvnIdeaRepositoryPoolManager poolManager, boolean disposeAfter) throws SVNException {
+  private void testBigFlow(final SvnIdeaRepositoryPoolManager poolManager, boolean disposeAfter) throws SVNException, InterruptedException {
     poolManager.setCreator(new ThrowableConvertor<SVNURL, SVNRepository, SVNException>() {
       @Override
       public SVNRepository convert(SVNURL svnurl) throws SVNException {
@@ -163,6 +166,7 @@ public class SvnCachingRepositoryPoolTest extends FileBasedTest {
     final int[] cnt = new int[1];
     cnt[0] = 25;
     final SVNException[] exc = new SVNException[1];
+    List<Thread> threads = new ArrayList<>();
     for (int i = 0; i < 25; i++) {
       Runnable target = new Runnable() {
         @Override
@@ -184,8 +188,9 @@ public class SvnCachingRepositoryPoolTest extends FileBasedTest {
           }
         }
       };
-      Thread thread = new Thread(target);
+      Thread thread = new Thread(target, "svn cache");
       thread.start();
+      threads.add(thread);
     }
 
     final long start = System.currentTimeMillis();
@@ -216,6 +221,10 @@ public class SvnCachingRepositoryPoolTest extends FileBasedTest {
 
       Assert.assertEquals(0, group.getUsedSize());
       Assert.assertEquals(0, group.getInactiveSize());
+    }
+
+    for (Thread thread : threads) {
+      thread.join();
     }
   }
 

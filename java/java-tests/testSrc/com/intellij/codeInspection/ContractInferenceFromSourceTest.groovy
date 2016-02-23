@@ -507,6 +507,30 @@ class Foo {{
     assert ContractInference.inferContracts(method).collect { it as String } == [' -> null']
   }
 
+  public void "test anonymous class methods potentially used from outside"() {
+    def method = PsiTreeUtil.findChildOfType(myFixture.addClass("""
+class Foo {{
+  Runnable r = new Runnable() {
+    public void run() {
+      throw new RuntimeException();
+    }
+  };    
+}}"""), PsiAnonymousClass).methods[0]
+    assert ContractInference.inferContracts(method).collect { it as String } == [' -> fail']
+  }
+
+  public void "test vararg delegation"() {
+    def c = inferContracts("""
+  boolean delegating(Object o, Object o1) {
+    return smth(o, o1);
+  }
+  boolean smth(Object o, Object... o1) {
+    return o == null && o1 != null;
+  }
+""")
+    assert c == ['!null, _ -> false', 'null, _ -> true']
+  }
+
   private String inferContract(String method) {
     return assertOneElement(inferContracts(method))
   }

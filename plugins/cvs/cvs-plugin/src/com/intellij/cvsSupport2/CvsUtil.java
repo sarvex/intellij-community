@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ import java.util.regex.Pattern;
  */
 public class CvsUtil {
 
-  private final static SyncDateFormat DATE_FORMATTER = new SyncDateFormat(new SimpleDateFormat(Entry.getLastModifiedDateFormatter().toPattern(), Locale.US));
+  private static final SyncDateFormat DATE_FORMATTER = new SyncDateFormat(new SimpleDateFormat(Entry.getLastModifiedDateFormatter().toPattern(), Locale.US));
 
   static {
     //noinspection HardCodedStringLiteral
@@ -568,7 +568,7 @@ public class CvsUtil {
 
   private static void deleteAllOtherRevisions(final VirtualFile file, final String storedFilename) {
     File ioFile = new File(file.getPath());
-    final Pattern pattern = Pattern.compile("\\\u002E#" + ioFile.getName().replace(".", "\\\u002E") + "\u002E" + REVISION_PATTERN);
+    final Pattern pattern = Pattern.compile("\\Q.#" + ioFile.getName() + ".\\E" + REVISION_PATTERN);
     final File dir = new File(getAdminDir(ioFile.getParentFile()), BASE_REVISIONS_DIR);
     File[] files = dir.listFiles(new FilenameFilter() {
       public boolean accept(final File dir, final String name) {
@@ -660,22 +660,17 @@ public class CvsUtil {
 
   }
 
-  public static String getRelativeRepositoryPath(String repository, String serverRoot) {    
+  public static String getRelativeRepositoryPath(String repository, String serverRoot) {
     repository = repository.replace(File.separatorChar, '/');
     serverRoot = serverRoot.replace(File.separatorChar, '/');
 
     if (repository.startsWith(serverRoot)) {
       repository = repository.substring(serverRoot.length());
 
-      if (repository.startsWith("/")) {
-        repository = repository.substring(1);
-      }
-
+      repository = StringUtil.trimStart(repository, "/");
     }
 
-    if (repository.startsWith("./")) {
-      repository = repository.substring(2);
-    }
+    repository = StringUtil.trimStart(repository, "./");
 
     return repository;
   }

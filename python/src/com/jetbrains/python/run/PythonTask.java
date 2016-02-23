@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.execution.configurations.ParamsGroup;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessTerminatedListener;
+import com.intellij.execution.ui.ConsoleView;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.projectRoots.Sdk;
@@ -32,8 +33,10 @@ import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.NotNullFunction;
+import com.jetbrains.python.HelperPackage;
 import com.jetbrains.python.PyBundle;
 import com.jetbrains.python.buildout.BuildoutFacet;
+import com.jetbrains.python.console.PydevConsoleRunner;
 import com.jetbrains.python.sdk.PySdkUtil;
 import com.jetbrains.python.sdk.PythonEnvUtil;
 import com.jetbrains.python.sdk.PythonSdkType;
@@ -58,6 +61,8 @@ public class PythonTask {
   private final Sdk mySdk;
   private String myWorkingDirectory;
   private String myRunnerScript;
+  private HelperPackage myHelper = null;
+
   private List<String> myParameters = new ArrayList<String>();
   private final String myRunTabTitle;
   private String myHelpId;
@@ -88,6 +93,10 @@ public class PythonTask {
     myRunnerScript = script;
   }
 
+  public void setHelper(HelperPackage helper) {
+    myHelper = helper;
+  }
+
   public void setParameters(List<String> parameters) {
     myParameters = parameters;
   }
@@ -106,8 +115,9 @@ public class PythonTask {
   public ProcessHandler createProcess(@Nullable final Map<String, String> env) throws ExecutionException {
     final GeneralCommandLine commandLine = createCommandLine();
     if (env != null) {
-       commandLine.getEnvironment().putAll(env);
+      commandLine.getEnvironment().putAll(env);
     }
+    PydevConsoleRunner.setCorrectStdOutEncoding(commandLine, myModule.getProject()); // To support UTF-8 output
 
     ProcessHandler handler;
     if (PySdkUtil.isRemote(mySdk)) {
@@ -115,7 +125,7 @@ public class PythonTask {
       handler = new PyRemoteProcessStarter().startRemoteProcess(mySdk, commandLine, myModule.getProject(), null);
     }
     else {
-      EncodingEnvironmentUtil.fixDefaultEncodingIfMac(commandLine, myModule.getProject());
+      EncodingEnvironmentUtil.setLocaleEnvironmentIfMac(commandLine);
       handler = PythonProcessRunner.createProcessHandlingCtrlC(commandLine);
 
       ProcessTerminatedListener.attach(handler);
@@ -123,6 +133,15 @@ public class PythonTask {
     return handler;
   }
 
+
+  /**
+   * Runs command using env vars from facet
+   * @param consoleView console view to be used for command or null to create new
+   * @throws ExecutionException failed to execute command
+   */
+  public void run(@Nullable final ConsoleView consoleView) throws ExecutionException {
+    run(createCommandLine().getEnvironment(), consoleView);
+  }
 
   public GeneralCommandLine createCommandLine() {
     GeneralCommandLine cmd = new GeneralCommandLine();
@@ -136,11 +155,10 @@ public class PythonTask {
       homePath = FileUtil.toSystemDependentName(homePath);
     }
 
-    PythonCommandLineState.createStandardGroupsIn(cmd);
+    PythonCommandLineState.createStandardGroups(cmd);
     ParamsGroup scriptParams = cmd.getParametersList().getParamsGroup(PythonCommandLineState.GROUP_SCRIPT);
     assert scriptParams != null;
 
-    cmd.setPassParentEnvironment(true);
     Map<String, String> env = cmd.getEnvironment();
     if (!SystemInfo.isWindows && !PySdkUtil.isRemote(mySdk)) {
       cmd.setExePath("bash");
@@ -148,8 +166,14 @@ public class PythonTask {
       bashParams.addParameter("-cl");
 
       NotNullFunction<String, String> escaperFunction = StringUtil.escaper(false, "|>$\"'& ");
-      StringBuilder paramString = new StringBuilder(escaperFunction.fun(homePath) + " " + escaperFunction.fun(myRunnerScript));
-
+      StringBuilder paramString;
+      if (myHelper != null) {
+        paramString= new StringBuilder(escaperFunction.fun(homePath) + " " + escaperFunction.fun(myHelper.asParamString()));
+        myHelper.addToPythonPath(cmd.getEnvironment());
+      }
+      else {
+        paramString= new StringBuilder(escaperFunction.fun(homePath) + " " + escaperFunction.fun(myRunnerScript));
+      }
       for (String p : myParameters) {
         paramString.append(" ").append(p);
       }
@@ -157,7 +181,12 @@ public class PythonTask {
     }
     else {
       cmd.setExePath(homePath);
-      scriptParams.addParameter(myRunnerScript);
+      if (myHelper != null) {
+        myHelper.addToGroup(scriptParams, cmd);
+      }
+      else {
+        scriptParams.addParameter(myRunnerScript);
+      }
       scriptParams.addParameters(myParameters);
     }
 
@@ -185,13 +214,15 @@ public class PythonTask {
   }
 
   /**
-   * @param env environment variables to be passed to process or null if nothing should be passed
+   * @param env         environment variables to be passed to process or null if nothing should be passed
+   * @param consoleView console to run this task on. New console will be used if no console provided.
    */
-  public void run(@Nullable final Map<String, String> env) throws ExecutionException {
+  public void run(@Nullable final Map<String, String> env, @Nullable final ConsoleView consoleView) throws ExecutionException {
     final ProcessHandler process = createProcess(env);
     final Project project = myModule.getProject();
     new RunContentExecutor(project, process)
       .withFilter(new PythonTracebackFilter(project))
+      .withConsole(consoleView)
       .withTitle(myRunTabTitle)
       .withRerun(new Runnable() {
         @Override
@@ -199,8 +230,9 @@ public class PythonTask {
           try {
             process.destroyProcess(); // Stop process before rerunning it
             if (process.waitFor(TIME_TO_WAIT_PROCESS_STOP)) {
-              PythonTask.this.run(env);
-            }else {
+              PythonTask.this.run(env, consoleView);
+            }
+            else {
               Messages.showErrorDialog(PyBundle.message("unable.to.stop"), myRunTabTitle);
             }
           }

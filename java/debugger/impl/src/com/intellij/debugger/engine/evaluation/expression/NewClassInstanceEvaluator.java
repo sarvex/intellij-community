@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.intellij.debugger.DebuggerBundle;
 import com.intellij.debugger.engine.DebugProcessImpl;
 import com.intellij.debugger.engine.DebuggerUtils;
 import com.intellij.debugger.engine.JVMName;
+import com.intellij.debugger.engine.JVMNameUtil;
 import com.intellij.debugger.engine.evaluation.EvaluateException;
 import com.intellij.debugger.engine.evaluation.EvaluateExceptionUtil;
 import com.intellij.debugger.engine.evaluation.EvaluationContextImpl;
@@ -55,7 +56,7 @@ class NewClassInstanceEvaluator implements Evaluator {
     }
     ClassType classType = (ClassType)obj;
     // find constructor
-    Method method = DebuggerUtils.findMethod(classType, "<init>", myConstructorSignature.getName(debugProcess));
+    Method method = DebuggerUtils.findMethod(classType, JVMNameUtil.CONSTRUCTOR_NAME, myConstructorSignature.getName(debugProcess));
     if (method == null) {
       throw EvaluateExceptionUtil.createEvaluateException(
         DebuggerBundle.message("evaluation.error.cannot.resolve.constructor", myConstructorSignature.getDisplayName(debugProcess)));
@@ -63,7 +64,7 @@ class NewClassInstanceEvaluator implements Evaluator {
     // evaluate arguments
     List<Object> arguments;
     if (myParamsEvaluators != null) {
-      arguments = new ArrayList<Object>(myParamsEvaluators.length);
+      arguments = new ArrayList<>(myParamsEvaluators.length);
       for (Evaluator evaluator : myParamsEvaluators) {
         arguments.add(evaluator.evaluate(context));
       }

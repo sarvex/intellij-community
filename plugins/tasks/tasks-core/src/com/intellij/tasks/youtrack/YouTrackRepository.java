@@ -352,7 +352,8 @@ public class YouTrackRepository extends BaseRepositoryImpl {
   @Override
   public void updateTimeSpent(@NotNull LocalTask task, @NotNull String timeSpent, @NotNull String comment) throws Exception {
     checkVersion();
-    final HttpMethod method = doREST("/rest/issue/execute/" + task.getId() + "?command=work+Today+" + timeSpent.replaceAll(" ", "+") + "+" + comment, true);
+    String command = encodeUrl(String.format("work Today %s %s", timeSpent, comment));
+    final HttpMethod method = doREST("/rest/issue/execute/" + task.getId() + "?command=" + command, true);
     try {
       if (method.getStatusCode() != 200) {
         InputStream stream = method.getResponseBodyAsStream();
@@ -372,7 +373,7 @@ public class YouTrackRepository extends BaseRepositoryImpl {
       Element element = new SAXBuilder(false).build(stream).getRootElement();
       final boolean timeTrackingAvailable = element.getName().equals("version") && VersionComparatorUtil.compare(element.getChildText("version"), "4.1") >= 0;
       if (!timeTrackingAvailable) {
-        throw new Exception("This version of Youtrack the time tracking is not supported");
+        throw new Exception("Time tracking is not supported in this version of Youtrack");
       }
     }
     finally {
@@ -383,5 +384,11 @@ public class YouTrackRepository extends BaseRepositoryImpl {
   @Override
   protected int getFeatures() {
     return super.getFeatures() | TIME_MANAGEMENT | STATE_UPDATING;
+  }
+
+  @TestOnly
+  @Override
+  public HttpClient getHttpClient() {
+    return super.getHttpClient();
   }
 }

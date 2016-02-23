@@ -160,9 +160,13 @@ public class SpellCheckingInspection extends LocalInspectionTool {
     tokenizer.tokenize(element, consumer);
   }
 
-  private static void addBatchDescriptor(PsiElement element, int offset, @NotNull TextRange textRange, @NotNull ProblemsHolder holder) {
+  private static void addBatchDescriptor(PsiElement element,
+                                         int offset,
+                                         @NotNull TextRange textRange,
+                                         @NotNull ProblemsHolder holder,
+                                         String wordWithTypo) {
     SpellCheckerQuickFix[] fixes = SpellcheckingStrategy.getDefaultBatchFixes();
-    ProblemDescriptor problemDescriptor = createProblemDescriptor(element, offset, textRange, holder, fixes, false);
+    ProblemDescriptor problemDescriptor = createProblemDescriptor(element, offset, textRange, holder, fixes, false, wordWithTypo);
     holder.registerProblem(problemDescriptor);
   }
 
@@ -174,19 +178,23 @@ public class SpellCheckingInspection extends LocalInspectionTool {
                                    ? strategy.getRegularFixes(element, offset, textRange, useRename, wordWithTypo)
                                    : SpellcheckingStrategy.getDefaultRegularFixes(useRename, wordWithTypo);
 
-    final ProblemDescriptor problemDescriptor = createProblemDescriptor(element, offset, textRange, holder, fixes, true);
+    final ProblemDescriptor problemDescriptor = createProblemDescriptor(element, offset, textRange, holder, fixes, true, wordWithTypo);
     holder.registerProblem(problemDescriptor);
   }
 
   private static ProblemDescriptor createProblemDescriptor(PsiElement element, int offset, TextRange textRange, ProblemsHolder holder,
                                                            SpellCheckerQuickFix[] fixes,
-                                                           boolean onTheFly) {
-    final String description = SpellCheckerBundle.message("typo.in.word.ref");
-    final TextRange highlightRange = TextRange.from(offset + textRange.getStartOffset(), textRange.getLength());
-    assert highlightRange.getStartOffset()>=0;
+                                                           boolean onTheFly, String wordWithTypo) {
+    SpellcheckingStrategy strategy = getSpellcheckingStrategy(element, element.getLanguage());
+    final Tokenizer tokenizer = strategy != null ? strategy.getTokenizer(element) : null;
+    if (tokenizer != null) {
+      textRange = tokenizer.getHighlightingRange(element, offset, textRange);
+    }
+    assert textRange.getStartOffset() >= 0;
 
+    final String description = SpellCheckerBundle.message("typo.in.word.ref", wordWithTypo);
     return holder.getManager()
-      .createProblemDescriptor(element, highlightRange, description, ProblemHighlightType.GENERIC_ERROR_OR_WARNING, onTheFly, fixes);
+      .createProblemDescriptor(element, textRange, description, ProblemHighlightType.GENERIC_ERROR_OR_WARNING, onTheFly, fixes);
   }
 
   @SuppressWarnings({"PublicField"})
@@ -249,7 +257,7 @@ public class SpellCheckingInspection extends LocalInspectionTool {
 
     @Override
     public void consume(TextRange textRange) {
-      final String word = textRange.substring(myText);
+      String word = textRange.substring(myText);
       if (myHolder.isOnTheFly() && myAlreadyChecked.contains(word)) {
         return;
       }
@@ -261,12 +269,19 @@ public class SpellCheckingInspection extends LocalInspectionTool {
 
       boolean hasProblems = myManager.hasProblem(word);
       if (hasProblems) {
+        int aposIndex = word.indexOf('\'');
+        if (aposIndex != -1) {
+          word = word.substring(0, aposIndex); // IdentifierSplitter.WORD leaves &apos;
+        }
+        hasProblems = myManager.hasProblem(word);
+      }
+      if (hasProblems) {
         if (myHolder.isOnTheFly()) {
           addRegularDescriptor(myElement, myOffset, textRange, myHolder, myUseRename, word);
         }
         else {
           myAlreadyChecked.add(word);
-          addBatchDescriptor(myElement, myOffset, textRange, myHolder);
+          addBatchDescriptor(myElement, myOffset, textRange, myHolder, word);
         }
       }
     }

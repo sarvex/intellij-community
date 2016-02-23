@@ -15,36 +15,36 @@
  */
 package com.intellij.ide.startup.impl;
 
-import com.intellij.ide.caches.CacheUpdater;
+import com.intellij.ide.impl.ProjectUtil;
 import com.intellij.ide.startup.StartupManagerEx;
 import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationListener;
 import com.intellij.notification.NotificationType;
 import com.intellij.notification.Notifications;
-import com.intellij.openapi.application.AccessToken;
-import com.intellij.openapi.application.Application;
-import com.intellij.openapi.application.ApplicationBundle;
-import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.*;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.Extensions;
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.*;
 import com.intellij.openapi.project.impl.ProjectLifecycleListener;
+import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.roots.ProjectRootManager;
 import com.intellij.openapi.startup.StartupActivity;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.FileUtil;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.openapi.vfs.impl.local.FileWatcher;
 import com.intellij.openapi.vfs.impl.local.LocalFileSystemImpl;
+import com.intellij.openapi.vfs.newvfs.NewVirtualFile;
 import com.intellij.openapi.vfs.newvfs.RefreshQueue;
+import com.intellij.util.PathUtil;
 import com.intellij.util.SmartList;
-import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.io.storage.HeavyProcessLatch;
 import com.intellij.util.messages.MessageBusConnection;
 import com.intellij.util.ui.UIUtil;
@@ -52,6 +52,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.FileNotFoundException;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
@@ -65,8 +66,6 @@ public class StartupManagerImpl extends StartupManagerEx {
   private final List<Runnable> myDumbAwarePostStartupActivities = Collections.synchronizedList(new LinkedList<Runnable>());
   private final List<Runnable> myNotDumbAwarePostStartupActivities = Collections.synchronizedList(new LinkedList<Runnable>());
   private boolean myPostStartupActivitiesPassed = false; // guarded by this
-
-  @SuppressWarnings("deprecation") private final List<CacheUpdater> myCacheUpdaters = ContainerUtil.newLinkedList();
 
   private volatile boolean myPreStartupActivitiesPassed = false;
   private volatile boolean myStartupActivitiesRunning = false;
@@ -92,15 +91,9 @@ public class StartupManagerImpl extends StartupManagerEx {
 
   @Override
   public synchronized void registerPostStartupActivity(@NotNull Runnable runnable) {
-    LOG.assertTrue(!myPostStartupActivitiesPassed, "Registering post-startup activity that will never be run");
+    LOG.assertTrue(!myPostStartupActivitiesPassed, "Registering post-startup activity that will never be run:" +
+                                                   " disposed=" + myProject.isDisposed() + "; open=" + myProject.isOpen() + "; passed=" + myStartupActivitiesPassed);
     (DumbService.isDumbAware(runnable) ? myDumbAwarePostStartupActivities : myNotDumbAwarePostStartupActivities).add(runnable);
-  }
-
-  @SuppressWarnings("deprecation")
-  @Override
-  public void registerCacheUpdater(@NotNull CacheUpdater updater) {
-    LOG.assertTrue(!myStartupActivitiesPassed, CacheUpdater.class.getSimpleName() + " must be registered before startup activity finished");
-    myCacheUpdaters.add(updater);
   }
 
   @Override
@@ -214,11 +207,6 @@ public class StartupManagerImpl extends StartupManagerEx {
         }
       }
     });
-
-    // otherwise will be stored - we must not create config files in tests
-    if (!app.isUnitTestMode()) {
-      Registry.get("ide.firstStartup").setValue(false);
-    }
   }
 
   public void scheduleInitialVfsRefresh() {
@@ -227,6 +215,8 @@ public class StartupManagerImpl extends StartupManagerEx {
       public void run() {
         if (myProject.isDisposed()) return;
 
+        markContentRootsForRefresh();
+
         Application app = ApplicationManager.getApplication();
         if (!app.isHeadlessEnvironment()) {
           final long sessionId = VirtualFileManager.getInstance().asyncRefresh(null);
@@ -234,6 +224,8 @@ public class StartupManagerImpl extends StartupManagerEx {
           connection.subscribe(ProjectLifecycleListener.TOPIC, new ProjectLifecycleListener.Adapter() {
             @Override
             public void afterProjectClosed(@NotNull Project project) {
+              if (project != myProject) return;
+
               RefreshQueue.getInstance().cancelSession(sessionId);
               connection.disconnect();
             }
@@ -246,13 +238,30 @@ public class StartupManagerImpl extends StartupManagerEx {
     });
   }
 
+  private void markContentRootsForRefresh() {
+    for (Module module : ModuleManager.getInstance(myProject).getModules()) {
+      for (VirtualFile contentRoot : ModuleRootManager.getInstance(module).getContentRoots()) {
+        if (contentRoot instanceof NewVirtualFile) {
+          ((NewVirtualFile)contentRoot).markDirtyRecursively();
+        }
+      }
+    }
+  }
+
   private void checkFsSanity() {
     try {
       String path = myProject.getProjectFilePath();
-      boolean actual = FileUtil.isFileSystemCaseSensitive(path);
-      LOG.info(path + " case-sensitivity: " + actual);
-      if (actual != SystemInfo.isFileSystemCaseSensitive) {
-        int prefix = SystemInfo.isFileSystemCaseSensitive ? 1 : 0;  // IDE=true -> FS=false -> prefix='in'
+      if (path == null || FileUtil.isAncestor(PathManager.getConfigPath(), path, true)) {
+        return;
+      }
+      if (ProjectUtil.isDirectoryBased(myProject)) {
+        path = PathUtil.getParentPath(path);
+      }
+
+      boolean expected = SystemInfo.isFileSystemCaseSensitive, actual = FileUtil.isFileSystemCaseSensitive(path);
+      LOG.info(path + " case-sensitivity: expected=" + expected + " actual=" + actual);
+      if (actual != expected) {
+        int prefix = expected ? 1 : 0;  // IDE=true -> FS=false -> prefix='in'
         String title = ApplicationBundle.message("fs.case.sensitivity.mismatch.title");
         String text = ApplicationBundle.message("fs.case.sensitivity.mismatch.message", prefix);
         Notifications.Bus.notify(
@@ -270,7 +279,7 @@ public class StartupManagerImpl extends StartupManagerEx {
     if (!(fs instanceof LocalFileSystemImpl)) return;
     FileWatcher watcher = ((LocalFileSystemImpl)fs).getFileWatcher();
     if (!watcher.isOperational()) return;
-    List<String> manualWatchRoots = watcher.getManualWatchRoots();
+    Collection<String> manualWatchRoots = watcher.getManualWatchRoots();
     if (manualWatchRoots.isEmpty()) return;
     VirtualFile[] roots = ProjectRootManager.getInstance(myProject).getContentRoots();
     if (roots.length == 0) return;
@@ -312,10 +321,6 @@ public class StartupManagerImpl extends StartupManagerEx {
             return "initial refresh";
           }
         });
-      }
-
-      if (!myCacheUpdaters.isEmpty()) {
-        dumbService.queueCacheUpdateInDumbMode(myCacheUpdaters);
       }
     }
     catch (ProcessCanceledException e) {
@@ -362,14 +367,20 @@ public class StartupManagerImpl extends StartupManagerEx {
       }
     }
 
-    UIUtil.invokeLaterIfNeeded(new Runnable() {
+    Runnable runnable = new Runnable() {
       @Override
       public void run() {
         if (!myProject.isDisposed()) {
           action.run();
         }
       }
-    });
+    };
+    if (application.isDispatchThread() && ModalityState.current() == ModalityState.NON_MODAL) {
+      runnable.run();
+    }
+    else {
+      application.invokeLater(runnable, ModalityState.NON_MODAL);
+    }
   }
 
   @TestOnly
@@ -378,7 +389,6 @@ public class StartupManagerImpl extends StartupManagerEx {
     myStartupActivities.clear();
     myDumbAwarePostStartupActivities.clear();
     myNotDumbAwarePostStartupActivities.clear();
-    myCacheUpdaters.clear();
   }
 
   @TestOnly

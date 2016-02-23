@@ -17,7 +17,9 @@ package com.jetbrains.python.testing.attest;
 
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.openapi.util.io.FileUtil;
+import com.jetbrains.python.PythonHelper;
 import com.jetbrains.python.testing.PythonTestCommandLineStateBase;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +29,7 @@ import java.util.List;
  */
 public class PythonAtTestCommandLineState extends PythonTestCommandLineStateBase {
   private final PythonAtTestRunConfiguration myConfig;
-  private static final String UTRUNNER_PY = "pycharm/attestrunner.py";
+
 
   public PythonAtTestCommandLineState(PythonAtTestRunConfiguration runConfiguration, ExecutionEnvironment env) {
     super(runConfiguration, env);
@@ -35,10 +37,11 @@ public class PythonAtTestCommandLineState extends PythonTestCommandLineStateBase
   }
 
   @Override
-  protected String getRunner() {
-    return UTRUNNER_PY;
+  protected PythonHelper getRunner() {
+    return PythonHelper.ATTEST;
   }
 
+  @NotNull
   protected List<String> getTestSpecs() {
     List<String> specs = new ArrayList<String>();
 

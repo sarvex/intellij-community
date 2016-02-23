@@ -48,16 +48,14 @@ import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.fileTypes.*;
 import com.intellij.openapi.fileTypes.impl.AbstractFileType;
 import com.intellij.openapi.ide.CopyPasteManager;
+import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.wm.IdeFocusManager;
-import com.intellij.psi.PsiElement;
-import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiFileFactory;
-import com.intellij.psi.PsiReference;
+import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CodeStyleSettings;
 import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
 import com.intellij.psi.impl.DebugUtil;
@@ -284,8 +282,12 @@ public class PsiViewerDialog extends DialogWrapper implements DataProvider, Disp
       @Override
       public Component getListCellRendererComponent(@NotNull JList list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
         final Component comp = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-        if (resolve(index) == null) {
-          comp.setForeground(JBColor.RED);
+        try {
+          if (resolve(index) == null) {
+            comp.setForeground(JBColor.RED);
+          }
+        }
+        catch (IndexNotReadyException ignore) {
         }
         return comp;
       }
@@ -757,9 +759,10 @@ public class PsiViewerDialog extends DialogWrapper implements DataProvider, Disp
           ext = myExtensionComboBox.getSelectedItem().toString().toLowerCase();
         }
         if (type instanceof LanguageFileType) {
-          final Language language = ((LanguageFileType)type).getLanguage();
           final Language dialect = (Language)myDialectComboBox.getSelectedItem();
-          return PsiFileFactory.getInstance(myProject).createFileFromText("Dummy." + ext, dialect == null ? language : dialect, text);
+          if (dialect != null) {
+            return PsiFileFactory.getInstance(myProject).createFileFromText("Dummy." + ext, dialect, text);
+          }
         }
         return PsiFileFactory.getInstance(myProject).createFileFromText("Dummy." + ext, type, text);
       }
@@ -1059,7 +1062,16 @@ public class PsiViewerDialog extends DialogWrapper implements DataProvider, Disp
       final PsiReference[] references = element.getReferences();
       cache = new PsiElement[references.length];
       for (int i = 0; i < references.length; i++) {
-        cache[i] = references[i].resolve();
+        final PsiReference reference = references[i];
+        final PsiElement resolveResult;
+        if (reference instanceof PsiPolyVariantReference) {
+          final ResolveResult[] results = ((PsiPolyVariantReference)reference).multiResolve(true);
+          resolveResult = results.length == 0 ? null : results[0].getElement();
+        }
+        else {
+          resolveResult = reference.resolve();
+        }
+        cache[i] = resolveResult;
       }
       map.put(element, cache);
     }

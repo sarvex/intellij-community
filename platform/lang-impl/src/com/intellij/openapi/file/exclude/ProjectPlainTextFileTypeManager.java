@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,16 +17,15 @@ package com.intellij.openapi.file.exclude;
 
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.components.State;
-import com.intellij.openapi.components.Storage;
-import com.intellij.openapi.components.StoragePathMacros;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.openapi.vfs.VirtualFile;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * @author Rustam Vishnyakov
  */
-@State(name = "ProjectPlainTextFileTypeManager", storages = {@Storage(file = StoragePathMacros.PROJECT_FILE)})
+@State(name = "ProjectPlainTextFileTypeManager")
 public class ProjectPlainTextFileTypeManager extends PersistentFileSetManager {
   private final ProjectFileIndex myIndex;
 
@@ -34,7 +33,7 @@ public class ProjectPlainTextFileTypeManager extends PersistentFileSetManager {
     myIndex = projectFileIndex;
   }
 
-  public boolean hasProjectContaining(VirtualFile file) {
+  boolean hasProjectContaining(@NotNull VirtualFile file) {
     return myIndex.isInContent(file);
   }
 

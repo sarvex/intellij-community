@@ -28,6 +28,7 @@ import com.intellij.testFramework.IdeaTestUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
+//javac option to dump bounds: -XDdumpInferenceGraphsTo=
 public class GenericsHighlighting8Test extends LightDaemonAnalyzerTestCase {
   @NonNls private static final String BASE_PATH = "/codeInsight/daemonCodeAnalyzer/genericsHighlighting8";
 
@@ -746,6 +747,10 @@ public class GenericsHighlighting8Test extends LightDaemonAnalyzerTestCase {
     doTest();
   }
 
+  public void testCastToIntersection() throws Exception {
+    doTest();
+  }
+
   public void testIDEA122401() throws Exception {
     doTest();
   }
@@ -810,4 +815,163 @@ public class GenericsHighlighting8Test extends LightDaemonAnalyzerTestCase {
     doTest();
   }
 
+  public void testIDEA139069() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA67745() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA57313() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA57387() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA57314() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA57322() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA57362() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA57320() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA139090() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA57502() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA67746() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA67592() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA93713() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA107713() throws Exception {
+    doTest();
+  }
+
+  public void testExceptionCollectionWithLambda() throws Exception {
+    doTest();
+  }
+
+  public void testUncheckedWarningsWhenInferredTypeLeadsToRawRoGenericAssignment() throws Exception {
+    doTest(true);
+  }
+
+  public void testExpectedTypeBasedOnArrayCreationWithoutExplicitType() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA148348() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA148361() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA134059() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA139222() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA139156() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA139169() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA131686() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA56754() throws Exception {
+    doTest();
+  }
+
+  public void testAccessClassForWildcardCaptureType() throws Exception {
+    doTest();
+  }
+
+  public void testDistinguishTypeArgs() throws Exception {
+    doTest();
+  }
+
+  public void testRecursiveCapturedWildcardTypes() throws Exception {
+    doTest();
+  }
+
+  public void testRecursiveCapturedWildcardTypesIDEA139167() throws Exception {
+    doTest();
+  }
+  
+  public void testRecursiveCapturedWildcardTypesIDEA139157() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA146897() throws Exception {
+    doTest();
+  }
+
+  public void testIDEA139096() throws Exception {
+    doTest();
+  }
+
+  public void testCastingCapturedWildcardToPrimitive() throws Exception {
+    doTest();
+  }
+
+  public void testCastingCapturedWildcardToArray() throws Exception {
+    doTest();
+  }
+
+  public void testCheckUncheckedAssignmentDuringVariablesResaolution() throws Exception {
+    doTest(true);
+  }
+
+  public void testRetrieveInferenceErrorsFromContainingCallsIfCurrentDoesNotProvideAny() throws Exception {
+    doTest();
+  }
+
+  public void testForeachOverCapturedWildcardWithCollectionUpperBound() throws Exception {
+    doTest();
+  }
+
+  public void testCapturedWildcardWithPrimitiveTypesChecks() throws Exception {
+    doTest();
+  }
+
+  public void testCapturedWildcardPackageLocalAccess() throws Exception {
+    doTest();
+  }
+
+  public void testCapturedWildcardPassedThroughMethodCallChain() throws Exception {
+    doTest();
+  }
 }

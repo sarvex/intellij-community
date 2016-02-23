@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import com.intellij.psi.codeStyle.*;
 import com.intellij.psi.codeStyle.autodetect.DetectableIndentOptionsProvider;
 import com.intellij.testFramework.LightIdeaTestCase;
 import com.intellij.util.IncorrectOperationException;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.text.LineReader;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -73,7 +74,7 @@ public abstract class AbstractJavaFormatterTest extends LightIdeaTestCase {
         if (line.length > 0 || shiftEmptyLines) {
           StringUtil.repeatSymbol(result, ' ', i);
         }
-        result.append(new String(line));
+        result.append(new String(line, CharsetToolkit.UTF8_CHARSET));
       }
       finally {
         first = false;
@@ -83,7 +84,7 @@ public abstract class AbstractJavaFormatterTest extends LightIdeaTestCase {
     return result.toString();
   }
 
-  protected enum Action {REFORMAT, INDENT}
+  protected enum Action {REFORMAT, INDENT, REFORMAT_WITH_CONTEXT}
 
   public static JavaCodeStyleSettings getJavaSettings() {
     return getSettings().getRootSettings().getCustomSettings(JavaCodeStyleSettings.class);
@@ -105,6 +106,13 @@ public abstract class AbstractJavaFormatterTest extends LightIdeaTestCase {
       @Override
       public void run(PsiFile psiFile, int startOffset, int endOffset) {
         CodeStyleManager.getInstance(getProject()).adjustLineIndent(psiFile, startOffset);
+      }
+    });
+    ACTIONS.put(Action.REFORMAT_WITH_CONTEXT, new TestFormatAction() {
+      @Override
+      public void run(PsiFile psiFile, int startOffset, int endOffset) {
+        List<TextRange> ranges = ContainerUtil.newArrayList(new TextRange(startOffset, endOffset));
+        CodeStyleManager.getInstance(getProject()).reformatTextWithContext(psiFile, ranges);
       }
     });
   }
@@ -236,7 +244,7 @@ public abstract class AbstractJavaFormatterTest extends LightIdeaTestCase {
     );
   }
 
-  private static String loadFile(String name) {
+  protected static String loadFile(String name) {
     String fullName = BASE_PATH + File.separatorChar + name;
     try {
       String text = FileUtil.loadFile(new File(fullName));

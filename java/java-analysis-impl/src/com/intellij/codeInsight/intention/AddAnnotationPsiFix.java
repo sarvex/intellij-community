@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.JavaCodeStyleManager;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
+import com.intellij.util.ObjectUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -40,12 +41,14 @@ public class AddAnnotationPsiFix extends LocalQuickFixOnPsiElement {
   protected final String myText;
 
   public AddAnnotationPsiFix(@NotNull String fqn,
-                            @NotNull PsiModifierListOwner modifierListOwner,
-                            @NotNull PsiNameValuePair[] values,
-                            @NotNull String... annotationsToRemove) {
+                             @NotNull PsiModifierListOwner modifierListOwner,
+                             @NotNull PsiNameValuePair[] values,
+                             @NotNull String... annotationsToRemove) {
     super(modifierListOwner);
     myAnnotation = fqn;
+    ObjectUtils.assertAllElementsNotNull(values);
     myPairs = values;
+    ObjectUtils.assertAllElementsNotNull(annotationsToRemove);
     myAnnotationsToRemove = annotationsToRemove;
     myText = calcText(modifierListOwner, myAnnotation);
   }
@@ -152,10 +155,10 @@ public class AddAnnotationPsiFix extends LocalQuickFixOnPsiElement {
     return inserted;
   }
 
-  public static void removePhysicalAnnotations(PsiModifierListOwner owner, String... fqns) {
+  public static void removePhysicalAnnotations(@NotNull PsiModifierListOwner owner, @NotNull String... fqns) {
     for (String fqn : fqns) {
-      PsiAnnotation annotation = AnnotationUtil.findAnnotation(owner, fqn);
-      if (annotation != null) {
+      PsiAnnotation annotation = AnnotationUtil.findAnnotation(owner, true, fqn);
+      if (annotation != null && !AnnotationUtil.isInferredAnnotation(annotation)) {
         annotation.delete();
       }
     }

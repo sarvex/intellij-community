@@ -10,5 +10,5 @@ public enum NullabilityProblem {
   assigningToNotNull,
   nullableReturn,
   passingNullableToNotNullParameter,
-  passingNullableArgumentToNonAnnotatedParameter,
+  passingNullableArgumentToNonAnnotatedParameter
 }

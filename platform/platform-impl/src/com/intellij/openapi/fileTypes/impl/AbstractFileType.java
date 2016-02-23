@@ -22,7 +22,6 @@ import com.intellij.lang.Commenter;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.fileTypes.*;
 import com.intellij.openapi.fileTypes.ex.ExternalizableFileType;
-import com.intellij.openapi.options.ExternalInfo;
 import com.intellij.openapi.options.ExternalizableScheme;
 import com.intellij.openapi.options.SettingsEditor;
 import com.intellij.openapi.util.*;
@@ -69,7 +68,6 @@ public class AbstractFileType extends UserFileType<AbstractFileType> implements 
   @NonNls private static final String ELEMENT_KEYWORDS4 = "keywords4";
   @NonNls private static final String ATTRIBUTE_NAME = "name";
   @NonNls public static final String ELEMENT_EXTENSION_MAP = "extensionMap";
-  private final ExternalInfo myExternalInfo = new ExternalInfo();
 
   public AbstractFileType(SyntaxTable syntaxTable) {
     mySyntaxTable = syntaxTable;
@@ -100,11 +98,11 @@ public class AbstractFileType extends UserFileType<AbstractFileType> implements 
   }
 
   @Override
-  public void copyFrom(UserFileType newType) {
+  public void copyFrom(@NotNull UserFileType newType) {
     super.copyFrom(newType);
+
     if (newType instanceof AbstractFileType) {
       mySyntaxTable = ((CustomSyntaxTableFileType)newType).getSyntaxTable();
-      myExternalInfo.copy(((AbstractFileType)newType).myExternalInfo);
     }
   }
 
@@ -415,11 +413,5 @@ public class AbstractFileType extends UserFileType<AbstractFileType> implements 
 
   public void setCommenter(final Commenter commenter) {
     myCommenter = commenter;
-  }
-
-  @Override
-  @NotNull
-  public ExternalInfo getExternalInfo() {
-    return myExternalInfo;
   }
 }

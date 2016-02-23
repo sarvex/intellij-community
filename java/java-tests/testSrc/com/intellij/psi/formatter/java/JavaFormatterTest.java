@@ -26,7 +26,10 @@ import com.intellij.psi.JavaCodeFragmentFactory;
 import com.intellij.psi.JavaPsiFacade;
 import com.intellij.psi.PsiCodeFragment;
 import com.intellij.psi.PsiElement;
-import com.intellij.psi.codeStyle.*;
+import com.intellij.psi.codeStyle.CodeStyleManager;
+import com.intellij.psi.codeStyle.CodeStyleSettings;
+import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
+import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
 import com.intellij.util.IncorrectOperationException;
 import org.jetbrains.annotations.NonNls;
 
@@ -71,6 +74,40 @@ public class JavaFormatterTest extends AbstractJavaFormatterTest {
     settings.CALL_PARAMETERS_WRAP = CommonCodeStyleSettings.WRAP_ALWAYS;
     settings.ALIGN_MULTILINE_PARAMETERS_IN_CALLS = true;
     doTest("NullMethodParameter.java", "NullMethodParameter_after.java");
+  }
+  
+  public void test_DoNot_JoinLines_If_KeepLineBreaksIsOn() {
+    getSettings().KEEP_LINE_BREAKS = true;
+    getSettings().METHOD_ANNOTATION_WRAP = CommonCodeStyleSettings.DO_NOT_WRAP;
+    doTextTest(
+      "public class Test<Param> {\n" +
+      "    @SuppressWarnings(\"unchecked\")\n" +
+      "        void executeParallel(Param... params) {\n" +
+      "    }\n" +
+      "}",
+      "public class Test<Param> {\n" +
+      "    @SuppressWarnings(\"unchecked\")\n" +
+      "    void executeParallel(Param... params) {\n" +
+      "    }\n" +
+      "}"
+    );
+  }
+  
+  public void test_DoNot_JoinLines_If_KeepLineBreaksIsOn_WithMultipleAnnotations() {
+    getSettings().KEEP_LINE_BREAKS = true;
+    getSettings().METHOD_ANNOTATION_WRAP = CommonCodeStyleSettings.DO_NOT_WRAP;
+    doTextTest(
+      "public class Test<Param> {\n" +
+      "    @Override @SuppressWarnings(\"unchecked\")\n" +
+      "        void executeParallel(Param... params) {\n" +
+      "    }\n" +
+      "}",
+      "public class Test<Param> {\n" +
+      "    @Override @SuppressWarnings(\"unchecked\")\n" +
+      "    void executeParallel(Param... params) {\n" +
+      "    }\n" +
+      "}"
+    );
   }
 
   public void testNew() throws Exception {
@@ -3201,4 +3238,35 @@ public void testSCR260() throws Exception {
       "}"
     );
   }
+
+  public void testReformatCodeWithErrorElementsWithoutAssertions() {
+    doTextTest("class  RedTest   {   \n\n\n\n\n\n\n\n   " +
+               "String  [  ]  [  ]   test    =    {       { \n\n\n\n\n {    \"\"}  \n\n\n\n\n };   " +
+               "String  [  ]  [  ]   test    =    {       { \n\n\n\n\n {    \"\"}  \n\n\n\n\n };   " +
+               "                      \n\n\n\n\n\n\n\n  }  ",
+               "class RedTest {\n\n\n" +
+               "    String[][] test = {{\n\n\n" +
+               "            {\"\"}\n\n\n" +
+               "    };\n" +
+               "    String[][] test = {{\n\n\n" +
+               "            {\"\"}\n\n\n" +
+               "    };\n\n\n" +
+               "}  ");
+  }
+  
+  public void testReformatPackageAnnotation() {
+    doTextTest(
+      "@ParametersAreNonnullByDefault package com.example;",
+      "@ParametersAreNonnullByDefault\n" +
+      "package com.example;"
+    );
+    
+    doTextTest(
+      "        @ParametersAreNonnullByDefault\n" +
+      "package com.example;",
+      "@ParametersAreNonnullByDefault\n" +
+      "package com.example;"
+    );
+  }
+  
 }

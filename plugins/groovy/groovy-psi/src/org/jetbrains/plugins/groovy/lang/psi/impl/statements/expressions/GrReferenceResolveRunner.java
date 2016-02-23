@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@
  */
 package org.jetbrains.plugins.groovy.lang.psi.impl.statements.expressions;
 
-import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.psi.*;
 import com.intellij.psi.util.InheritanceUtil;
 import org.jetbrains.annotations.NotNull;
@@ -30,46 +29,36 @@ import org.jetbrains.plugins.groovy.lang.psi.impl.GroovyPsiManager;
 import org.jetbrains.plugins.groovy.lang.psi.impl.PsiImplUtil;
 import org.jetbrains.plugins.groovy.lang.psi.typeEnhancers.ClosureParameterEnhancer;
 import org.jetbrains.plugins.groovy.lang.psi.util.PsiUtil;
+import org.jetbrains.plugins.groovy.lang.resolve.ClosureMissingMethodContributor;
 import org.jetbrains.plugins.groovy.lang.resolve.ResolveUtil;
 import org.jetbrains.plugins.groovy.lang.resolve.processors.ClassHint;
-import org.jetbrains.plugins.groovy.lang.resolve.processors.ResolverProcessor;
-
-import java.util.List;
-import java.util.ListIterator;
+import org.jetbrains.plugins.groovy.lang.resolve.processors.GroovyResolverProcessor;
 
 /**
  * @author Medvedev Max
  */
 public class GrReferenceResolveRunner {
-
   private final GrReferenceExpression place;
-  private ResolverProcessor processor;
+  private final GroovyResolverProcessor processor;
 
-  public GrReferenceResolveRunner(@NotNull GrReferenceExpression _place) {
-    place = _place;
+  public GrReferenceResolveRunner(GrReferenceExpression place,
+                                  GroovyResolverProcessor processor) {
+    this.place = place;
+    this.processor = processor;
   }
 
-  public boolean resolveImpl(@NotNull ResolverProcessor _processor) {
-    processor = _processor;
-    try {
-      boolean result = doResolve();
-      ProgressManager.checkCanceled();
-      return result;
-    }
-    finally {
-      processor = null;
-    }
-  }
-
-  private boolean doResolve() {
+  public void resolveImpl() {
     GrExpression qualifier = place.getQualifier();
     if (qualifier == null) {
-      if (!ResolveUtil.treeWalkUp(place, processor, true)) return false;
-      if (!processor.hasCandidates()) {
-        GrExpression runtimeQualifier = PsiImplUtil.getRuntimeQualifier(place);
-        if (runtimeQualifier != null) {
-          if (!processQualifier(runtimeQualifier)) return false;
-        }
+      if (!ResolveUtil.treeWalkUp(place, processor, true)) return;
+
+      if (place.getContext() instanceof GrMethodCall) {
+        if (!ClosureMissingMethodContributor.processMethodsFromClosures(place, processor)) return;
+      }
+
+      final GrExpression runtimeQualifier = PsiImplUtil.getRuntimeQualifier(place);
+      if (runtimeQualifier != null) {
+        processQualifier(runtimeQualifier);
       }
     }
     else {
@@ -80,16 +69,15 @@ public class GrReferenceResolveRunner {
           final ResolveState state = ResolveState.initial()
             .put(ClassHint.RESOLVE_CONTEXT, qualifier)
             .put(SpreadState.SPREAD_STATE, SpreadState.create(qtype, null));
-          if (!processQualifierType(componentType, state)) return false;
+          processQualifierType(componentType, state);
         }
       }
       else {
-        if (ResolveUtil.isClassReference(place)) return true;
-        if (!processQualifier(qualifier)) return false;
-        if (!processJavaLangClass(qualifier)) return false;
+        if (ResolveUtil.isClassReference(place)) return;
+        if (!processQualifier(qualifier)) return;
+        processJavaLangClass(qualifier);
       }
     }
-    return true;
   }
 
   private boolean processJavaLangClass(@NotNull GrExpression qualifier) {
@@ -119,19 +107,17 @@ public class GrReferenceResolveRunner {
   private boolean processQualifier(@NotNull GrExpression qualifier) {
     PsiType qualifierType = qualifier.getType();
     ResolveState state = ResolveState.initial().put(ClassHint.RESOLVE_CONTEXT, qualifier);
-    if (qualifierType == null || qualifierType == PsiType.VOID) {
+    if (qualifierType == null || PsiType.VOID.equals(qualifierType)) {
       if (qualifier instanceof GrReferenceExpression) {
         PsiElement resolved = ((GrReferenceExpression)qualifier).resolve();
-        if (resolved != null && !resolved.processDeclarations(processor, state, null, place)) return false;
+        if (resolved instanceof PsiClass) {
+          if (!ResolveUtil.processClassDeclarations((PsiClass)resolved, processor, state, null, place)) return false;
+        }
+        else if (resolved != null && !resolved.processDeclarations(processor, state, null, place)) return false;
         if (!(resolved instanceof PsiPackage)) {
           PsiType objectQualifier = TypesUtil.getJavaLangObject(place);
           if (!processQualifierType(objectQualifier, state)) return false;
         }
-      }
-    }
-    else if (qualifierType instanceof PsiIntersectionType) {
-      for (PsiType conjunct : ((PsiIntersectionType)qualifierType).getConjuncts()) {
-        if (!processQualifierType(conjunct, state)) return false;
       }
     }
     else {
@@ -159,7 +145,7 @@ public class GrReferenceResolveRunner {
       substitutor = substitutor.put(typeParameters[0], qualifierType);
       state = state.put(PsiSubstitutor.KEY, substitutor);
     }
-    if (!javaLangClass.processDeclarations(processor, state, null, place)) return false;
+    if (!ResolveUtil.processClassDeclarations(javaLangClass, processor, state, null, place)) return false;
 
     PsiType javaLangClassType = JavaPsiFacade.getElementFactory(place.getProject()).createType(javaLangClass, substitutor);
 
@@ -182,17 +168,14 @@ public class GrReferenceResolveRunner {
     }
 
     if (qualifierType instanceof GrTraitType) {
-      if (!processTraitType((GrTraitType)qualifierType, state)) {
-        return false;
-      }
-      return true;
+      return processTraitType((GrTraitType)qualifierType, state);
     }
 
     if (qualifierType instanceof PsiClassType) {
       PsiClassType.ClassResolveResult qualifierResult = ((PsiClassType)qualifierType).resolveGenerics();
       PsiClass qualifierClass = qualifierResult.getElement();
       if (qualifierClass != null) {
-        if (!qualifierClass.processDeclarations(processor, state.put(PsiSubstitutor.KEY, qualifierResult.getSubstitutor()), null, place)) {
+        if (!ResolveUtil.processClassDeclarations(qualifierClass, processor, state.put(PsiSubstitutor.KEY, qualifierResult.getSubstitutor()), null, place)) {
           return false;
         }
       }
@@ -200,7 +183,7 @@ public class GrReferenceResolveRunner {
     else if (qualifierType instanceof PsiArrayType) {
       final GroovyPsiManager gmanager = GroovyPsiManager.getInstance(place.getProject());
       final GrTypeDefinition arrayClass = gmanager.getArrayClass(((PsiArrayType)qualifierType).getComponentType());
-      if (arrayClass != null && !arrayClass.processDeclarations(processor, state, null, place)) return false;
+      if (arrayClass != null && !ResolveUtil.processClassDeclarations(arrayClass, processor, state, null, place)) return false;
     }
 
     if (!(place.getParent() instanceof GrMethodCall) && InheritanceUtil.isInheritor(qualifierType, CommonClassNames.JAVA_UTIL_COLLECTION)) {
@@ -216,25 +199,14 @@ public class GrReferenceResolveRunner {
     return true;
   }
 
+  /**
+   * Process trait type conjuncts in reversed order because last applied trait matters.
+   */
   private boolean processTraitType(@NotNull GrTraitType traitType, @NotNull ResolveState state) {
-    GrTypeDefinition mockDefinition = traitType.getMockTypeDefinition();
-    if (mockDefinition != null) {
-      if (!mockDefinition.processDeclarations(processor, state, null, place)) {
-        return false;
-      }
+    final PsiType[] conjuncts = traitType.getConjuncts();
+    for (int i = conjuncts.length - 1; i >= 0; i--) {
+      if (!processQualifierType(conjuncts[i], state)) return false;
     }
-    else {
-      PsiClassType exprType = traitType.getExprType();
-
-      if (!processQualifierType(exprType, state)) return false;
-
-      List<PsiClassType> traitTypes = traitType.getTraitTypes();
-      for (ListIterator<PsiClassType> iterator = traitTypes.listIterator(); iterator.hasPrevious(); ) {
-        PsiClassType type = iterator.previous();
-        if (!processQualifierType(type, state)) return false;
-      }
-    }
-
     return true;
   }
 }

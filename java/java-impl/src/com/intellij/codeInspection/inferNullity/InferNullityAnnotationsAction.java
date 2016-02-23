@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,17 +19,13 @@ import com.intellij.analysis.AnalysisScope;
 import com.intellij.analysis.AnalysisScopeBundle;
 import com.intellij.analysis.BaseAnalysisAction;
 import com.intellij.analysis.BaseAnalysisActionDialog;
-import com.intellij.codeInsight.AnnotationUtil;
 import com.intellij.codeInsight.FileModificationService;
 import com.intellij.codeInsight.NullableNotNullManager;
-import com.intellij.codeInsight.daemon.QuickFixBundle;
-import com.intellij.codeInsight.daemon.impl.quickfix.LocateLibraryDialog;
-import com.intellij.codeInsight.daemon.impl.quickfix.OrderEntryFix;
+import com.intellij.codeInsight.daemon.impl.quickfix.JetBrainsAnnotationsExternalLibraryResolver;
 import com.intellij.history.LocalHistory;
 import com.intellij.history.LocalHistoryAction;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.application.Result;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Document;
@@ -37,9 +33,12 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectUtil;
+import com.intellij.openapi.roots.DependencyScope;
 import com.intellij.openapi.roots.ModuleRootModificationUtil;
+import com.intellij.openapi.roots.JavaProjectModelModificationService;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.roots.libraries.LibraryUtil;
 import com.intellij.openapi.ui.Messages;
@@ -79,7 +78,7 @@ public class InferNullityAnnotationsAction extends BaseAnalysisAction {
 
   @Override
   protected void analyze(@NotNull final Project project, @NotNull final AnalysisScope scope) {
-    PropertiesComponent.getInstance().setValue(ANNOTATE_LOCAL_VARIABLES, String.valueOf(myAnnotateLocalVariablesCb.isSelected()));
+    PropertiesComponent.getInstance().setValue(ANNOTATE_LOCAL_VARIABLES, myAnnotateLocalVariablesCb.isSelected());
 
     final ProgressManager progressManager = ProgressManager.getInstance();
     final Set<Module> modulesWithoutAnnotations = new HashSet<Module>();
@@ -104,6 +103,7 @@ public class InferNullityAnnotationsAction extends BaseAnalysisAction {
               }
               progressIndicator.setText(AnalysisScopeBundle.message("scanning.scope.progress.title"));
             }
+            if (!(file instanceof PsiJavaFile)) return;
             final Module module = ModuleUtilCore.findModuleForPsiElement(file);
             if (module != null && processed.add(module)) {
               if (PsiUtil.getLanguageLevel(file).compareTo(LanguageLevel.JDK_1_5) < 0) {
@@ -116,7 +116,7 @@ public class InferNullityAnnotationsAction extends BaseAnalysisAction {
           }
         });
       }
-    }, "Check applicability...", true, project)) {
+    }, "Check Applicability...", true, project)) {
       return;
     }
     if (!modulesWithLL.isEmpty()) {
@@ -125,58 +125,8 @@ public class InferNullityAnnotationsAction extends BaseAnalysisAction {
       return;
     }
     if (!modulesWithoutAnnotations.isEmpty()) {
-      final Library annotationsLib = LibraryUtil.findLibraryByClass(defaultNullable, project);
-      if (annotationsLib != null) {
-        String message = "Module" + (modulesWithoutAnnotations.size() == 1 ? " " : "s ");
-        message += StringUtil.join(modulesWithoutAnnotations, new Function<Module, String>() {
-          @Override
-          public String fun(Module module) {
-            return module.getName();
-          }
-        }, ", ");
-        message += (modulesWithoutAnnotations.size() == 1 ? " doesn't" : " don't");
-        message += " refer to the existing '" +
-                   annotationsLib.getName() +
-                   "' library with IDEA nullity annotations. Would you like to add the dependenc";
-        message += (modulesWithoutAnnotations.size() == 1 ? "y" : "ies") + " now?";
-        if (Messages.showOkCancelDialog(project, message, INFER_NULLITY_ANNOTATIONS, Messages.getErrorIcon()) ==
-            Messages.OK) {
-          ApplicationManager.getApplication().runWriteAction(new Runnable() {
-            @Override
-            public void run() {
-              for (Module module : modulesWithoutAnnotations) {
-                ModuleRootModificationUtil.addDependency(module, annotationsLib);
-              }
-            }
-          });
-          restartAnalysis(project, scope);
-        }
-      }
-      else if (Messages.showOkCancelDialog(project, "Infer Nullity Annotations requires that the nullity annotations" +
-                                                    " be available in all your project sources.\n\nYou will need to add annotations.jar as a library. " +
-                                                    "It is possible to configure custom JAR in e.g. Constant Conditions & Exceptions inspection or use JetBrains annotations available in installation. " +
-                                                    " IntelliJ IDEA nullity annotations are freely usable and redistributable under the Apache 2.0 license. Would you like to do it now?",
-                                           INFER_NULLITY_ANNOTATIONS, Messages.getErrorIcon()) == Messages.OK) {
-        ApplicationManager.getApplication().invokeLater(new Runnable() {
-          @Override
-          public void run() {
-            final LocateLibraryDialog dialog =
-              new LocateLibraryDialog(modulesWithoutAnnotations.iterator().next(), PathManager.getLibPath(), "annotations.jar",
-                                      QuickFixBundle.message("add.library.annotations.description"));
-            if (dialog.showAndGet()) {
-              final String path = dialog.getResultingLibraryPath();
-              new WriteCommandAction(project) {
-                @Override
-                protected void run(@NotNull final Result result) throws Throwable {
-                  for (Module module : modulesWithoutAnnotations) {
-                    OrderEntryFix.addBundledJarToRoots(project, null, module, null, AnnotationUtil.NOT_NULL, path);
-                  }
-                }
-              }.execute();
-              restartAnalysis(project, scope);
-            }
-          }
-        });
+      if (addAnnotationsDependency(project, modulesWithoutAnnotations, defaultNullable, INFER_NULLITY_ANNOTATIONS)) {
+        restartAnalysis(project, scope);
       }
       return;
     }
@@ -195,6 +145,50 @@ public class InferNullityAnnotationsAction extends BaseAnalysisAction {
     else {
       showUsageView(project, usageInfos, scope);
     }
+  }
+
+  public static boolean addAnnotationsDependency(@NotNull final Project project,
+                                                 @NotNull final Set<Module> modulesWithoutAnnotations,
+                                                 @NotNull String annoFQN, final String title) {
+    final Library annotationsLib = LibraryUtil.findLibraryByClass(annoFQN, project);
+    if (annotationsLib != null) {
+      String message = "Module" + (modulesWithoutAnnotations.size() == 1 ? " " : "s ");
+      message += StringUtil.join(modulesWithoutAnnotations, new Function<Module, String>() {
+        @Override
+        public String fun(Module module) {
+          return module.getName();
+        }
+      }, ", ");
+      message += (modulesWithoutAnnotations.size() == 1 ? " doesn't" : " don't");
+      message += " refer to the existing '" +
+                 annotationsLib.getName() +
+                 "' library with IntelliJ IDEA nullity annotations. Would you like to add the dependenc";
+      message += (modulesWithoutAnnotations.size() == 1 ? "y" : "ies") + " now?";
+      if (Messages.showOkCancelDialog(project, message, title, Messages.getErrorIcon()) == Messages.OK) {
+        ApplicationManager.getApplication().runWriteAction(new Runnable() {
+          @Override
+          public void run() {
+            for (Module module : modulesWithoutAnnotations) {
+              ModuleRootModificationUtil.addDependency(module, annotationsLib);
+            }
+          }
+        });
+        return true;
+      }
+      return false;
+    }
+    
+    if (Messages.showOkCancelDialog(project, "It is required that JetBrains annotations" +
+                                             " be available in all your project sources.\n\nYou will need to add annotations.jar as a library. " +
+                                             "It is possible to configure custom JAR\nin e.g. Constant Conditions & Exceptions inspection or use JetBrains annotations available in installation. " +
+                                             "\nIntelliJ IDEA nullity annotations are freely usable and redistributable under the Apache 2.0 license.\nWould you like to do it now?",
+                                    title, Messages.getErrorIcon()) == Messages.OK) {
+      Module firstModule = modulesWithoutAnnotations.iterator().next();
+      JavaProjectModelModificationService.getInstance(project).addDependency(modulesWithoutAnnotations, JetBrainsAnnotationsExternalLibraryResolver.getAnnotationsLibraryDescriptor(firstModule),
+                                                                             DependencyScope.COMPILE);
+      return true;
+    }
+    return false;
   }
 
   private UsageInfo[] findUsages(@NotNull final Project project,
@@ -279,7 +273,7 @@ public class InferNullityAnnotationsAction extends BaseAnalysisAction {
   }
 
   private void restartAnalysis(final Project project, final AnalysisScope scope) {
-    ApplicationManager.getApplication().invokeLater(new Runnable() {
+    DumbService.getInstance(project).smartInvokeLater(new Runnable() {
       @Override
       public void run() {
         analyze(project, scope);
@@ -301,7 +295,7 @@ public class InferNullityAnnotationsAction extends BaseAnalysisAction {
           }
         });
       }
-    }, "Preprocess usages", true, project)) return;
+    }, "Preprocess Usages", true, project)) return;
 
     if (convertUsagesRef.isNull()) return;
     final Usage[] usages = convertUsagesRef.get();
@@ -351,7 +345,7 @@ public class InferNullityAnnotationsAction extends BaseAnalysisAction {
   protected JComponent getAdditionalActionSettings(Project project, BaseAnalysisActionDialog dialog) {
     final JPanel panel = new JPanel(new VerticalFlowLayout());
     panel.add(new TitledSeparator());
-    myAnnotateLocalVariablesCb = new JCheckBox("Annotate local variables", PropertiesComponent.getInstance().getBoolean(ANNOTATE_LOCAL_VARIABLES, false));
+    myAnnotateLocalVariablesCb = new JCheckBox("Annotate local variables", PropertiesComponent.getInstance().getBoolean(ANNOTATE_LOCAL_VARIABLES));
     panel.add(myAnnotateLocalVariablesCb);
     return panel;
   }

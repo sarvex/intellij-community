@@ -39,7 +39,8 @@ public class RemoteCredentialsHolder implements MutableRemoteCredentials {
   public static final String SSH_PREFIX = "ssh://";
 
   private String myHost;
-  private int myPort;
+  private int myPort;//will always be equal to myLiteralPort, if it's valid, or equal to 0 otherwise
+  private String myLiteralPort;
   private boolean myAnonymous;
   private String myUserName;
   private String myPassword;
@@ -51,7 +52,7 @@ public class RemoteCredentialsHolder implements MutableRemoteCredentials {
   private boolean myStorePassphrase;
 
   public static String getCredentialsString(@NotNull RemoteCredentials cred) {
-    return SSH_PREFIX + cred.getUserName() + "@" + cred.getHost() + ":" + cred.getPort();
+    return SSH_PREFIX + cred.getUserName() + "@" + cred.getHost() + ":" + cred.getLiteralPort();
   }
 
   @Override
@@ -68,8 +69,28 @@ public class RemoteCredentialsHolder implements MutableRemoteCredentials {
     return myPort;
   }
 
+  /**
+   * Sets both int and String representations of port.
+   */
+  @Override
   public void setPort(int port) {
     myPort = port;
+    myLiteralPort = Integer.toString(port);
+  }
+
+  @Override
+  public String getLiteralPort(){
+    return myLiteralPort;
+  }
+
+  /**
+   * Sets string representation of port and its int value, which is equal to string one if it's a valid integer,
+   * and is 0 otherwise.
+   */
+  @Override
+  public void setLiteralPort(String portText){
+    myLiteralPort = portText;
+    myPort = StringUtil.parseInt(portText, 0);
   }
 
   @Override
@@ -222,7 +243,7 @@ public class RemoteCredentialsHolder implements MutableRemoteCredentials {
 
   public static void copyRemoteCredentials(@NotNull RemoteCredentials from, @NotNull MutableRemoteCredentials to) {
     to.setHost(from.getHost());
-    to.setPort(from.getPort());
+    to.setLiteralPort(from.getLiteralPort());//then port is copied
     to.setAnonymous(from.isAnonymous());
     to.setUserName(from.getUserName());
     to.setPassword(from.getPassword());
@@ -235,7 +256,7 @@ public class RemoteCredentialsHolder implements MutableRemoteCredentials {
 
   public void load(Element element) {
     setHost(element.getAttributeValue(HOST));
-    setPort(StringUtil.parseInt(element.getAttributeValue(PORT), 22));
+    setLiteralPort(element.getAttributeValue(PORT));
     setAnonymous(StringUtil.parseBoolean(element.getAttributeValue(ANONYMOUS), false));
     setSerializedUserName(element.getAttributeValue(USERNAME));
     setSerializedPassword(element.getAttributeValue(PASSWORD));
@@ -247,7 +268,7 @@ public class RemoteCredentialsHolder implements MutableRemoteCredentials {
 
   public void save(Element rootElement) {
     rootElement.setAttribute(HOST, StringUtil.notNullize(getHost()));
-    rootElement.setAttribute(PORT, Integer.toString(getPort()));
+    rootElement.setAttribute(PORT, getLiteralPort());
     rootElement.setAttribute(ANONYMOUS, Boolean.toString(isAnonymous()));
     rootElement.setAttribute(USERNAME, getSerializedUserName());
     rootElement.setAttribute(PASSWORD, getSerializedPassword());
@@ -264,27 +285,27 @@ public class RemoteCredentialsHolder implements MutableRemoteCredentials {
 
     RemoteCredentialsHolder holder = (RemoteCredentialsHolder)o;
 
+    if (myLiteralPort != null ? !myLiteralPort.equals(holder.myLiteralPort) : holder.myLiteralPort != null) return false;
     if (myAnonymous != holder.myAnonymous) return false;
-    if (myPort != holder.myPort) return false;
-    if (myStorePassphrase != holder.myStorePassphrase) return false;
-    if (myStorePassword != holder.myStorePassword) return false;
     if (myUseKeyPair != holder.myUseKeyPair) return false;
-    if (!myHost.equals(holder.myHost)) return false;
-    if (myKnownHostsFile != null ? !myKnownHostsFile.equals(holder.myKnownHostsFile) : holder.myKnownHostsFile != null) return false;
-    if (myPassphrase != null ? !myPassphrase.equals(holder.myPassphrase) : holder.myPassphrase != null) return false;
+    if (myStorePassword != holder.myStorePassword) return false;
+    if (myStorePassphrase != holder.myStorePassphrase) return false;
+    if (myHost != null ? !myHost.equals(holder.myHost) : holder.myHost != null) return false;
+    if (myUserName != null ? !myUserName.equals(holder.myUserName) : holder.myUserName != null) return false;
     if (myPassword != null ? !myPassword.equals(holder.myPassword) : holder.myPassword != null) return false;
     if (myPrivateKeyFile != null ? !myPrivateKeyFile.equals(holder.myPrivateKeyFile) : holder.myPrivateKeyFile != null) return false;
-    if (!myUserName.equals(holder.myUserName)) return false;
+    if (myKnownHostsFile != null ? !myKnownHostsFile.equals(holder.myKnownHostsFile) : holder.myKnownHostsFile != null) return false;
+    if (myPassphrase != null ? !myPassphrase.equals(holder.myPassphrase) : holder.myPassphrase != null) return false;
 
     return true;
   }
 
   @Override
   public int hashCode() {
-    int result = myHost.hashCode();
-    result = 31 * result + myPort;
+    int result = myHost != null ? myHost.hashCode() : 0;
+    result = 31 * result + (myLiteralPort != null ? myLiteralPort.hashCode() : 0);
     result = 31 * result + (myAnonymous ? 1 : 0);
-    result = 31 * result + myUserName.hashCode();
+    result = 31 * result + (myUserName != null ? myUserName.hashCode() : 0);
     result = 31 * result + (myPassword != null ? myPassword.hashCode() : 0);
     result = 31 * result + (myUseKeyPair ? 1 : 0);
     result = 31 * result + (myPrivateKeyFile != null ? myPrivateKeyFile.hashCode() : 0);

@@ -59,7 +59,7 @@ public class BuiltInWebBrowserUrlProvider extends WebBrowserUrlProvider implemen
   }
 
   public static boolean compareAuthority(@Nullable String currentAuthority) {
-    if (currentAuthority == null) {
+    if (StringUtil.isEmpty(currentAuthority)) {
       return false;
     }
 
@@ -69,7 +69,7 @@ public class BuiltInWebBrowserUrlProvider extends WebBrowserUrlProvider implemen
     }
 
     String host = currentAuthority.substring(0, portIndex);
-    if (!BuiltInWebServer.isOwnHostName(host)) {
+    if (!BuiltInWebServerKt.isOwnHostName(host)) {
       return false;
     }
 

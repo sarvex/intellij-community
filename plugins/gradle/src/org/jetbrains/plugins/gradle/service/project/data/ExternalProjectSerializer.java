@@ -28,12 +28,15 @@ import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.externalSystem.model.*;
 import com.intellij.openapi.externalSystem.model.project.ExternalSystemSourceType;
+import com.intellij.openapi.externalSystem.util.ExternalSystemUtil;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.StreamUtil;
 import gnu.trove.THashMap;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.plugins.gradle.DefaultExternalDependencyId;
+import org.jetbrains.plugins.gradle.model.*;
 import org.objenesis.strategy.StdInstantiatorStrategy;
 
 import java.io.File;
@@ -135,6 +138,56 @@ public class ExternalProjectSerializer {
 
     myKryo.register(ExternalSystemSourceType.class, new DefaultSerializers.EnumSerializer(ExternalSystemSourceType.class));
 
+    myKryo.register(
+      DefaultExternalProjectDependency.class,
+      new FieldSerializer<DefaultExternalProjectDependency>(myKryo, DefaultExternalProjectDependency.class) {
+        @Override
+        protected DefaultExternalProjectDependency create(Kryo kryo, Input input, Class<DefaultExternalProjectDependency> type) {
+          return new DefaultExternalProjectDependency();
+        }
+      }
+    );
+
+    myKryo.register(
+      DefaultFileCollectionDependency.class,
+      new FieldSerializer<DefaultFileCollectionDependency>(myKryo, DefaultFileCollectionDependency.class) {
+        @Override
+        protected DefaultFileCollectionDependency create(Kryo kryo, Input input, Class<DefaultFileCollectionDependency> type) {
+          return new DefaultFileCollectionDependency();
+        }
+      }
+    );
+
+    myKryo.register(
+      DefaultExternalLibraryDependency.class,
+      new FieldSerializer<DefaultExternalLibraryDependency>(myKryo, DefaultExternalLibraryDependency.class) {
+        @Override
+        protected DefaultExternalLibraryDependency create(Kryo kryo, Input input, Class<DefaultExternalLibraryDependency> type) {
+          return new DefaultExternalLibraryDependency();
+        }
+      }
+    );
+
+    myKryo.register(
+      DefaultUnresolvedExternalDependency.class,
+      new FieldSerializer<DefaultUnresolvedExternalDependency>(myKryo, DefaultUnresolvedExternalDependency.class) {
+        @Override
+        protected DefaultUnresolvedExternalDependency create(Kryo kryo, Input input, Class<DefaultUnresolvedExternalDependency> type) {
+          return new DefaultUnresolvedExternalDependency();
+        }
+      }
+    );
+
+    myKryo.register(
+      DefaultExternalDependencyId.class,
+      new FieldSerializer<DefaultExternalDependencyId>(myKryo, DefaultExternalDependencyId.class) {
+        @Override
+        protected DefaultExternalDependencyId create(Kryo kryo, Input input, Class<DefaultExternalDependencyId> type) {
+          return new DefaultExternalDependencyId();
+        }
+      }
+    );
+
     myKryo.register(LinkedHashSet.class, new CollectionSerializer() {
       @Override
       protected Collection create(Kryo kryo, Input input, Class<Collection> type) {
@@ -171,15 +224,15 @@ public class ExternalProjectSerializer {
   public void save(@NotNull ExternalProject externalProject) {
     Output output = null;
     try {
-      final String externalProjectPath = externalProject.getProjectDir().getPath();
+      final File externalProjectDir = externalProject.getProjectDir();
       final File configurationFile =
-        getProjectConfigurationFile(new ProjectSystemId(externalProject.getExternalSystemId()), externalProjectPath);
+        getProjectConfigurationFile(new ProjectSystemId(externalProject.getExternalSystemId()), externalProjectDir);
       if (!FileUtil.createParentDirs(configurationFile)) return;
 
       output = new Output(new FileOutputStream(configurationFile));
       myKryo.writeObject(output, externalProject);
 
-      LOG.debug("Data saved for imported project from: " + externalProjectPath);
+      LOG.debug("Data saved for imported project from: " + externalProjectDir.getPath());
     }
     catch (FileNotFoundException e) {
       LOG.error(e);
@@ -193,29 +246,30 @@ public class ExternalProjectSerializer {
   public ExternalProject load(@NotNull ProjectSystemId externalSystemId, File externalProjectPath) {
     LOG.debug("Attempt to load project data from: " + externalProjectPath);
     ExternalProject externalProject = null;
-    Input input = null;
     try {
-      final File configurationFile = getProjectConfigurationFile(externalSystemId, externalProjectPath.getPath());
-      if (configurationFile.isFile()) {
-        input = new Input(new FileInputStream(configurationFile));
+      final File configurationFile = getProjectConfigurationFile(externalSystemId, externalProjectPath);
+      if (!configurationFile.isFile()) return null;
+
+      Input input = new Input(new FileInputStream(configurationFile));
+      try {
         externalProject = myKryo.readObject(input, DefaultExternalProject.class);
+      }
+      finally {
+        StreamUtil.closeStream(input);
       }
     }
     catch (Exception e) {
-      LOG.error(e);
+      LOG.debug(e);
     }
-    finally {
-      StreamUtil.closeStream(input);
-    }
-
     if (externalProject != null) {
       LOG.debug("Loaded project: " + externalProject.getProjectDir());
     }
     return externalProject;
   }
 
-  private static File getProjectConfigurationFile(ProjectSystemId externalSystemId, String externalProjectPath) {
-    return new File(getProjectConfigurationDir(externalSystemId), Integer.toHexString(externalProjectPath.hashCode()) + "/project.dat");
+  private static File getProjectConfigurationFile(ProjectSystemId externalSystemId, File externalProjectPath) {
+    return new File(getProjectConfigurationDir(externalSystemId),
+                    Integer.toHexString(ExternalSystemUtil.fileHashCode(externalProjectPath)) + "/project.dat");
   }
 
   private static File getProjectConfigurationDir(ProjectSystemId externalSystemId) {
@@ -244,26 +298,6 @@ public class ExternalProjectSerializer {
     public File read(Kryo kryo, Input input, Class<File> type) {
       File file = myStdKryo.readObject(input, File.class);
       return new File(file.getPath());
-    }
-  }
-
-  private static class StdSerializer<T> extends Serializer<T> {
-    private final Kryo myStdKryo;
-
-    public StdSerializer(Class<T> clazz) {
-      myStdKryo = new Kryo();
-      myStdKryo.register(clazz);
-      myStdKryo.setInstantiatorStrategy(new StdInstantiatorStrategy());
-    }
-
-    @Override
-    public void write(Kryo kryo, Output output, T object) {
-      myStdKryo.writeObject(output, object);
-    }
-
-    @Override
-    public T read(Kryo kryo, Input input, Class<T> type) {
-      return myStdKryo.readObject(input, type);
     }
   }
 }

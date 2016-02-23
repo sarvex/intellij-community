@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -67,7 +67,7 @@ import java.util.concurrent.TimeUnit;
  */
 @State(
   name = "CommittedChangesCache",
-  storages = {@Storage(file = StoragePathMacros.WORKSPACE_FILE)}
+  storages = {@Storage(StoragePathMacros.WORKSPACE_FILE)}
 )
 public class CommittedChangesCache implements PersistentStateComponent<CommittedChangesCache.State> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.vcs.changes.committed.CommittedChangesCache");
@@ -84,7 +84,6 @@ public class CommittedChangesCache implements PersistentStateComponent<Committed
   private final Set<CommittedChangeList> myNewIncomingChanges = new LinkedHashSet<CommittedChangeList>();
   private final ProjectLevelVcsManager myVcsManager;
 
-  public static final Change[] ALL_CHANGES = new Change[0];
   private MyRefreshRunnable myRefresnRunnable;
 
   private final Map<String, Pair<Long, List<CommittedChangeList>>> myExternallyLoadedChangeLists;
@@ -538,7 +537,7 @@ public class CommittedChangesCache implements PersistentStateComponent<Committed
     });
   }
 
-  // todo: fix - would externally loaded nesseccerily for file? i.e. just not efficient now
+  // todo: fix - would externally loaded necessarily for file? i.e. just not efficient now
   private List<CommittedChangeList> refreshCache(final ChangesCacheFile cacheFile) throws VcsException, IOException {
     final List<CommittedChangeList> newLists = new ArrayList<CommittedChangeList>();
 
@@ -571,6 +570,7 @@ public class CommittedChangesCache implements PersistentStateComponent<Committed
       defaultSettings.setDateAfter(date);
       defaultSettings.USE_DATE_AFTER_FILTER = true;
     }
+    defaultSettings.STRICTLY_AFTER = true;
     final List<CommittedChangeList> newChanges = provider.getCommittedChanges(defaultSettings, location, maxCount);
     debug("Loaded " + newChanges.size() + " new changelists");
     newLists.addAll(appendLoadedChanges(cacheFile, location, newChanges));

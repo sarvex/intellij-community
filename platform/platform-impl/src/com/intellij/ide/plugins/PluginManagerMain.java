@@ -48,7 +48,9 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.*;
 import com.intellij.ui.border.CustomLineBorder;
 import com.intellij.ui.components.JBLabel;
+import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.speedSearch.SpeedSearchSupply;
+import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
@@ -65,6 +67,7 @@ import javax.swing.plaf.BorderUIResource;
 import javax.swing.text.html.HTMLDocument;
 import javax.swing.text.html.HTMLEditorKit;
 import javax.swing.text.html.HTMLFrameHyperlinkEvent;
+import javax.swing.text.html.StyleSheet;
 import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.io.FileNotFoundException;
@@ -72,6 +75,7 @@ import java.io.IOException;
 import java.net.URL;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static com.intellij.openapi.util.text.StringUtil.isEmptyOrSpaces;
@@ -103,6 +107,7 @@ public abstract class PluginManagerMain implements Disposable {
   private PluginHeaderPanel myPluginHeaderPanel;
   private JPanel myInfoPanel;
   protected JBLabel myPanelDescription;
+  private JBScrollPane myDescriptionScrollPane;
 
 
   protected PluginTableModel pluginsModel;
@@ -120,13 +125,26 @@ public abstract class PluginManagerMain implements Disposable {
     myUISettings = uiSettings;
   }
 
-  public static boolean isJetBrainsPlugin(@NotNull IdeaPluginDescriptor plugin) {
-    return JETBRAINS_VENDOR.equals(plugin.getVendor());
+  public static boolean isDevelopedByJetBrains(@NotNull IdeaPluginDescriptor plugin) {
+    return isDevelopedByJetBrains(plugin.getVendor());
+  }
+
+  public static boolean isDevelopedByJetBrains(@Nullable String vendorString) {
+    if (vendorString == null) return false;
+    for (String vendor : StringUtil.split(vendorString, ",")) {
+      if (vendor.trim().equals(JETBRAINS_VENDOR)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   protected void init() {
     GuiUtils.replaceJSplitPaneWithIDEASplitter(main);
-    myDescriptionTextArea.setEditorKit(new HTMLEditorKit());
+    HTMLEditorKit kit = new HTMLEditorKit();
+    StyleSheet sheet = kit.getStyleSheet();
+    sheet.addRule("ul {margin-left: 16px}"); // list-style-type: none;
+    myDescriptionTextArea.setEditorKit(kit);
     myDescriptionTextArea.setEditable(false);
     myDescriptionTextArea.addHyperlinkListener(new MyHyperlinkListener());
 
@@ -196,6 +214,7 @@ public abstract class PluginManagerMain implements Disposable {
     pluginTable.getModel().addTableModelListener(modelListener);
     modelListener.tableChanged(null);
 
+    myDescriptionScrollPane.setBackground(UIUtil.getTextFieldBackground());
     Border border = new BorderUIResource.LineBorderUIResource(new JBColor(Gray._220, Gray._55), 1);
     myInfoPanel.setBorder(border);
   }
@@ -227,6 +246,16 @@ public abstract class PluginManagerMain implements Disposable {
 
   public PluginTable getPluginTable() {
     return pluginTable;
+  }
+
+  @NotNull
+  public static List<PluginId> mapToPluginIds(List<IdeaPluginDescriptor> plugins) {
+    return ContainerUtil.map(plugins, new Function<IdeaPluginDescriptor, PluginId>() {
+      @Override
+      public PluginId fun(IdeaPluginDescriptor descriptor) {
+        return descriptor.getPluginId();
+      }
+    });
   }
 
   private static String getTextPrefix() {
@@ -312,7 +341,7 @@ public abstract class PluginManagerMain implements Disposable {
       @Override
       public void run() {
         final List<IdeaPluginDescriptor> list = ContainerUtil.newArrayList();
-        final List<String> errors = ContainerUtil.newSmartList();
+        final Map<String, String> errors = ContainerUtil.newLinkedHashMap();
         ProgressIndicator indicator = new EmptyProgressIndicator();
 
         List<String> hosts = RepositoryHelper.getPluginHosts();
@@ -320,7 +349,7 @@ public abstract class PluginManagerMain implements Disposable {
         for (String host : hosts) {
           try {
             if (host == null || acceptHost(host)) {
-              List<IdeaPluginDescriptor> plugins = RepositoryHelper.loadPlugins(host, null, indicator);
+              List<IdeaPluginDescriptor> plugins = RepositoryHelper.loadPlugins(host, indicator);
               for (IdeaPluginDescriptor plugin : plugins) {
                 if (unique.add(plugin.getPluginId())) {
                   list.add(plugin);
@@ -334,7 +363,7 @@ public abstract class PluginManagerMain implements Disposable {
           catch (IOException e) {
             LOG.info(host, e);
             if (host != ApplicationInfoEx.getInstanceEx().getBuiltinPluginsUrl()) {
-              errors.add(e.getMessage());
+              errors.put(host, String.format("'%s' for '%s'", e.getMessage(), host));
             }
           }
         }
@@ -355,7 +384,9 @@ public abstract class PluginManagerMain implements Disposable {
             }
 
             if (!errors.isEmpty()) {
-              String message = IdeBundle.message("error.list.of.plugins.was.not.loaded", StringUtil.join(errors, ", "));
+              String message = IdeBundle.message("error.list.of.plugins.was.not.loaded",
+                                                 StringUtil.join(errors.keySet(), ", "),
+                                                 StringUtil.join(errors.values(), ",\n"));
               String title = IdeBundle.message("title.plugins");
               String ok = CommonBundle.message("button.retry"), cancel = CommonBundle.getCancelButtonText();
               if (Messages.showOkCancelDialog(message, title, ok, cancel, Messages.getErrorIcon()) == Messages.OK) {
@@ -394,7 +425,7 @@ public abstract class PluginManagerMain implements Disposable {
   }
 
   public static boolean downloadPlugins(final List<PluginNode> plugins,
-                                        final List<IdeaPluginDescriptor> allPlugins,
+                                        final List<PluginId> allPlugins,
                                         final Runnable onSuccess,
                                         @Nullable final Runnable cleanup) throws IOException {
     final boolean[] result = new boolean[1];
@@ -409,7 +440,9 @@ public abstract class PluginManagerMain implements Disposable {
             }
           }
           finally {
-            if (cleanup != null) cleanup.run();
+            if (cleanup != null) {
+              ApplicationManager.getApplication().invokeLater(cleanup);
+            }
           }
         }
       });
@@ -593,34 +626,22 @@ public abstract class PluginManagerMain implements Disposable {
     pluginTable.select(descriptors);
   }
 
-  protected static boolean isAccepted(String filter,
-                                      Set<String> search,
-                                      IdeaPluginDescriptor descriptor) {
+  protected static boolean isAccepted(@Nullable String filter, @NotNull Set<String> search, @NotNull IdeaPluginDescriptor descriptor) {
     if (StringUtil.isEmpty(filter)) return true;
-    if (isAccepted(search, filter, descriptor.getName())) {
-      return true;
-    }
-    else {
-      final String description = descriptor.getDescription();
-      if (description != null && isAccepted(search, filter, description)) {
-        return true;
-      }
-      final String category = descriptor.getCategory();
-      if (category != null && isAccepted(search, filter, category)) {
-        return true;
-      }
-      final String changeNotes = descriptor.getChangeNotes();
-      if (changeNotes != null && isAccepted(search, filter, changeNotes)) {
-        return true;
-      }
-    }
-    return false;
+    if (StringUtil.containsIgnoreCase(descriptor.getName(), filter) || isAccepted(search, filter, descriptor.getName())) return true;
+    if (isAccepted(search, filter, descriptor.getDescription())) return true;
+    String category = descriptor.getCategory();
+    return category != null && (StringUtil.containsIgnoreCase(category, filter) || isAccepted(search, filter, category));
   }
 
-  private static boolean isAccepted(Set<String> search, @NotNull String filter, @NotNull String description) {
-    if (StringUtil.containsIgnoreCase(description, filter)) return true;
+  private static boolean isAccepted(@NotNull Set<String> search, @NotNull String filter, @Nullable String description) {
+    if (StringUtil.isEmpty(description)) return false;
+    if (filter.length() <= 2) return false; 
+    Set<String> words = SearchableOptionsRegistrar.getInstance().getProcessedWords(description);
+    if (words.contains(filter)) return true;
+    if (search.isEmpty()) return false;
     Set<String> descriptionSet = new HashSet<String>(search);
-    descriptionSet.removeAll(SearchableOptionsRegistrar.getInstance().getProcessedWords(description));
+    descriptionSet.removeAll(words);
     return descriptionSet.isEmpty();
   }
 

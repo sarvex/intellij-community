@@ -3,7 +3,7 @@ package com.siyeh.igtest.junit.assert_equals_between_inconvertible_types;
 import static org.junit.Assert.assertEquals;
 import org.junit.Test;
 
-import java.util.Collection;
+import java.util.*;
 
 public class AssertEqualsBetweenInconvertibleTypes {
 
@@ -24,8 +24,15 @@ public class AssertEqualsBetweenInconvertibleTypes {
         Collection<A> c1 = null;
         Collection<B> c2 = null;
         assertEquals(c1, c2);
+        assertEquals(new ArrayList<String>(){}, new ArrayList<String>());
     }
 
     interface A {}
     interface B extends A {}
+
+    private static class GenericClass<T> {}
+
+    public static boolean areEqual(Object a, GenericClass<String> b) {
+        return a.equals(b);
+    }
 }

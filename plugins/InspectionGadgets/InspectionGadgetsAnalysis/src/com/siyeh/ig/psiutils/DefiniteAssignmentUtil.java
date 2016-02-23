@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package com.siyeh.ig.psiutils;
 
 import com.intellij.psi.*;
 import com.intellij.psi.tree.IElementType;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -29,9 +30,28 @@ import org.jetbrains.annotations.Nullable;
 public final class DefiniteAssignmentUtil {
 
   public static void checkVariable(PsiVariable variable, DefiniteAssignment definiteAssignment) {
+    if (variable.getInitializer() != null) {
+      throw new IllegalArgumentException("variable has initializer, check for assignment to the field");
+    }
     if (variable instanceof PsiField) {
       final PsiField field = (PsiField)variable;
       checkField(field, definiteAssignment);
+    }
+    else if (variable instanceof PsiParameter) {
+      throw new IllegalArgumentException("parameter has implicit initializer, check for assignment to the parameter");
+    }
+    else if (variable instanceof PsiLocalVariable) {
+      final PsiLocalVariable localVariable = (PsiLocalVariable)variable;
+      final PsiElement parent = localVariable.getParent();
+      assert parent instanceof PsiDeclarationStatement;
+      PsiStatement statement = (PsiStatement)parent;
+      while (statement != null) {
+        checkStatement(statement, definiteAssignment);
+        statement = PsiTreeUtil.getNextSiblingOfType(statement, PsiStatement.class);
+      }
+    }
+    else {
+      assert false;
     }
   }
 
@@ -44,42 +64,22 @@ public final class DefiniteAssignmentUtil {
       return;
     }
     final PsiElement[] children = aClass.getChildren();
-    if (field.hasModifierProperty(PsiModifier.STATIC)) {
-      for (PsiElement child : children) {
-        if (child instanceof PsiField) {
-          final PsiField otherField = (PsiField)child;
-          if (!otherField.hasModifierProperty(PsiModifier.STATIC)) {
-            continue;
-          }
+    final boolean isStatic = field.hasModifierProperty(PsiModifier.STATIC);
+    for (PsiElement child : children) {
+      if (child instanceof PsiField) {
+        final PsiField otherField = (PsiField)child;
+        if (otherField.hasModifierProperty(PsiModifier.STATIC) == isStatic) {
           checkExpression(otherField.getInitializer(), definiteAssignment, BooleanExpressionValue.UNDEFINED);
         }
-        else if (child instanceof PsiClassInitializer) {
-          final PsiClassInitializer classInitializer = (PsiClassInitializer)child;
-          if (!classInitializer.hasModifierProperty(PsiModifier.STATIC)) {
-            continue;
-          }
+      }
+      else if (child instanceof PsiClassInitializer) {
+        final PsiClassInitializer classInitializer = (PsiClassInitializer)child;
+        if (classInitializer.hasModifierProperty(PsiModifier.STATIC) == isStatic) {
           checkCodeBlock(classInitializer.getBody(), definiteAssignment);
         }
       }
     }
-    else {
-      for (PsiElement child : children) {
-        if (child instanceof PsiField) {
-          final PsiField otherField = (PsiField)child;
-          if (otherField.hasModifierProperty(PsiModifier.STATIC)) {
-            continue;
-          }
-          checkExpression(otherField.getInitializer(), definiteAssignment, BooleanExpressionValue.UNDEFINED);
-        }
-        else if (child instanceof PsiClassInitializer) {
-          final PsiClassInitializer classInitializer = (PsiClassInitializer)child;
-          if (classInitializer.hasModifierProperty(PsiModifier.STATIC)) {
-            continue;
-          }
-          checkCodeBlock(classInitializer.getBody(), definiteAssignment);
-        }
-        if (definiteAssignment.stop()) return;
-      }
+    if (!isStatic) {
       final PsiMethod[] constructors = aClass.getConstructors();
       if (constructors.length != 0) { // missing from spec?
         final boolean da = definiteAssignment.isDefinitelyAssigned();
@@ -441,8 +441,24 @@ public final class DefiniteAssignmentUtil {
   }
 
   private static void checkTryStatement(PsiTryStatement tryStatement, DefiniteAssignment definiteAssignment) {
-    // try with resources not specified
+    // try with resources not specified in JLS Java SE 8 Edition chapter 16
     final boolean da = definiteAssignment.isDefinitelyAssigned();
+    final PsiResourceList resourceList = tryStatement.getResourceList();
+    if (resourceList != null) {
+      for (PsiResourceListElement element : resourceList) {
+        if (element instanceof PsiResourceExpression) {
+          final PsiResourceExpression resourceExpression = (PsiResourceExpression)element;
+          checkExpression(resourceExpression.getExpression(), definiteAssignment, BooleanExpressionValue.UNDEFINED);
+        }
+        else if (element instanceof PsiResourceVariable) {
+          final PsiResourceVariable resourceVariable = (PsiResourceVariable)element;
+          checkExpression(resourceVariable.getInitializer(), definiteAssignment, BooleanExpressionValue.UNDEFINED);
+        }
+        else {
+          throw new AssertionError();
+        }
+      }
+    }
     checkCodeBlock(tryStatement.getTryBlock(), definiteAssignment);
     final boolean du = definiteAssignment.isDefinitelyUnassigned();
     boolean resultDa = definiteAssignment.isDefinitelyAssigned();
@@ -481,14 +497,9 @@ public final class DefiniteAssignmentUtil {
     }
     if (PsiType.BOOLEAN.equals(expression.getType())) {
       final Object result = ExpressionUtils.computeConstantExpression(expression);
-      if (Boolean.TRUE == result) {
-        if (BooleanExpressionValue.WHEN_FALSE == value) {
-          definiteAssignment.set(true, true);
-        }
-        return;
-      }
-      else if (Boolean.FALSE == result) {
-        if (BooleanExpressionValue.WHEN_TRUE == value) {
+      if (result != null) {
+        if (Boolean.TRUE == result && BooleanExpressionValue.WHEN_FALSE == value ||
+            Boolean.FALSE == result && BooleanExpressionValue.WHEN_TRUE == value) {
           definiteAssignment.set(true, true);
         }
         return;
@@ -513,6 +524,13 @@ public final class DefiniteAssignmentUtil {
     else if (expression instanceof PsiInstanceOfExpression) {
       final PsiInstanceOfExpression instanceOfExpression = (PsiInstanceOfExpression)expression;
       checkExpression(instanceOfExpression.getOperand(), definiteAssignment, value);
+    }
+    else if (expression instanceof PsiLambdaExpression) {
+      final PsiLambdaExpression lambdaExpression = (PsiLambdaExpression)expression;
+      final boolean du = definiteAssignment.isDefinitelyUnassigned();
+      definiteAssignment.set(definiteAssignment.isDefinitelyAssigned(), false);
+      checkLambdaExpression(lambdaExpression, definiteAssignment);
+      definiteAssignment.set(definiteAssignment.isDefinitelyAssigned(), du);
     }
     else if (expression instanceof PsiMethodCallExpression) {
       final PsiMethodCallExpression methodCallExpression = (PsiMethodCallExpression)expression;
@@ -640,6 +658,18 @@ public final class DefiniteAssignmentUtil {
     checkExpression(condition, definiteAssignment, BooleanExpressionValue.WHEN_FALSE);
     checkExpression(conditionalExpression.getElseExpression(), definiteAssignment, value);
     definiteAssignment.and(resultDa, resultDu);
+  }
+
+  private static void checkLambdaExpression(PsiLambdaExpression lambdaExpression, DefiniteAssignment definiteAssignment) {
+    final PsiElement body = lambdaExpression.getBody();
+    if (body instanceof PsiExpression) {
+      final PsiExpression bodyExpression = (PsiExpression)body;
+      checkExpression(bodyExpression, definiteAssignment, BooleanExpressionValue.UNDEFINED);
+    }
+    else if (body instanceof PsiCodeBlock) {
+      final PsiCodeBlock codeBlock = (PsiCodeBlock)body;
+      checkCodeBlock(codeBlock, definiteAssignment);
+    }
   }
 
   private static void checkMethodCallExpression(PsiMethodCallExpression methodCallExpression,

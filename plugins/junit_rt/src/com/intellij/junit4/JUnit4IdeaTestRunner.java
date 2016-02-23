@@ -17,11 +17,12 @@ package com.intellij.junit4;
 
 import com.intellij.rt.execution.junit.*;
 import com.intellij.rt.execution.junit.segments.OutputObjectRegistry;
-import com.intellij.rt.execution.junit.segments.SegmentedOutputStream;
+import com.intellij.rt.execution.junit.segments.PacketProcessor;
 import org.junit.internal.requests.ClassRequest;
 import org.junit.internal.requests.FilterRequest;
 import org.junit.runner.*;
 import org.junit.runner.manipulation.Filter;
+import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
 
 import java.lang.reflect.Field;
@@ -35,91 +36,102 @@ public class JUnit4IdeaTestRunner implements IdeaTestRunner {
   private OutputObjectRegistry myRegistry;
 
   public int startRunnerWithArgs(String[] args, ArrayList listeners, String name, int count, boolean sendTree) {
-
-    final Request request = JUnit4TestRunnerUtil.buildRequest(args, name, sendTree);
-    if (request == null) return -1;
-    final Runner testRunner = request.getRunner();
     try {
-      Description description = testRunner.getDescription();
-      if (description == null) {
-        System.err.println("Nothing found to run. Runner " + testRunner.getClass().getName() + " provides no description.");
-        return -1;
-      }
-      if (request instanceof ClassRequest) {
-        description = getSuiteMethodDescription(request, description);
-      }
-      else if (request instanceof FilterRequest) {
-        description = getFilteredDescription(request, description);
-      }
-      TreeSender.sendTree(this, description, sendTree);
-    }
-    catch (Exception e) {
-      //noinspection HardCodedStringLiteral
-      System.err.println("Internal Error occured.");
-      e.printStackTrace(System.err);
-    }
-
-    try {
-      final JUnitCore runner = new JUnitCore();
-      runner.addListener(myTestsListener);
-      for (Iterator iterator = listeners.iterator(); iterator.hasNext();) {
-        final IDEAJUnitListener junitListener = (IDEAJUnitListener)Class.forName((String)iterator.next()).newInstance();
-        runner.addListener(new RunListener() {
-          public void testStarted(Description description) throws Exception {
-            junitListener.testStarted(JUnit4ReflectionUtil.getClassName(description), JUnit4ReflectionUtil.getMethodName(description));
-          }
-
-          public void testFinished(Description description) throws Exception {
-            junitListener.testFinished(JUnit4ReflectionUtil.getClassName(description), JUnit4ReflectionUtil.getMethodName(description));
-          }
-        });
-      }
-      long startTime = System.currentTimeMillis();
       Result result;
       if (count == 1) {
-        result = runner.run(testRunner);
+        result = startRunnerWithArgs(args, listeners, name, sendTree);
+        if (result == null) {
+          return -1;
+        }
       }
       else {
         if (count > 0) {
           boolean success = true;
           int i = 0;
           while (i++ < count) {
-            result = runner.run(testRunner);
+            result = startRunnerWithArgs(args, listeners, name, sendTree);
+            if (result == null) {
+              return -1;
+            }
+            sendTree = false;
             success &= result.wasSuccessful();
           }
-          long endTime = System.currentTimeMillis();
-          long runTime = endTime - startTime;
-          if (sendTree) new TimeSender(myRegistry).printHeader(runTime);
-
+          
           return success ? 0 : -1;
         }
         else {
           boolean success = true;
           while (true) {
-            result = runner.run(testRunner);
+            result = startRunnerWithArgs(args, listeners, name, sendTree);
+            if (result == null) {
+              return -1;
+            }
+            sendTree = false;
             success &= result.wasSuccessful();
             if (count == -2 && !success) {
-              long endTime = System.currentTimeMillis();
-              long runTime = endTime - startTime;
-              if (sendTree) new TimeSender(myRegistry).printHeader(runTime);
               return -1;
             }
           }
         }
       }
-      long endTime = System.currentTimeMillis();
-      long runTime = endTime - startTime;
-      if (sendTree) new TimeSender(myRegistry).printHeader(runTime);
-
       if (!result.wasSuccessful()) {
         return -1;
       }
       return 0;
     }
     catch (Exception e) {
+      //noinspection HardCodedStringLiteral
+      System.err.println("Internal Error occured.");
       e.printStackTrace(System.err);
       return -2;
     }
+  }
+  
+  private Result startRunnerWithArgs(String[] args, ArrayList listeners, String name, boolean sendTree) throws
+                                                                                                        InstantiationException,
+                                                                                                        IllegalAccessException,
+                                                                                                        ClassNotFoundException,
+                                                                                                        NoSuchFieldException {
+    final Request request = JUnit4TestRunnerUtil.buildRequest(args, name, sendTree);
+    if (request == null) return null;
+
+    final Runner testRunner = request.getRunner();
+    Description description = getDescription(request, testRunner);
+    if (description == null) {
+      return null;
+    }
+
+    if (myTestsListener instanceof JUnit4TestListener) {
+      if (sendTree) {
+        ((JUnit4TestListener)myTestsListener).sendTree(description);
+      }
+    }
+    else {
+      TreeSender.sendTree(this, description, sendTree);
+    }
+
+    final JUnitCore runner = new JUnitCore();
+    runner.addListener(myTestsListener);
+    for (Iterator iterator = listeners.iterator(); iterator.hasNext();) {
+      final IDEAJUnitListener junitListener = (IDEAJUnitListener)Class.forName((String)iterator.next()).newInstance();
+      runner.addListener(new MyCustomRunListenerWrapper(junitListener, description.getDisplayName()));
+    }
+    return runner.run(testRunner);
+  }
+
+  private static Description getDescription(Request request, Runner testRunner) throws NoSuchFieldException, IllegalAccessException {
+    Description description = testRunner.getDescription();
+    if (description == null) {
+      System.err.println("Nothing found to run. Runner " + testRunner.getClass().getName() + " provides no description.");
+      return null;
+    }
+    if (request instanceof ClassRequest) {
+      description = getSuiteMethodDescription(request, description);
+    }
+    else if (request instanceof FilterRequest) {
+      description = getFilteredDescription(request, description);
+    }
+    return description;
   }
 
   private static Description getFilteredDescription(Request request, Description description) throws NoSuchFieldException, IllegalAccessException {
@@ -179,11 +191,11 @@ public class JUnit4IdeaTestRunner implements IdeaTestRunner {
   }
 
 
-  public void setStreams(SegmentedOutputStream segmentedOut, SegmentedOutputStream segmentedErr, int lastIdx) {
+  public void setStreams(Object segmentedOut, Object segmentedErr, int lastIdx) {
     if (JUnitStarter.SM_RUNNER) {
-      myTestsListener = new SMTestSender();
+      myTestsListener = new JUnit4TestListener();
     } else {
-      myRegistry = new JUnit4OutputObjectRegistry(segmentedOut, lastIdx);
+      myRegistry = new JUnit4OutputObjectRegistry((PacketProcessor)segmentedOut, lastIdx);
       myTestsListener = new JUnit4TestResultsSender(myRegistry);
     }
   }
@@ -192,22 +204,15 @@ public class JUnit4IdeaTestRunner implements IdeaTestRunner {
     final Request request = JUnit4TestRunnerUtil.buildRequest(args, name, false);
     if (request == null) return null;
     final Runner testRunner = request.getRunner();
-    Description description = null;
     try {
-      description = testRunner.getDescription();
-      if (request instanceof ClassRequest) {
-        description = getSuiteMethodDescription(request, description);
-      }
-      else if (request instanceof FilterRequest) {
-        description = getFilteredDescription(request, description);
-      }
+      return getDescription(request, testRunner);
     }
     catch (Exception e) {
       //noinspection HardCodedStringLiteral
       System.err.println("Internal Error occured.");
       e.printStackTrace(System.err);
+      return null;
     }
-    return description;
   }
 
   public List getChildTests(Object description) {
@@ -226,5 +231,55 @@ public class JUnit4IdeaTestRunner implements IdeaTestRunner {
     final Description description = (Description)child;
     final String methodName = description.getMethodName();
     return methodName != null ? description.getClassName() + "," + methodName : description.getClassName();
+  }
+
+  private static class MyCustomRunListenerWrapper extends RunListener {
+    private final IDEAJUnitListener myJunitListener;
+    private final String myDisplayName;
+    private boolean mySuccess;
+
+    public MyCustomRunListenerWrapper(IDEAJUnitListener junitListener, String displayName) {
+      myJunitListener = junitListener;
+      myDisplayName = displayName;
+    }
+
+    public void testStarted(Description description) throws Exception {
+      mySuccess = true;
+      myJunitListener.testStarted(JUnit4ReflectionUtil.getClassName(description), JUnit4ReflectionUtil.getMethodName(description));
+    }
+
+    public void testFailure(Failure failure) throws Exception {
+      mySuccess = ComparisonFailureData.isAssertionError(failure.getException().getClass());
+    }
+
+    public void testAssumptionFailure(Failure failure) {
+      mySuccess = false;
+    }
+
+    public void testIgnored(Description description) throws Exception {
+      mySuccess = false;
+    }
+
+    public void testFinished(Description description) throws Exception {
+      final String className = JUnit4ReflectionUtil.getClassName(description);
+      final String methodName = JUnit4ReflectionUtil.getMethodName(description);
+      if (myJunitListener instanceof IDEAJUnitListenerEx) {
+        ((IDEAJUnitListenerEx)myJunitListener).testFinished(className, methodName, mySuccess);
+      } else {
+        myJunitListener.testFinished(className, methodName);
+      }
+    }
+
+    public void testRunStarted(Description description) throws Exception {
+      if (myJunitListener instanceof IDEAJUnitListenerEx) {
+        ((IDEAJUnitListenerEx)myJunitListener).testRunStarted(description.getDisplayName());
+      }
+    }
+
+    public void testRunFinished(Result result) throws Exception {
+      if (myJunitListener instanceof IDEAJUnitListenerEx) {
+        ((IDEAJUnitListenerEx)myJunitListener).testRunFinished(myDisplayName);
+      }
+    }
   }
 }

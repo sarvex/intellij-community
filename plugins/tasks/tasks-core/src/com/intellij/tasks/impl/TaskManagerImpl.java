@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package com.intellij.tasks.impl;
 
 import com.intellij.notification.*;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.*;
 import com.intellij.openapi.diagnostic.Logger;
@@ -77,7 +78,7 @@ import java.util.concurrent.TimeoutException;
 @State(
   name = "TaskManager",
   storages = {
-    @Storage(file = StoragePathMacros.WORKSPACE_FILE)
+    @Storage(StoragePathMacros.WORKSPACE_FILE)
   }
 )
 public class TaskManagerImpl extends TaskManager implements ProjectComponent, PersistentStateComponent<TaskManagerImpl.Config>,
@@ -222,6 +223,11 @@ public class TaskManagerImpl extends TaskManager implements ProjectComponent, Pe
   @Override
   public void addTaskListener(TaskListener listener) {
     myDispatcher.addListener(listener);
+  }
+
+  @Override
+  public void addTaskListener(@NotNull TaskListener listener, @NotNull Disposable parentDisposable) {
+    myDispatcher.addListener(listener, parentDisposable);
   }
 
   @Override
@@ -491,7 +497,7 @@ public class TaskManagerImpl extends TaskManager implements ProjectComponent, Pe
     if (task.isIssue()) {
       StartupManager.getInstance(myProject).runWhenProjectIsInitialized(new Runnable() {
         public void run() {
-          ProgressManager.getInstance().run(new com.intellij.openapi.progress.Task.Backgroundable(myProject, "Updating " + task.getId()) {
+          ProgressManager.getInstance().run(new com.intellij.openapi.progress.Task.Backgroundable(myProject, "Updating " + task.getPresentableId()) {
 
             public void run(@NotNull ProgressIndicator indicator) {
               updateIssue(task.getId());
@@ -650,6 +656,7 @@ public class TaskManagerImpl extends TaskManager implements ProjectComponent, Pe
           }
           TaskRepository repository = repositoryType.createRepository();
           repository.setUrl(server.url);
+          repository.setShared(true);
           myRepositories.add(repository);
         }
       }
@@ -741,7 +748,11 @@ public class TaskManagerImpl extends TaskManager implements ProjectComponent, Pe
   }
 
   private static LocalTaskImpl createDefaultTask() {
-    return new LocalTaskImpl(LocalTaskImpl.DEFAULT_TASK_ID, "Default task");
+    LocalTaskImpl task = new LocalTaskImpl(LocalTaskImpl.DEFAULT_TASK_ID, "Default task");
+    Date date = new Date();
+    task.setCreated(date);
+    task.setUpdated(date);
+    return task;
   }
 
   public void disposeComponent() {
@@ -987,18 +998,19 @@ public class TaskManagerImpl extends TaskManager implements ProjectComponent, Pe
     return StringUtil.shortenTextWithEllipsis(name, 100, 0);
   }
 
-  public String suggestBranchName(Task task) {
-    if (task.isIssue()) {
-      return TaskUtil.formatTask(task, myConfig.branchNameFormat).replace(' ', '-');
-    }
-    else {
-      String summary = task.getSummary();
-      List<String> words = StringUtil.getWordsIn(summary);
-      String[] strings = ArrayUtil.toStringArray(words);
-      return StringUtil.join(strings, 0, Math.min(2, strings.length), "-");
-    }
+  @NotNull
+  public String suggestBranchName(@NotNull Task task) {
+    String name = constructDefaultBranchName(task);
+    if (task.isIssue()) return name.replace(' ', '-');
+    List<String> words = StringUtil.getWordsIn(name);
+    String[] strings = ArrayUtil.toStringArray(words);
+    return StringUtil.join(strings, 0, Math.min(2, strings.length), "-");
   }
 
+  @NotNull
+  public String constructDefaultBranchName(@NotNull Task task) {
+    return task.isIssue() ? TaskUtil.formatTask(task, myConfig.branchNameFormat) : task.getSummary();
+  }
 
   @TestOnly
   public ChangeListAdapter getChangeListListener() {

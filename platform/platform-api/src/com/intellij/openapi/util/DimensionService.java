@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,8 +43,8 @@ import java.util.Map;
 @State(
   name = "DimensionService",
   storages = {
-    @Storage(file = StoragePathMacros.APP_CONFIG + "/dimensions.xml", roamingType = RoamingType.DISABLED),
-    @Storage(file = StoragePathMacros.APP_CONFIG + "/options.xml", deprecated = true)
+    @Storage(value = "dimensions.xml", roamingType = RoamingType.DISABLED),
+    @Storage(value = "options.xml", deprecated = true)
   }
 )
 public class DimensionService implements PersistentStateComponent<Element> {
@@ -230,10 +230,18 @@ public class DimensionService implements PersistentStateComponent<Element> {
     }
   }
 
+  @Deprecated
+  /**
+   * @deprecated Use {@link com.intellij.ide.util.PropertiesComponent}
+   */
   public void setExtendedState(String key, int extendedState) {
     myKey2ExtendedState.put(key, extendedState);
   }
 
+  @Deprecated
+  /**
+   * @deprecated Use {@link com.intellij.ide.util.PropertiesComponent}
+   */
   public int getExtendedState(String key) {
     if (!myKey2ExtendedState.containsKey(key)) return -1;
     return myKey2ExtendedState.get(key);
@@ -281,7 +289,7 @@ public class DimensionService implements PersistentStateComponent<Element> {
     }
     String realKey = key + '.' + screen.x + '.' + screen.y + '.' + screen.width + '.' + screen.height;
     if (JBUI.isHiDPI()) {
-      realKey+="@" + JBUI.scale(1) + "x";
+      realKey+= "@" + (((int)(96 * JBUI.scale(1f)))) + "dpi";
     }
     return realKey;
   }

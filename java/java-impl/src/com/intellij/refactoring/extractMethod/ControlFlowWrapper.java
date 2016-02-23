@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,9 +36,9 @@ public class ControlFlowWrapper {
   private static final Logger LOG = Logger.getInstance("#" + ControlFlowWrapper.class.getName());
 
   private final ControlFlow myControlFlow;
-  private int myFlowStart;
+  private final int myFlowStart;
 
-  private int myFlowEnd;
+  private final int myFlowEnd;
   private boolean myGenerateConditionalExit;
   private Collection<PsiStatement> myExitStatements;
   private PsiStatement myFirstExitStatementCopy;
@@ -57,26 +57,29 @@ public class ControlFlowWrapper {
       LOG.debug(myControlFlow.toString());
     }
 
-    myFlowStart = -1;
+    int flowStart = -1;
     int index = 0;
     while (index < elements.length) {
-      myFlowStart = myControlFlow.getStartOffset(elements[index]);
-      if (myFlowStart >= 0) break;
+      flowStart = myControlFlow.getStartOffset(elements[index]);
+      if (flowStart >= 0) break;
       index++;
     }
-    if (myFlowStart < 0) {
+    int flowEnd;
+    if (flowStart < 0) {
       // no executable code
-      myFlowStart = 0;
-      myFlowEnd = 0;
+      flowStart = 0;
+      flowEnd = 0;
     }
     else {
       index = elements.length - 1;
       while (true) {
-        myFlowEnd = myControlFlow.getEndOffset(elements[index]);
-        if (myFlowEnd >= 0) break;
+        flowEnd = myControlFlow.getEndOffset(elements[index]);
+        if (flowEnd >= 0) break;
         index--;
       }
     }
+    myFlowStart = flowStart;
+    myFlowEnd = flowEnd;
     if (LOG.isDebugEnabled()) {
       LOG.debug("start offset:" + myFlowStart);
       LOG.debug("end offset:" + myFlowEnd);
@@ -239,10 +242,10 @@ public class ControlFlowWrapper {
     return true;
   }
 
-  public List<PsiVariable> getInputVariables(final PsiElement codeFragment, PsiElement[] elements) {
+  public List<PsiVariable> getInputVariables(final PsiElement codeFragment, PsiElement[] elements, PsiVariable[] outputVariables) {
     final List<PsiVariable> inputVariables = ControlFlowUtil.getInputVariables(myControlFlow, myFlowStart, myFlowEnd);
     List<PsiVariable> myInputVariables;
-    if (myGenerateConditionalExit) {
+    if (skipVariablesFromExitStatements(outputVariables)) {
       List<PsiVariable> inputVariableList = new ArrayList<PsiVariable>(inputVariables);
       removeParametersUsedInExitsOnly(codeFragment, inputVariableList);
       myInputVariables = inputVariableList;
@@ -338,8 +341,16 @@ public class ControlFlowWrapper {
     return getUsedVariables(myFlowEnd);
   }
 
-  public List<PsiVariable> getUsedVariablesInBody() {
-    return getUsedVariables(myFlowStart, myFlowEnd);
+  public List<PsiVariable> getUsedVariablesInBody(PsiElement codeFragment, PsiVariable[] outputVariables) {
+    final List<PsiVariable> variables = getUsedVariables(myFlowStart, myFlowEnd);
+    if (skipVariablesFromExitStatements(outputVariables)) {
+      removeParametersUsedInExitsOnly(codeFragment, variables);
+    }
+    return variables;
+  }
+
+  private boolean skipVariablesFromExitStatements(PsiVariable[] outputVariables) {
+    return myGenerateConditionalExit && outputVariables.length == 0;
   }
 
   public Collection<ControlFlowUtil.VariableInfo> getInitializedTwice() {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,27 +15,31 @@
  */
 package org.jetbrains.idea.devkit.codeInsight
 
-import com.intellij.codeInsight.TargetElementUtilBase
+import com.intellij.codeInsight.TargetElementUtil
 import com.intellij.codeInsight.completion.CompletionType
+import com.intellij.codeInsight.lookup.LookupElement
+import com.intellij.codeInsight.lookup.LookupElementPresentation
 import com.intellij.codeInspection.xml.DeprecatedClassUsageInspection
+import com.intellij.diagnostic.ITNReporter
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PluginPathManager
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.ElementDescriptionUtil
 import com.intellij.psi.PsiElement
 import com.intellij.testFramework.PsiTestUtil
 import com.intellij.testFramework.TestDataPath
+import com.intellij.testFramework.builders.JavaModuleFixtureBuilder
 import com.intellij.testFramework.fixtures.IdeaTestFixtureFactory
 import com.intellij.testFramework.fixtures.JavaCodeInsightFixtureTestCase
 import com.intellij.testFramework.fixtures.TempDirTestFixture
+import com.intellij.ui.components.JBList
 import com.intellij.usageView.UsageViewNodeTextLocation
 import com.intellij.usageView.UsageViewTypeLocation
+import com.intellij.util.PathUtil
+import com.intellij.util.xmlb.annotations.AbstractCollection
 import org.intellij.lang.annotations.Language
 import org.jetbrains.idea.devkit.inspections.PluginXmlDomInspection
+import org.jetbrains.idea.devkit.util.PsiUtil
 
-/**
- * @author peter
- */
 @TestDataPath("\$CONTENT_ROOT/testData/codeInsight")
 public class PluginXmlFunctionalTest extends JavaCodeInsightFixtureTestCase {
 
@@ -51,6 +55,16 @@ public class PluginXmlFunctionalTest extends JavaCodeInsightFixtureTestCase {
   @Override
   protected String getBasePath() {
     return PluginPathManager.getPluginHomePathRelative("devkit") + "/testData/codeInsight";
+  }
+
+  @Override
+  protected void tuneFixture(JavaModuleFixtureBuilder moduleBuilder) throws Exception {
+    String pathForClass = PathUtil.getJarPathForClass(AbstractCollection.class);
+    moduleBuilder.addLibrary("util", pathForClass);
+    String platformApiJar = PathUtil.getJarPathForClass(JBList.class)
+    moduleBuilder.addLibrary("platform-api", platformApiJar);
+    String platformImplJar = PathUtil.getJarPathForClass(ITNReporter.class)
+    moduleBuilder.addLibrary("platform-impl", platformImplJar);
   }
 
   public void testExtensionsHighlighting() throws Throwable {
@@ -202,6 +216,10 @@ public class PluginXmlFunctionalTest extends JavaCodeInsightFixtureTestCase {
     assert !myFixture.lookup.advertisements.find { it.contains('to see inheritors of com.intellij.openapi.actionSystem.AnAction') }
   }
 
+  public void testExtensionsSpecifyDefaultExtensionNs() {
+    myFixture.testHighlighting("extensionsSpecifyDefaultExtensionNs.xml")
+  }
+
   public void testDeprecatedExtensionAttribute() {
     myFixture.enableInspections(DeprecatedClassUsageInspection.class);
     myFixture.testHighlighting("deprecatedExtensionAttribute.xml", "MyExtBean.java");
@@ -215,16 +233,64 @@ public class PluginXmlFunctionalTest extends JavaCodeInsightFixtureTestCase {
     myFixture.testHighlighting("extensionAttributeWithAccessors.xml", "ExtBeanWithAccessors.java");
   }
 
-  public void testLanguageAttribute() {
+  public void testExtensionWithInnerTags() {
+    myFixture.testHighlighting("extensionWithInnerTags.xml", "ExtBeanWithInnerTags.java");
+  }
+
+  public void testLanguageAttributeHighlighting() {
+    configureLanguageAttributeTest()
+    myFixture.testHighlighting("languageAttribute.xml", "MyLanguageAttributeEPBean.java")
+  }
+  
+  public void testLanguageAttributeCompletion() {
+    configureLanguageAttributeTest()
+    myFixture.allowTreeAccessForFile(myFixture.copyFileToProject("MyLanguageAttributeEPBean.java"));
+    myFixture.configureByFile("languageAttribute.xml")
+
+
+    def lookupElements = myFixture.complete(CompletionType.BASIC).sort { it.lookupString }
+    assertLookupElement(lookupElements[0], "MyAnonymousLanguageID", "MyLanguage.MySubLanguage")
+    assertLookupElement(lookupElements[1], "MyAnonymousLanguageWithNameFromBundleID", "MyLanguage")
+    assertLookupElement(lookupElements[2], "MyLanguageID", "MyLanguage")
+  }
+  
+  private static void assertLookupElement(LookupElement element, String lookupString, String typeText) {
+    def presentation = new LookupElementPresentation()
+    element.renderElement(presentation)
+    assert presentation.itemText == lookupString
+    assert presentation.typeText == typeText
+  }
+
+  private void configureLanguageAttributeTest() {
     myFixture.addClass("package com.intellij.lang; " +
                        "public class Language { " +
                        "  protected Language(String id) {}" +
                        "}")
-    VirtualFile myLanguageVirtualFile = myFixture.copyFileToProject("MyLanguage.java");
-    myFixture.allowTreeAccessForFile(myLanguageVirtualFile)
+    myFixture.addClass("package org.jetbrains.annotations;\n" +
+                       "import java.lang.annotation.Documented;\n" +
+                       "import java.lang.annotation.ElementType;\n" +
+                       "import java.lang.annotation.Retention;\n" +
+                       "import java.lang.annotation.RetentionPolicy;\n" +
+                       "import java.lang.annotation.Target;\n" +
+                       "\n" +
+                       "@Documented\n" +
+                       "@Retention(RetentionPolicy.CLASS)\n" +
+                       "@Target({ElementType.PARAMETER, ElementType.LOCAL_VARIABLE, ElementType.FIELD})\n" +
+                       "public @interface PropertyKey {\n" +
+                       "    String resourceBundle();\n" +
+                       "}")
+    myFixture.allowTreeAccessForFile(myFixture.copyFileToProject("MyLanguage.java"))
+    myFixture.allowTreeAccessForFile(myFixture.copyFileToProject("MyBundle.java"))
+    myFixture.allowTreeAccessForFile(myFixture.copyFileToProject("MyBundle.properties"))
+  }
 
-    myFixture.testHighlighting("languageAttribute.xml",
-                               "MyLanguageAttributeEPBean.java")
+  public void testIconAttribute() {
+    myFixture.addClass("package icons; " +
+                       "public class MyIcons {" +
+                       "  public static final javax.swing.Icon MyCustomIcon = null; " +
+                       "}")
+    myFixture.testHighlighting("iconAttribute.xml",
+                               "MyIconAttributeEPBean.java")
   }
 
   public void testPluginModule() throws Throwable {
@@ -239,10 +305,59 @@ public class PluginXmlFunctionalTest extends JavaCodeInsightFixtureTestCase {
     myFixture.testHighlighting("pluginWithXInclude.xml", "pluginWithXInclude-extensionPoints.xml");
   }
 
+  public void testPluginXmlInIdeaProjectWithoutVendor() {
+    testHighlightingInIdeaProject("pluginWithoutVendor.xml")
+  }
+
+  public void testPluginXmlInIdeaProjectWithThirdPartyVendor() {
+    testHighlightingInIdeaProject("pluginWithThirdPartyVendor.xml")
+  }
+
+  public void testPluginWithJetBrainsAsVendor() {
+    testHighlightingInIdeaProject("pluginWithJetBrainsAsVendor.xml")
+  }
+
+  public void testPluginWithJetBrainsAndMeAsVendor() {
+    testHighlightingInIdeaProject("pluginWithJetBrainsAndMeAsVendor.xml")
+  }
+
+  public void testSpecifyJetBrainsAsVendorQuickFix() {
+    myFixture.enableInspections(PluginXmlDomInspection.class)
+    PsiUtil.markAsIdeaProject(project, true)
+    try {
+      myFixture.configureByFile("pluginWithoutVendor_before.xml")
+      def fix = myFixture.findSingleIntention("Specify JetBrains")
+      myFixture.launchAction(fix)
+      myFixture.checkResultByFile("pluginWithoutVendor_after.xml")
+    }
+    finally {
+      PsiUtil.markAsIdeaProject(project, false)
+    }
+  }
+
+  private void testHighlightingInIdeaProject(String path) {
+    myFixture.enableInspections(PluginXmlDomInspection.class)
+    PsiUtil.markAsIdeaProject(project, true)
+    try {
+      myFixture.testHighlighting(path);
+    }
+    finally {
+      PsiUtil.markAsIdeaProject(project, false)
+    }
+  }
+
+  public void testErrorHandlerExtensionInJetBrainsPlugin() {
+    myFixture.addClass("""
+import com.intellij.openapi.diagnostic.ErrorReportSubmitter;
+public class MyErrorHandler extends ErrorReportSubmitter {}
+""")
+    myFixture.testHighlighting("errorHandlerExtensionInJetBrainsPlugin.xml");
+  }
+
   public void testExtensionPointPresentation() {
     myFixture.configureByFile(getTestName(true) + ".xml");
     final PsiElement element =
-      TargetElementUtilBase.findTargetElement(myFixture.getEditor(), TargetElementUtilBase.REFERENCED_ELEMENT_ACCEPTED);
+      TargetElementUtil.findTargetElement(myFixture.getEditor(), TargetElementUtil.REFERENCED_ELEMENT_ACCEPTED);
     assert element != null;
     assertEquals("Extension Point", ElementDescriptionUtil.getElementDescription(element, UsageViewTypeLocation.INSTANCE));
     assertEquals("Extension Point bar", ElementDescriptionUtil.getElementDescription(element, UsageViewNodeTextLocation.INSTANCE));
@@ -251,5 +366,21 @@ public class PluginXmlFunctionalTest extends JavaCodeInsightFixtureTestCase {
   public void testLoadForDefaultProject() throws Exception {
     configureByFile();
     myFixture.testHighlighting(true, true, true);
+  }
+
+  public void testCreateRequiredAttribute() {
+    myFixture.configureByFile(getTestName(true) + ".xml")
+    myFixture.launchAction(myFixture.findSingleIntention("Define class attribute"))
+    myFixture.checkResultByFile(getTestName(true) + "_after.xml")
+  }
+
+  public void testActionHighlighting() {
+    configureByFile()
+    myFixture.addClass("package com.intellij.openapi.actionSystem; public class AnAction { }");
+    myFixture.addClass("package foo.bar; public class BarAction extends com.intellij.openapi.actionSystem.AnAction { }");
+
+    myFixture.addClass("package com.intellij.openapi.actionSystem; public class ActionGroup { }")
+    myFixture.addClass("package foo.bar; public class BarGroup extends com.intellij.openapi.actionSystem.ActionGroup { }");
+    myFixture.testHighlighting()
   }
 }

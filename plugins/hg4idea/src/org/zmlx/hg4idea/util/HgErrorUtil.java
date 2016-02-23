@@ -42,16 +42,13 @@ public final class HgErrorUtil {
     "Please, ensure that your project base dir is hg root directory or specify full repository path in  <a href='" +
     SETTINGS_LINK + "'>directory mappings panel</a>.";
   private static final String MERGE_WITH_ANCESTOR_ERROR = "merging with a working directory ancestor has no effect";
+  private static final String NOTHING_TO_REBASE_WARNING = "nothing to rebase";
 
   private HgErrorUtil() {
   }
 
   public static boolean isAbort(@Nullable HgCommandResult result) {
-    if (result == null) {
-      return true;
-    }
-    if (getAbortLine(result) != null) return true;
-    return false;
+    return result == null || getAbortLine(result) != null;
   }
 
   @Nullable
@@ -69,6 +66,16 @@ public final class HgErrorUtil {
     if (result == null) return false;
     String errorLine = getAbortLine(result);
     return errorLine != null && StringUtil.contains(errorLine, MERGE_WITH_ANCESTOR_ERROR);
+  }
+
+  public static boolean isNothingToRebase(@Nullable HgCommandResult result) {
+    if (result == null) return false;
+    return ContainerUtil.exists(result.getOutputLines(), new Condition<String>() {
+      @Override
+      public boolean value(String s) {
+        return StringUtil.contains(s, NOTHING_TO_REBASE_WARNING);
+      }
+    });
   }
 
   public static boolean isAuthorizationError(@Nullable HgCommandResult result) {

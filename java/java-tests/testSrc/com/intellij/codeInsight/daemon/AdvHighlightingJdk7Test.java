@@ -34,8 +34,13 @@ public class AdvHighlightingJdk7Test extends DaemonAnalyzerTestCase {
 
   @Override
   protected Sdk getTestProjectJdk() {
-    LanguageLevelProjectExtension.getInstance(myProject).setLanguageLevel(LanguageLevel.JDK_1_7);
     return IdeaTestUtil.getMockJdk17();
+  }
+
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+    LanguageLevelProjectExtension.getInstance(myProject).setLanguageLevel(LanguageLevel.JDK_1_7);
   }
 
   @Override
@@ -61,6 +66,14 @@ public class AdvHighlightingJdk7Test extends DaemonAnalyzerTestCase {
 
   public void testStaticAndSingleImportConflict() throws Exception {
     doTest(BASE_PATH + "staticImportConflict/UsageMixed.java", BASE_PATH + "/staticImportConflict", false, false);
+  }
+
+  public void testRawInnerClassImport() throws Exception {
+    doTest(BASE_PATH + "raw/p/Class1.java", BASE_PATH + "/raw", false, false);
+  }
+  
+  public void testRawInnerClassImportOnDemand() throws Exception {
+    doTest(BASE_PATH + "rawOnDemand/p/Class1.java", BASE_PATH + "/rawOnDemand", false, false);
   }
 
   //ambiguous method calls
@@ -224,6 +237,10 @@ public class AdvHighlightingJdk7Test extends DaemonAnalyzerTestCase {
   }
 
   public void testAmbiguousIDEA57633() throws Exception {
+    doTestAmbiguous();
+  }
+
+  public void testAmbiguousStaticImportMethod() throws Exception {
     doTestAmbiguous();
   }
 }

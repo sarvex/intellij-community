@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,18 @@
 package com.intellij.psi.util;
 
 import com.intellij.lang.ASTNode;
+import com.intellij.lang.FileASTNode;
 import com.intellij.lang.Language;
+import com.intellij.navigation.ItemPresentation;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.diagnostic.Attachment;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
+import com.intellij.openapi.fileTypes.FileType;
+import com.intellij.openapi.fileTypes.FileTypeRegistry;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.FileIndexFacade;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Key;
@@ -30,22 +38,28 @@ import com.intellij.psi.meta.PsiMetaData;
 import com.intellij.psi.meta.PsiMetaOwner;
 import com.intellij.psi.scope.PsiScopeProcessor;
 import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.psi.search.PsiElementProcessor;
 import com.intellij.psi.search.SearchScope;
 import com.intellij.psi.tree.IElementType;
+import com.intellij.testFramework.LightVirtualFile;
+import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.TimeoutUtil;
 import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.util.Collection;
+import java.util.List;
 
 /**
  * @author yole
  */
 public class PsiUtilCore {
   private static final Logger LOG = Logger.getInstance("#com.intellij.psi.util.PsiUtilCore");
-  public static final PsiElement NULL_PSI_ELEMENT = new PsiElement() {
+  public static final PsiElement NULL_PSI_ELEMENT = new NullPsiElement();
+  private static class NullPsiElement implements PsiElement {
     @Override
     @NotNull
     public Project getProject() {
@@ -250,8 +264,8 @@ public class PsiUtilCore {
       throw createException();
     }
 
-    private PsiInvalidElementAccessException createException() {
-      return new PsiInvalidElementAccessException(this, "NULL_PSI_ELEMENT", null);
+    protected PsiInvalidElementAccessException createException() {
+      return new PsiInvalidElementAccessException(this, toString(), null);
     }
 
     @Override
@@ -335,7 +349,7 @@ public class PsiUtilCore {
     public String toString() {
       return "NULL_PSI_ELEMENT";
     }
-  };
+  }
 
   @NotNull
   public static PsiElement[] toPsiElementArray(@NotNull Collection<? extends PsiElement> collection) {
@@ -467,7 +481,6 @@ public class PsiUtilCore {
    * Checks if the element is valid. If not, throws {@link com.intellij.psi.PsiInvalidElementAccessException} with
    * a meaningful message that points to the reasons why the element is not valid and may contain the stack trace
    * when it was invalidated.
-   * @param element
    */
   public static void ensureValid(@NotNull PsiElement element) {
     if (!element.isValid()) {
@@ -479,6 +492,50 @@ public class PsiUtilCore {
       throw new PsiInvalidElementAccessException(element);
     }
   }
+
+  /**
+   * Tries to find PSI file for a virtual file and throws assertion error with debug info if it is null.
+   */
+  @NotNull
+  public static PsiFile getPsiFile(@NotNull Project project, @NotNull VirtualFile file) {
+    PsiManager psiManager = PsiManager.getInstance(project);
+    PsiFile psi = psiManager.findFile(file);
+    if (psi != null) return psi;
+    FileType fileType = file.getFileType();
+    FileViewProvider viewProvider = psiManager.findViewProvider(file);
+    Document document = FileDocumentManager.getInstance().getDocument(file);
+    boolean ignored = !(file instanceof LightVirtualFile) && FileTypeRegistry.getInstance().isFileIgnored(file);
+    VirtualFile vDir = file.getParent();
+    PsiDirectory psiDir = vDir == null ? null : PsiManager.getInstance(project).findDirectory(vDir);
+    FileIndexFacade indexFacade = FileIndexFacade.getInstance(project);
+    StringBuilder sb = new StringBuilder();
+    sb.append("valid=").append(file.isValid()).
+      append(" isDirectory=").append(file.isDirectory()).
+      append(" hasDocument=").append(document != null).
+      append(" length=").append(file.getLength());
+    sb.append("\nproject=").append(project.getName()).
+      append(" default=").append(project.isDefault()).
+      append(" open=").append(project.isOpen());;
+    sb.append("\nfileType=").append(fileType.getName()).append("/").append(fileType.getClass().getName());
+    sb.append("\nisIgnored=").append(ignored);
+    sb.append(" underIgnored=").append(indexFacade.isUnderIgnored(file));
+    sb.append(" inLibrary=").append(indexFacade.isInLibrarySource(file) || indexFacade.isInLibraryClasses(file));
+    sb.append(" parentDir=").append(vDir == null ? "no-vfs" : vDir.isDirectory() ? "has-vfs-dir" : "has-vfs-file").
+      append("/").append(psiDir == null ? "no-psi" : "has-psi");
+    sb.append("\nviewProvider=").append(viewProvider == null ? "null" : viewProvider.getClass().getName());
+    if (viewProvider != null) {
+      List<PsiFile> files = viewProvider.getAllFiles();
+      sb.append(" language=").append(viewProvider.getBaseLanguage().getID());
+      sb.append(" physical=").append(viewProvider.isPhysical());
+      sb.append(" rootCount=").append(files.size());
+      for (PsiFile o : files) {
+        sb.append("\n  root=").append(o.getLanguage().getID()).append("/").append(o.getClass().getName());
+      }
+    }
+    LOG.error("no PSI for file '" + file.getName() + "'", new Attachment(file.getPresentableUrl(), sb.toString()));
+    throw new AssertionError();
+  }
+
 
   /**
    * @deprecated use CompletionUtil#getOriginalElement where appropriate instead
@@ -543,8 +600,119 @@ public class PsiUtilCore {
     return node == null ? null : node.getElementType();
   }
 
-  @Contract("null -> null;!null -> !null")
+  @Contract("null -> null")
   public static IElementType getElementType(@Nullable PsiElement element) {
-    return element == null ? null : getElementType(element.getNode());
+    return element == null ? null :
+           element instanceof StubBasedPsiElement ? ((StubBasedPsiElement)element).getElementType() :
+           getElementType(element.getNode());
+  }
+
+  public static final PsiFile NULL_PSI_FILE = new NullPsiFile();
+  private static class NullPsiFile extends NullPsiElement implements PsiFile {
+    @Override
+    public FileASTNode getNode() {
+      throw createException();
+    }
+
+    @Override
+    public PsiDirectory getParent() {
+      throw createException();
+    }
+
+    @Override
+    public VirtualFile getVirtualFile() {
+      throw createException();
+    }
+
+    @Override
+    public PsiDirectory getContainingDirectory() {
+      throw createException();
+    }
+
+    @Override
+    public long getModificationStamp() {
+      throw createException();
+    }
+
+    @NotNull
+    @Override
+    public PsiFile getOriginalFile() {
+      throw createException();
+    }
+
+    @NotNull
+    @Override
+    public FileType getFileType() {
+      throw createException();
+    }
+
+    @NotNull
+    @Override
+    public PsiFile[] getPsiRoots() {
+      throw createException();
+    }
+
+    @NotNull
+    @Override
+    public FileViewProvider getViewProvider() {
+      throw createException();
+    }
+
+    @Override
+    public void subtreeChanged() {
+      throw createException();
+    }
+
+    @Override
+    public boolean isDirectory() {
+      throw createException();
+    }
+
+    @NotNull
+    @Override
+    public String getName() {
+      throw createException();
+    }
+
+    @Override
+    public boolean processChildren(PsiElementProcessor<PsiFileSystemItem> processor) {
+      throw createException();
+    }
+
+    @Nullable
+    @Override
+    public ItemPresentation getPresentation() {
+      throw createException();
+    }
+
+    @Override
+    public void navigate(boolean requestFocus) {
+      throw createException();
+    }
+
+    @Override
+    public boolean canNavigate() {
+      throw createException();
+    }
+
+    @Override
+    public boolean canNavigateToSource() {
+      throw createException();
+    }
+
+    @Override
+    public void checkSetName(String name) throws IncorrectOperationException {
+      throw createException();
+    }
+
+    @Override
+    public PsiElement setName(@NonNls @NotNull String name) throws IncorrectOperationException {
+      throw createException();
+    }
+
+    @Override
+    public String toString() {
+      return "NULL_PSI_FILE";
+    }
   }
 }

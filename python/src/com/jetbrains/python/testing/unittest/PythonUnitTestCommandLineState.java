@@ -15,15 +15,16 @@
  */
 package com.jetbrains.python.testing.unittest;
 
-import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.execution.configurations.ParamsGroup;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.jetbrains.python.PyNames;
+import com.jetbrains.python.PythonHelper;
 import com.jetbrains.python.testing.AbstractPythonTestRunConfiguration;
 import com.jetbrains.python.testing.PythonTestCommandLineStateBase;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,8 +35,7 @@ import java.util.List;
 public class PythonUnitTestCommandLineState extends
                                             PythonTestCommandLineStateBase {
   private final PythonUnitTestRunConfiguration myConfig;
-  private static final String UTRUNNER_PY = "pycharm/utrunner.py";
-  private static final String SETUP_PY_TESTRUNNER = "pycharm/pycharm_setup_runner.py";
+
 
   public PythonUnitTestCommandLineState(PythonUnitTestRunConfiguration runConfiguration, ExecutionEnvironment env) {
     super(runConfiguration, env);
@@ -43,13 +43,14 @@ public class PythonUnitTestCommandLineState extends
   }
 
   @Override
-  protected String getRunner() {
+  protected PythonHelper getRunner() {
     if (myConfig.getTestType() == AbstractPythonTestRunConfiguration.TestType.TEST_SCRIPT &&
       myConfig.getScriptName().endsWith(PyNames.SETUP_DOT_PY))
-      return SETUP_PY_TESTRUNNER;
-    return UTRUNNER_PY;
+      return PythonHelper.SETUPPY;
+    return PythonHelper.UT;
   }
 
+  @NotNull
   protected List<String> getTestSpecs() {
     List<String> specs = new ArrayList<String>();
 
@@ -67,7 +68,8 @@ public class PythonUnitTestCommandLineState extends
       case TEST_FOLDER:
         final String folderName = FileUtil.toSystemDependentName(myConfig.getFolderName() + "/");
         if (!StringUtil.isEmpty(myConfig.getPattern()) && myConfig.usePattern()) {
-          specs.add(folderName + ";" + myConfig.getPattern());
+          // ";" can't be used with bash, so we use "_args_separator_"
+          specs.add(folderName + "_args_separator_" + myConfig.getPattern());
         }
         else {
           specs.add(folderName);
@@ -83,7 +85,7 @@ public class PythonUnitTestCommandLineState extends
   }
 
   @Override
-  protected void addAfterParameters(GeneralCommandLine cmd) throws ExecutionException {
+  protected void addAfterParameters(GeneralCommandLine cmd) {
     ParamsGroup script_params = cmd.getParametersList().getParamsGroup(GROUP_SCRIPT);
     assert script_params != null;
     if (myConfig.useParam() && !StringUtil.isEmptyOrSpaces(myConfig.getParams()))

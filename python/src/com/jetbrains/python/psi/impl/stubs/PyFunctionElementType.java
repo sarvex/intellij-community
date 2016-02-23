@@ -16,6 +16,7 @@
 package com.jetbrains.python.psi.impl.stubs;
 
 import com.intellij.lang.ASTNode;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.stubs.*;
 import com.intellij.util.io.StringRef;
@@ -55,15 +56,22 @@ public class PyFunctionElementType extends PyStubElementType<PyFunctionStub, PyF
     PyFunctionImpl function = (PyFunctionImpl)psi;
     String message = function.extractDeprecationMessage();
     final PyStringLiteralExpression docStringExpression = function.getDocStringExpression();
+    final String typeComment = function.getTypeCommentAnnotation();
     return new PyFunctionStubImpl(psi.getName(), PyPsiUtils.strValue(docStringExpression),
-                                  message == null ? null : StringRef.fromString(message), parentStub, getStubElementType());
+                                  message, 
+                                  function.isAsync(), 
+                                  typeComment,
+                                  parentStub,
+                                  getStubElementType());
   }
 
   public void serialize(@NotNull final PyFunctionStub stub, @NotNull final StubOutputStream dataStream)
       throws IOException {
     dataStream.writeName(stub.getName());
-    dataStream.writeUTFFast(stub.getDocString() != null ? stub.getDocString() : "");
+    dataStream.writeUTFFast(StringUtil.notNullize(stub.getDocString()));
     dataStream.writeName(stub.getDeprecationMessage());
+    dataStream.writeBoolean(stub.isAsync());
+    dataStream.writeName(stub.getTypeComment());
   }
 
   @NotNull
@@ -71,7 +79,14 @@ public class PyFunctionElementType extends PyStubElementType<PyFunctionStub, PyF
     String name = StringRef.toString(dataStream.readName());
     String docString = dataStream.readUTFFast();
     StringRef deprecationMessage = dataStream.readName();
-    return new PyFunctionStubImpl(name, docString.length() > 0 ? docString : null, deprecationMessage, parentStub, getStubElementType());
+    final boolean isAsync = dataStream.readBoolean();
+    final StringRef typeComment = dataStream.readName();
+    return new PyFunctionStubImpl(name, StringUtil.nullize(docString), 
+                                  deprecationMessage == null ? null : deprecationMessage.getString(),
+                                  isAsync, 
+                                  typeComment == null ? null : typeComment.getString(),
+                                  parentStub,
+                                  getStubElementType());
   }
 
   public void indexStub(@NotNull final PyFunctionStub stub, @NotNull final IndexSink sink) {

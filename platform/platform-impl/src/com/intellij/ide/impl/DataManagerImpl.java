@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,9 +33,9 @@ import com.intellij.openapi.wm.IdeFocusManager;
 import com.intellij.openapi.wm.IdeFrame;
 import com.intellij.openapi.wm.ex.WindowManagerEx;
 import com.intellij.openapi.wm.impl.FloatingDecorator;
+import com.intellij.reference.SoftReference;
 import com.intellij.util.KeyedLazyInstanceEP;
 import com.intellij.util.containers.WeakValueHashMap;
-import gnu.trove.THashMap;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -43,15 +43,18 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
+import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class DataManagerImpl extends DataManager {
   private static final Logger LOG = Logger.getInstance("#com.intellij.ide.impl.DataManagerImpl");
-  private final Map<String, GetDataRule> myDataConstantToRuleMap = new THashMap<String, GetDataRule>();
+  private final ConcurrentMap<String, GetDataRule> myDataConstantToRuleMap = new ConcurrentHashMap<String, GetDataRule>();
   private WindowManagerEx myWindowManager;
 
   public DataManagerImpl() {
@@ -151,7 +154,9 @@ public class DataManagerImpl extends DataManager {
           rule = ruleEP.getInstance();
         }
       }
-      myDataConstantToRuleMap.put(dataId, rule);
+      if (rule != null) {
+        myDataConstantToRuleMap.putIfAbsent(dataId, rule);
+      }
     }
     return rule;
   }
@@ -305,6 +310,17 @@ public class DataManagerImpl extends DataManager {
     return dataContext instanceof UserDataHolder ? ((UserDataHolder)dataContext).getUserData(dataKey) : null;
   }
 
+  @Nullable
+  public static Editor validateEditor(Editor editor) {
+    Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+    if (focusOwner instanceof JComponent) {
+      final JComponent jComponent = (JComponent)focusOwner;
+      if (jComponent.getClientProperty("AuxEditorComponent") != null) return null; // Hack for EditorSearchComponent
+    }
+
+    return editor;
+  }
+
   private static class NullResult {
     public static final NullResult INSTANCE = new NullResult();
   }
@@ -322,15 +338,14 @@ public class DataManagerImpl extends DataManager {
     // To prevent memory leak we have to wrap passed component into
     // the weak reference. For example, Swing often remembers menu items
     // that have DataContext as a field.
-    private final WeakReference<Component> myRef;
-    private WeakValueHashMap<Key, Object> myUserData;
-    private final WeakValueHashMap<String, Object> myCachedData = new WeakValueHashMap<String, Object>();
+    private final Reference<Component> myRef;
+    private Map<Key, Object> myUserData;
+    private final Map<String, Object> myCachedData = new WeakValueHashMap<String, Object>();
 
     public MyDataContext(final Component component) {
       myEventCount = -1;
-      myRef = new WeakReference<Component>(component);
+      myRef = component == null ? null : new WeakReference<Component>(component);
     }
-
 
     public void setEventCount(int eventCount, Object caller) {
       assert caller instanceof IdeKeyEventDispatcher : "This method might be accessible from " + IdeKeyEventDispatcher.class.getName() + " only";
@@ -363,12 +378,12 @@ public class DataManagerImpl extends DataManager {
 
     @Nullable
     private Object doGetData(@NotNull String dataId) {
-      Component component = myRef.get();
+      Component component = SoftReference.dereference(myRef);
       if (PlatformDataKeys.IS_MODAL_CONTEXT.is(dataId)) {
         if (component == null) {
           return null;
         }
-        return IdeKeyEventDispatcher.isModalContext(component) ? Boolean.TRUE : Boolean.FALSE;
+        return IdeKeyEventDispatcher.isModalContext(component);
       }
       if (PlatformDataKeys.CONTEXT_COMPONENT.is(dataId)) {
         return component;
@@ -383,20 +398,9 @@ public class DataManagerImpl extends DataManager {
       return ((DataManagerImpl)DataManager.getInstance()).getData(dataId, component);
     }
 
-    @Nullable
-    private static Editor validateEditor(Editor editor) {
-      Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
-      if (focusOwner instanceof JComponent) {
-        final JComponent jComponent = (JComponent)focusOwner;
-        if (jComponent.getClientProperty("AuxEditorComponent") != null) return null; // Hack for EditorSearchComponent
-      }
-
-      return editor;
-    }
-
     @NonNls
     public String toString() {
-      return "component=" + myRef.get();
+      return "component=" + SoftReference.dereference(myRef);
     }
 
     @Override
@@ -410,8 +414,9 @@ public class DataManagerImpl extends DataManager {
       getOrCreateMap().put(key, value);
     }
 
-    private WeakValueHashMap<Key, Object> getOrCreateMap() {
-      WeakValueHashMap<Key, Object> userData = myUserData;
+    @NotNull
+    private Map<Key, Object> getOrCreateMap() {
+      Map<Key, Object> userData = myUserData;
       if (userData == null) {
         myUserData = userData = new WeakValueHashMap<Key, Object>();
       }

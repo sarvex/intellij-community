@@ -43,36 +43,39 @@ import java.util.regex.Pattern;
 /**
  * @author yole
  */
+@SuppressWarnings("UseOfObsoleteCollectionType")
 public class PyPackageManagementService extends PackageManagementService {
   @NotNull private static final Pattern PATTERN_ERROR_LINE = Pattern.compile(".*error:.*", Pattern.CASE_INSENSITIVE);
 
   private final Project myProject;
-  private final Sdk mySdk;
+  protected final Sdk mySdk;
 
-  public PyPackageManagementService(Project project, Sdk sdk) {
+  public PyPackageManagementService(@NotNull final Project project, @NotNull final Sdk sdk) {
     myProject = project;
     mySdk = sdk;
   }
 
+  @NotNull
   public Sdk getSdk() {
     return mySdk;
   }
 
   @Override
   public List<String> getAllRepositories() {
+    final PyPackageService packageService = PyPackageService.getInstance();
     List<String> result = new ArrayList<String>();
-    result.add(PyPIPackageUtil.PYPI_URL);
-    result.addAll(PyPackageService.getInstance().additionalRepositories);
+    if (!packageService.PYPI_REMOVED) result.add(PyPIPackageUtil.PYPI_URL);
+    result.addAll(packageService.additionalRepositories);
     return result;
   }
 
   @Override
-  public void addRepository(String repositoryUrl) {
+  public void addRepository(final String repositoryUrl) {
     PyPackageService.getInstance().addRepository(repositoryUrl);
   }
 
   @Override
-  public void removeRepository(String repositoryUrl) {
+  public void removeRepository(final String repositoryUrl) {
     PyPackageService.getInstance().removeRepository(repositoryUrl);
   }
 
@@ -90,7 +93,7 @@ public class PyPackageManagementService extends PackageManagementService {
     return packages;
   }
 
-  private static List<RepoPackage> versionMapToPackageList(Map<String, String> packageToVersionMap) {
+  protected static List<RepoPackage> versionMapToPackageList(Map<String, String> packageToVersionMap) {
     final boolean customRepoConfigured = !PyPackageService.getInstance().additionalRepositories.isEmpty();
     String url = customRepoConfigured ? PyPIPackageUtil.PYPI_URL : "";
     List<RepoPackage> packages = new ArrayList<RepoPackage>();
@@ -102,9 +105,7 @@ public class PyPackageManagementService extends PackageManagementService {
 
   @Override
   public List<RepoPackage> reloadAllPackages() throws IOException {
-    final PyPackageService service = PyPackageService.getInstance();
-    PyPIPackageUtil.INSTANCE.updatePyPICache(service);
-    service.LAST_TIME_CHECKED = System.currentTimeMillis();
+    PyPIPackageUtil.INSTANCE.clearPackagesCache();
     return getAllPackages();
   }
 
@@ -199,7 +200,7 @@ public class PyPackageManagementService extends PackageManagementService {
   }
 
   @Nullable
-  public static ErrorDescription toErrorDescription(@Nullable List<ExecutionException> exceptions, @NotNull Sdk sdk) {
+  public static ErrorDescription toErrorDescription(@Nullable List<ExecutionException> exceptions, @Nullable Sdk sdk) {
     if (exceptions != null && !exceptions.isEmpty() && !isCancelled(exceptions)) {
       return createDescription(exceptions.get(0), sdk);
     }
@@ -235,9 +236,12 @@ public class PyPackageManagementService extends PackageManagementService {
     PyPIPackageUtil.INSTANCE.usePackageReleases(packageName, new AsyncCallback() {
       @Override
       public void handleResult(Object result, URL url, String method) {
+        //noinspection unchecked
         final List<String> releases = (List<String>)result;
-        PyPIPackageUtil.INSTANCE.addPackageReleases(packageName, releases);
-        consumer.consume(releases);
+        if (releases != null) {
+          PyPIPackageUtil.INSTANCE.addPackageReleases(packageName, releases);
+          consumer.consume(releases);
+        }
       }
 
       @Override
@@ -320,7 +324,7 @@ public class PyPackageManagementService extends PackageManagementService {
   }
 
   @NotNull
-  private static ErrorDescription createDescription(@NotNull ExecutionException e, @NotNull Sdk sdk) {
+  private static ErrorDescription createDescription(@NotNull ExecutionException e, @Nullable Sdk sdk) {
     if (e instanceof PyExecutionException) {
       final PyExecutionException ee = (PyExecutionException)e;
       final String stdoutCause = findErrorCause(ee.getStdout());
@@ -336,7 +340,7 @@ public class PyPackageManagementService extends PackageManagementService {
   }
 
   @Nullable
-  private static String findErrorSolution(@NotNull PyExecutionException e, @Nullable String cause, @NotNull Sdk sdk) {
+  private static String findErrorSolution(@NotNull PyExecutionException e, @Nullable String cause, @Nullable Sdk sdk) {
     if (cause != null) {
       if (StringUtil.containsIgnoreCase(cause, "SyntaxError")) {
         final LanguageLevel languageLevel = PythonSdkType.getLanguageLevelForSdk(sdk);
@@ -349,7 +353,7 @@ public class PyPackageManagementService extends PackageManagementService {
       return "Make sure that you have installed Python development packages for your operating system.";
     }
 
-    if ("pip".equals(e.getCommand())) {
+    if ("pip".equals(e.getCommand()) && sdk != null) {
       return "Try to run this command from the system terminal. Make sure that you use the correct version of 'pip' " +
              "installed for your Python interpreter located at '" + sdk.getHomePath() + "'.";
     }
@@ -370,4 +374,29 @@ public class PyPackageManagementService extends PackageManagementService {
     }
     return null;
   }
+
+  /*@Override
+  public void updatePackage(@NotNull InstalledPackage installedPackage,
+                            @Nullable String version,
+                            @NotNull Listener listener) {
+    installPackage(new RepoPackage(installedPackage.getName(), null *//* TODO? *//*), null, true, null, listener, false);
+  }
+
+  @Override
+  public boolean shouldFetchLatestVersionsForOnlyInstalledPackages() {
+    final List<String> repositories = PyPackageService.getInstance().additionalRepositories;
+    return repositories.size() > 1  || (repositories.size() == 1 && !repositories.get(0).equals(PyPIPackageUtil.PYPI_LIST_URL));
+  }
+
+  @Override
+  public void fetchLatestVersion(@NotNull InstalledPackage pkg, @NotNull CatchingConsumer<String, Exception> consumer) {
+    final String version;
+    try {
+      version = PyPackageManager.getInstance(mySdk).fetchLatestVersion(pkg);
+      consumer.consume(version);
+    }
+    catch (ExecutionException ignored) {
+
+    }
+  }*/
 }

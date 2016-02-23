@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.editor.impl.AbstractEditorTest;
 import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.testFramework.EditorTestUtil;
-import com.intellij.testFramework.LightPlatformCodeInsightTestCase;
 import com.intellij.testFramework.TestFileType;
 
 import java.awt.datatransfer.StringSelection;
@@ -193,5 +192,34 @@ public class EditorActionTest extends AbstractEditorTest {
     initText("      <caret>  text");
     unindent();
     checkResultByText("    <caret>text");
+  }
+  
+  public void testSwapSelectionBoundaries() throws IOException {
+    initText("a<selection>b<caret></selection>c");
+    executeAction(IdeActions.ACTION_EDITOR_SWAP_SELECTION_BOUNDARIES);
+    left();
+    checkResultByText("a<caret>bc");
+  }
+  
+  public void testSwapSelectionBoundariesWithStickySelection() throws IOException {
+    initText("a<selection>b<caret></selection>c");
+    ((EditorEx)myEditor).setStickySelection(true);
+    executeAction(IdeActions.ACTION_EDITOR_SWAP_SELECTION_BOUNDARIES);
+    left();
+    checkResultByText("<selection><caret>ab</selection>c");
+  }
+  
+  public void testDuplicateLinesWhenSelectionEndsAtLineStart() throws IOException {
+    initText("a\n<selection>b\n</selection>c");
+    executeAction(IdeActions.ACTION_EDITOR_DUPLICATE_LINES);
+    checkResultByText("a\nb\n<selection>b\n</selection>c");
+  }
+  
+  public void testSmartHomeAfterFoldedRegion() throws IOException {
+    initText(" text with [multiline\nfold region]<caret>");
+    foldOccurrences("(?s)\\[.*\\]", "...");
+    myEditor.getSettings().setSmartHome(true);
+    home();
+    checkResultByText(" <caret>text with [multiline\nfold region]");
   }
 }

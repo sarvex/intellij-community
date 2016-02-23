@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,195 +15,333 @@
  */
 package com.intellij.openapi.editor.impl.view;
 
-import com.intellij.openapi.editor.Document;
-import com.intellij.openapi.editor.LogicalPosition;
-import com.intellij.openapi.editor.VisualPosition;
+import com.intellij.openapi.editor.*;
+import com.intellij.openapi.editor.ex.util.EditorUtil;
+import com.intellij.openapi.editor.impl.EditorImpl;
+import com.intellij.openapi.editor.impl.FoldingModelImpl;
+import com.intellij.openapi.editor.impl.SoftWrapModelImpl;
+import com.intellij.openapi.editor.impl.softwrap.SoftWrapDrawingType;
 import org.jetbrains.annotations.NotNull;
 
 import java.awt.*;
+import java.util.List;
 
+/**
+ * Performs transformations between various location representations in editor 
+ * (offset, logical position, visual position, pixel coordinates).
+ * 
+ * @see LogicalPosition
+ * @see VisualPosition
+ */
 class EditorCoordinateMapper {
   private final EditorView myView;
   private final Document myDocument;
+  private final FoldingModelImpl myFoldingModel;
   
   EditorCoordinateMapper(EditorView view) {
     myView = view;
     myDocument = myView.getEditor().getDocument();
+    myFoldingModel = myView.getEditor().getFoldingModel();
   }
 
   int visualLineToY(int line) {
-    if (line < 0) throw new IndexOutOfBoundsException("Wrong line: " + line);
-    return line * myView.getLineHeight();
+    return myView.getInsets().top + Math.max(0, line) * myView.getLineHeight();
   }
 
   int yToVisualLine(int y) {
-    assert y >= 0 : y;
-    return y / myView.getLineHeight();
+    return Math.max(0, y - myView.getInsets().top) / myView.getLineHeight();
   }
 
   @NotNull
   LogicalPosition offsetToLogicalPosition(int offset) {
-    int textLength = myDocument.getTextLength();
-    if (offset < 0 || textLength == 0) {
-      return new LogicalPosition(0, 0);
-    }
-    offset = Math.min(offset, textLength);
-    int line = myDocument.getLineNumber(offset);
-    LineLayout lineLayout = myView.getLineLayout(line);
-    float x = line == 0 ? myView.getPrefixTextWidthInPixels() : 0;
-    int relOffset = offset - myDocument.getLineStartOffset(line);
-    int column = 0;
-    for (LineLayout.Fragment fragment : lineLayout.getFragmentsInLogicalOrder()) {
-      if (relOffset >= fragment.getStartOffset() && relOffset <= fragment.getEndOffset()) {
-        column += fragment.offsetToColumn(x, relOffset - fragment.getStartOffset());
-        break;
-      }
-      else {
-        column += fragment.getColumnCount(x);
-        x = fragment.advance(x);
-      }
-    }
-    return new LogicalPosition(line, column);
+    return myView.getLogicalPositionCache().offsetToLogicalPosition(offset);
   }
 
   int logicalPositionToOffset(@NotNull LogicalPosition pos) {
-    int line = pos.line;
-    if (line >= myDocument.getLineCount()) {
-      return myDocument.getTextLength();
-    }
-    else {
-      LineLayout lineLayout = myView.getLineLayout(line);
-      float x = line == 0 ? myView.getPrefixTextWidthInPixels() : 0;
-      int column = pos.column;
-      int relOffset = 0;
-      for (LineLayout.Fragment fragment : lineLayout.getFragmentsInLogicalOrder()) {
-        int columnCount = fragment.getColumnCount(x);
-        if (column <= columnCount) {
-          relOffset += fragment.columnToOffset(x, column);
-          break;
-        }
-        else {
-          relOffset += fragment.getLength();
-          column -= columnCount;
-          x = fragment.advance(x);
-        }
-      }
-      return myDocument.getLineStartOffset(line) + relOffset;
-    }
+    return myView.getLogicalPositionCache().logicalPositionToOffset(pos);
   }
-  
+
   @NotNull
-  VisualPosition logicalToVisualPosition(@NotNull LogicalPosition pos) {
-    return new VisualPosition(pos.line, pos.column);
+  VisualPosition logicalToVisualPosition(@NotNull LogicalPosition pos, boolean beforeSoftWrap) {
+    int line = pos.line;
+    int column = pos.column;
+    int logicalLineCount = myDocument.getLineCount();
+    if (line >= logicalLineCount) {
+      return new VisualPosition(line - logicalLineCount + myView.getEditor().getVisibleLineCount(), column, pos.leansForward);
+    }
+    int offset = logicalPositionToOffset(pos);
+    int visualLine = offsetToVisualLine(offset, beforeSoftWrap);
+    int maxVisualColumn = 0;
+    int maxLogicalColumn = 0;
+    for (VisualLineFragmentsIterator.Fragment fragment : VisualLineFragmentsIterator.create(myView, offset, beforeSoftWrap)) {
+      if (!pos.leansForward && offset == fragment.getVisualLineStartOffset()) {
+        return new VisualPosition(visualLine, fragment.getStartVisualColumn());
+      }
+      if (fragment.isCollapsedFoldRegion()) {
+        int startLogicalLine = fragment.getStartLogicalLine();
+        int endLogicalLine = fragment.getEndLogicalLine();
+        int startLogicalColumn = fragment.getStartLogicalColumn();
+        int endLogicalColumn = fragment.getEndLogicalColumn();
+        if ((line > startLogicalLine || line == startLogicalLine && (column > startLogicalColumn ||
+                                                                     column == startLogicalColumn && pos.leansForward)) &&
+            (line < endLogicalLine || line == endLogicalLine && column < endLogicalColumn)) {
+          return new VisualPosition(visualLine, fragment.getStartVisualColumn(), true);
+        }
+        if (line == endLogicalLine && column == endLogicalColumn && !pos.leansForward) {
+          return new VisualPosition(visualLine, fragment.getEndVisualColumn());
+        }
+        maxLogicalColumn = startLogicalLine == endLogicalLine ? Math.max(maxLogicalColumn, endLogicalColumn) : endLogicalColumn;
+      }
+      else {
+        int minColumn = fragment.getMinLogicalColumn();
+        int maxColumn = fragment.getMaxLogicalColumn();
+        if (line == fragment.getStartLogicalLine() &&
+            (column > minColumn && column < maxColumn ||
+             column == minColumn && pos.leansForward ||
+             column == maxColumn && !pos.leansForward)) {
+          return new VisualPosition(visualLine, fragment.logicalToVisualColumn(column), fragment.isRtl() ^ pos.leansForward);
+        }
+        maxLogicalColumn = Math.max(maxLogicalColumn, maxColumn);
+      }
+      maxVisualColumn = fragment.getEndVisualColumn();
+    }
+    int resultColumn = column - maxLogicalColumn + maxVisualColumn;
+    if (resultColumn < 0 && maxVisualColumn > maxLogicalColumn) {
+      resultColumn = Integer.MAX_VALUE; // guarding against overflow
+    }
+    return new VisualPosition(visualLine, resultColumn, pos.leansForward);
   }
 
   @NotNull
   LogicalPosition visualToLogicalPosition(@NotNull VisualPosition pos) {
-    return new LogicalPosition(pos.line, pos.column);
+    int line = pos.line;
+    int column = pos.column;
+    int visualLineCount = myView.getEditor().getVisibleLineCount();
+    if (line >= visualLineCount) {
+      return new LogicalPosition(line - visualLineCount + myDocument.getLineCount(), column, pos.leansRight);
+    }
+    int offset = visualLineToOffset(line);
+    int logicalLine = myDocument.getLineNumber(offset);
+    int maxVisualColumn = 0;
+    int maxLogicalColumn = 0;
+    int maxOffset = offset;
+    for (VisualLineFragmentsIterator.Fragment fragment : VisualLineFragmentsIterator.create(myView, offset, false)) {
+      int minColumn = fragment.getStartVisualColumn();
+      int maxColumn = fragment.getEndVisualColumn();
+      if (column < minColumn || column == minColumn && !pos.leansRight) {
+        return offsetToLogicalPosition(offset);
+      }
+      if (column > minColumn && column < maxColumn ||
+          column == minColumn ||
+          column == maxColumn && !pos.leansRight) {
+        return new LogicalPosition(column == maxColumn ? fragment.getEndLogicalLine() : fragment.getStartLogicalLine(), 
+                                   fragment.visualToLogicalColumn(column), fragment.isCollapsedFoldRegion() ? 
+                                                                           column < maxColumn : 
+                                                                           fragment.isRtl() ^ pos.leansRight);
+      }
+      maxLogicalColumn = logicalLine == fragment.getEndLogicalLine() ? Math.max(maxLogicalColumn, fragment.getMaxLogicalColumn()) : 
+                         fragment.getMaxLogicalColumn();
+      maxVisualColumn = maxColumn;
+      logicalLine = fragment.getEndLogicalLine();
+      maxOffset = Math.max(maxOffset, fragment.getMaxOffset());
+    }
+    if (myView.getEditor().getSoftWrapModel().getSoftWrap(maxOffset) == null) {
+      int resultColumn = column - maxVisualColumn + maxLogicalColumn;
+      if (resultColumn < 0 && maxLogicalColumn > maxVisualColumn) {
+        resultColumn = Integer.MAX_VALUE; // guarding against overflow
+      }
+      return new LogicalPosition(logicalLine, resultColumn, true);
+    }
+    else {
+      return offsetToLogicalPosition(maxOffset).leanForward(true);
+    }
   }
 
   @NotNull
-  VisualPosition offsetToVisualPosition(int offset) {
-    return logicalToVisualPosition(offsetToLogicalPosition(offset));
+  VisualPosition offsetToVisualPosition(int offset, boolean leanTowardsLargerOffsets, boolean beforeSoftWrap) {
+    return logicalToVisualPosition(offsetToLogicalPosition(offset).leanForward(leanTowardsLargerOffsets), beforeSoftWrap);
   }
 
-  int offsetToVisualLine(int offset) {
-    if (offset <= 0) {
+  int visualPositionToOffset(VisualPosition visualPosition) {
+    return logicalPositionToOffset(visualToLogicalPosition(visualPosition));
+  }
+
+  int offsetToVisualLine(int offset, boolean beforeSoftWrap) {
+    int textLength = myDocument.getTextLength();
+    if (offset < 0 || textLength == 0) {
       return 0;
     }
-    if (offset >= myDocument.getTextLength()) {
-      return Math.max(0, myDocument.getLineCount() - 1);
+    offset = Math.min(offset, textLength);
+
+    FoldRegion outermostCollapsed = myFoldingModel.getCollapsedRegionAtOffset(offset);
+    if (outermostCollapsed != null && offset > outermostCollapsed.getStartOffset()) {
+      assert outermostCollapsed.isValid();
+      offset = outermostCollapsed.getStartOffset();
+      beforeSoftWrap = false;
     }
-    return myDocument.getLineNumber(offset);
+
+    int wrapIndex = myView.getEditor().getSoftWrapModel().getSoftWrapIndex(offset);
+    int softWrapsBeforeOrAtOffset = wrapIndex < 0 ? (- wrapIndex - 1) : wrapIndex + (beforeSoftWrap ? 0 : 1);
+
+    return myDocument.getLineNumber(offset) - myFoldingModel.getFoldedLinesCountBefore(offset) + softWrapsBeforeOrAtOffset;
+  }
+
+  int visualLineToOffset(int visualLine) {
+    int start = 0;
+    int end = myDocument.getTextLength();
+    if (visualLine <= 0) return start;
+    if (visualLine >= myView.getEditor().getVisibleLineCount()) return end;
+    int current = 0;
+    while (start <= end) {
+      current = (start + end) / 2;
+      int line = offsetToVisualLine(current, false);
+      if (line < visualLine) {
+        start = current + 1;
+      }
+      else if (line > visualLine) {
+        end = current - 1;
+      }
+      else {
+        break;
+      }
+    }
+    return visualLineStartOffset(current, true);
+  }
+
+  private int visualLineStartOffset(int offset, boolean leanForward) {
+    EditorImpl editor = myView.getEditor();
+    int result = EditorUtil.getNotFoldedLineStartOffset(editor, offset);
+
+    SoftWrapModelImpl softWrapModel = editor.getSoftWrapModel();
+    List<? extends SoftWrap> softWraps = softWrapModel.getRegisteredSoftWraps();
+    int currentOrPrevWrapIndex = softWrapModel.getSoftWrapIndex(offset);
+    SoftWrap currentOrPrevWrap;
+    if (currentOrPrevWrapIndex < 0) {
+      currentOrPrevWrapIndex = - currentOrPrevWrapIndex - 2;
+      currentOrPrevWrap = currentOrPrevWrapIndex < 0 || currentOrPrevWrapIndex >= softWraps.size() ? null :
+                          softWraps.get(currentOrPrevWrapIndex);
+    }
+    else {
+      currentOrPrevWrap = leanForward ? softWraps.get(currentOrPrevWrapIndex) : null;
+    }
+    if (currentOrPrevWrap != null && currentOrPrevWrap.getStart() > result) {
+      result = currentOrPrevWrap.getStart();
+    }
+    return result;
+  }
+
+  private float getStartX(int line) {
+    return myView.getInsets().left + (line == 0 ? myView.getPrefixTextWidthInPixels() : 0);
   }
 
   @NotNull
   VisualPosition xyToVisualPosition(@NotNull Point p) {
-    int line = yToVisualLine(Math.max(p.y, 0));
-    float x = line == 0 ? myView.getPrefixTextWidthInPixels() : 0;
-    int column = 0;
-    if (line < myDocument.getLineCount()) {
-      LineLayout lineLayout = myView.getLineLayout(line);
-      int lastEndOffset = 0;
-      for (LineLayout.Fragment fragment : lineLayout.getFragmentsInVisualOrder()) {
-        column += fragment.getVisualStartOffset() - lastEndOffset;
-        lastEndOffset = fragment.getVisualEndOffset();
-        float nextX = fragment.advance(x);
-        if (p.x <= nextX) {
-          column = fragment.isRtl() ? column - fragment.xToColumn(x, p.x) : column + fragment.xToColumn(x, p.x);
-          return new VisualPosition(line, column);
+    int visualLine = yToVisualLine(p.y);
+    int lastColumn = 0;
+    float x = getStartX(visualLine);
+    int px = p.x;
+    if (visualLine < myView.getEditor().getVisibleLineCount()) {
+      int visualLineStartOffset = visualLineToOffset(visualLine);
+      int maxOffset = 0;
+      for (VisualLineFragmentsIterator.Fragment fragment : VisualLineFragmentsIterator.create(myView, visualLineStartOffset, false)) {
+        if (px <= fragment.getStartX()) {
+          if (fragment.getStartVisualColumn() == 0) {
+            return new VisualPosition(visualLine, 0);
+          }
+          int markerWidth = myView.getEditor().getSoftWrapModel().getMinDrawingWidthInPixels(SoftWrapDrawingType.AFTER_SOFT_WRAP);
+          float indent = fragment.getStartX() - markerWidth;
+          if (px <= indent) {
+            break;
+          }
+          boolean after = px >= indent + markerWidth / 2;
+          return new VisualPosition(visualLine, fragment.getStartVisualColumn() - (after ? 0 : 1), !after);
         }
-        else {
-          column = fragment.isRtl() ? column - fragment.getColumnCount(x) : column + fragment.getColumnCount(x);
-          x = nextX;
+        float nextX = fragment.getEndX();
+        if (px <= nextX) {
+          int[] column = fragment.xToVisualColumn(px);
+          return new VisualPosition(visualLine, column[0], column[1] > 0);
         }
+        x = nextX;
+        lastColumn = fragment.getEndVisualColumn();
+        maxOffset = Math.max(maxOffset, fragment.getMaxOffset());
       }
-      int lineLength = myDocument.getLineEndOffset(line) - myDocument.getLineStartOffset(line);
-      column += lineLength - lastEndOffset;
+      if (myView.getEditor().getSoftWrapModel().getSoftWrap(maxOffset) != null) {
+        int markerWidth = myView.getEditor().getSoftWrapModel().getMinDrawingWidthInPixels(SoftWrapDrawingType.BEFORE_SOFT_WRAP_LINE_FEED);
+        if (px <= x + markerWidth) {
+          boolean after = px >= x + markerWidth / 2;
+          return new VisualPosition(visualLine, lastColumn + (after ? 1 : 0), !after);
+        }
+        px -= markerWidth;
+        lastColumn++;
+      }
     }
-    return new VisualPosition(line, column + spacePixelsToColumns((int)(p.x - x)));
+    int plainSpaceWidth = myView.getPlainSpaceWidth();
+    int remainingShift = (int)(px - x);
+    int additionalColumns = remainingShift <= 0 ? 0 : (remainingShift + plainSpaceWidth / 2) / plainSpaceWidth;
+    return new VisualPosition(visualLine, lastColumn + additionalColumns, 
+                              remainingShift > 0 && additionalColumns == (remainingShift - 1) / plainSpaceWidth);
   }
 
   @NotNull
-  Point visualPositionToXY(@NotNull VisualPosition pos, boolean leanTowardsLargerColumns) {
-    int y = visualLineToY(pos.line);
-    float x = pos.line == 0 ? myView.getPrefixTextWidthInPixels() : 0;
+  Point visualPositionToXY(@NotNull VisualPosition pos) {
+    int visualLine = pos.line;
     int column = pos.column;
-    if (pos.line < myDocument.getLineCount() && (column > 0 || leanTowardsLargerColumns)) {
-      LineLayout lineLayout = myView.getLineLayout(pos.line);
-      int lastEndOffset = 0;
-      for (LineLayout.Fragment fragment : lineLayout.getFragmentsInVisualOrder()) {
-        column -= fragment.getVisualStartOffset() - lastEndOffset;
-        lastEndOffset = fragment.getVisualEndOffset();
-        int nextColumn = fragment.isRtl() ? column + fragment.getColumnCount(x) : column - fragment.getColumnCount(x);
-        if (column > 0 && nextColumn < 0 || 
-            column < 0 && nextColumn > 0 || 
-            Math.max(column, nextColumn) == 0 && leanTowardsLargerColumns ||       
-            Math.min(column, nextColumn) == 0 && !leanTowardsLargerColumns) {
-          x = fragment.columnToX(x, Math.abs(column));
-          return new Point((int)x, y);
+    int y = visualLineToY(visualLine);
+    float x = getStartX(visualLine);
+    int lastColumn = 0;
+    if (visualLine < myView.getEditor().getVisibleLineCount()) {
+      int visualLineStartOffset = visualLineToOffset(visualLine);
+      int maxOffset = 0;
+      for (VisualLineFragmentsIterator.Fragment fragment : VisualLineFragmentsIterator.create(myView, visualLineStartOffset, false)) {
+        if (column < fragment.getStartVisualColumn()) {
+          break;
         }
-        else {
-          column = nextColumn;
-          x = fragment.advance(x);
+        int endColumn = fragment.getEndVisualColumn();
+        if (column <= endColumn) {
+          return new Point((int)fragment.visualColumnToX(column), y);
         }
+        x = fragment.getEndX();
+        lastColumn = endColumn;
+        maxOffset = Math.max(maxOffset, fragment.getMaxOffset());
       }
-      int lineLength = myDocument.getLineEndOffset(pos.line) - myDocument.getLineStartOffset(pos.line);
-      column -= lineLength - lastEndOffset;
+      if (myView.getEditor().getSoftWrapModel().getSoftWrap(maxOffset) != null) {
+        column--;
+        x += myView.getEditor().getSoftWrapModel().getMinDrawingWidthInPixels(SoftWrapDrawingType.BEFORE_SOFT_WRAP_LINE_FEED);
+      }
     }
-    return new Point((int)(spaceColumnsToPixels(column) + x), y);
+    int additionalShift = column <= lastColumn ? 0 : (column - lastColumn) * myView.getPlainSpaceWidth();
+    return new Point((int)(x) + additionalShift, y);
   }
 
   @NotNull
-  Point offsetToXY(int offset, boolean leanTowardsLargerOffsets) {
+  Point offsetToXY(int offset, boolean leanTowardsLargerOffsets, boolean beforeSoftWrap) {
     offset = Math.max(0, Math.min(myDocument.getTextLength(), offset));
-    int line = myDocument.getLineNumber(offset);
-    int intraLineOffset = offset - myDocument.getLineStartOffset(line);
-    int y = visualLineToY(line);
-    float x = line == 0 ? myView.getPrefixTextWidthInPixels() : 0;
-    if (myDocument.getTextLength() > 0 && (intraLineOffset > 0 || leanTowardsLargerOffsets)) {
-      LineLayout lineLayout = myView.getLineLayout(line);
-      for (LineLayout.Fragment fragment : lineLayout.getFragmentsInVisualOrder()) {
-        if (intraLineOffset > fragment.getStartOffset() && intraLineOffset < fragment.getEndOffset() ||
-            intraLineOffset == fragment.getStartOffset() && leanTowardsLargerOffsets ||
-            intraLineOffset == fragment.getEndOffset() && !leanTowardsLargerOffsets) {
-          x = fragment.absoluteOffsetToX(x, intraLineOffset);
+    int logicalLine = myDocument.getLineNumber(offset);
+    int visualLine = offsetToVisualLine(offset, beforeSoftWrap);
+    int visualLineStartOffset = visualLineToOffset(visualLine);
+    int y = visualLineToY(visualLine);
+    float x = getStartX(logicalLine);
+    if (myDocument.getTextLength() > 0) {
+      boolean firstFragment = true;
+      for (VisualLineFragmentsIterator.Fragment fragment : VisualLineFragmentsIterator.create(myView, offset, beforeSoftWrap)) {
+        if (firstFragment && offset == visualLineStartOffset && !leanTowardsLargerOffsets) {
+          x = fragment.getStartX();
+          break;
+        }
+        firstFragment = false;
+        int minOffset = fragment.getMinOffset();
+        int maxOffset = fragment.getMaxOffset();
+        if (offset > minOffset && offset < maxOffset ||
+            offset == minOffset && leanTowardsLargerOffsets ||
+            offset == maxOffset && !leanTowardsLargerOffsets) {
+          x = fragment.offsetToX(offset);
           break;
         }
         else {
-          x = fragment.advance(x);
+          x = fragment.getEndX();
         }
       }
     }
     return new Point((int)x, y);
-  }
-
-  private int spacePixelsToColumns(int pixels) {
-    int plainSpaceWidth = myView.getPlainSpaceWidth();
-    return pixels < 0 ? 0 : (pixels + plainSpaceWidth / 2) / plainSpaceWidth;
-  }
-
-  private int spaceColumnsToPixels(int columns) {
-    return columns < 0 ? 0 : columns * myView.getPlainSpaceWidth();
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,14 @@
  */
 package com.intellij.ide.fileTemplates.impl;
 
-import com.intellij.ide.IdeBundle;
-import com.intellij.openapi.application.PathManager;
-import com.intellij.openapi.components.*;
-import com.intellij.openapi.fileTypes.ex.FileTypeManagerEx;
+import com.intellij.openapi.components.PersistentStateComponent;
+import com.intellij.openapi.components.ServiceManager;
+import com.intellij.openapi.components.State;
+import com.intellij.openapi.components.Storage;
+import com.intellij.openapi.project.Project;
 import org.jdom.Element;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.File;
 import java.util.List;
 import java.util.Locale;
 
@@ -33,42 +32,27 @@ import java.util.Locale;
  * @author Rustam Vishnyakov
  */
 @State(
-  name="ExportableFileTemplateSettings",
-  storages= {
-    @Storage(
-      file = StoragePathMacros.APP_CONFIG + "/" + ExportableFileTemplateSettings.EXPORTABLE_SETTINGS_FILE
-    )}
+  name = "ExportableFileTemplateSettings",
+  storages = @Storage(ExportableFileTemplateSettings.EXPORTABLE_SETTINGS_FILE),
+  additionalExportFile = FileTemplatesLoader.TEMPLATES_DIR
 )
-public class ExportableFileTemplateSettings extends FileTemplatesLoader implements PersistentStateComponent<Element>, ExportableComponent {
+public class ExportableFileTemplateSettings implements PersistentStateComponent<Element> {
   public final static String EXPORTABLE_SETTINGS_FILE = "file.template.settings.xml";
 
   static final String ELEMENT_TEMPLATE = "template";
   static final String ATTRIBUTE_NAME = "name";
   static final String ATTRIBUTE_REFORMAT = "reformat";
+  static final String ATTRIBUTE_LIVE_TEMPLATE = "live-template-enabled";
   static final String ATTRIBUTE_ENABLED = "enabled";
+  private final Project myProject;
 
-  private boolean myLoaded = false;
-
-  public ExportableFileTemplateSettings(@NotNull FileTypeManagerEx typeManager) {
-    super(typeManager);
+  public ExportableFileTemplateSettings(Project project) {
+    myProject = project;
   }
 
-  public static ExportableFileTemplateSettings getInstance() {
-    return ServiceManager.getService(ExportableFileTemplateSettings.class);
-  }
 
-  @NotNull
-  @Override
-  public File[] getExportFiles() {
-    File exportableSettingsFile =
-      new File(PathManager.getOptionsPath() + File.separator + EXPORTABLE_SETTINGS_FILE);
-    return new File[] {getDefaultTemplatesManager().getConfigRoot(false), exportableSettingsFile};
-  }
-
-  @NotNull
-  @Override
-  public String getPresentableName() {
-    return IdeBundle.message("item.file.templates");
+  static ExportableFileTemplateSettings getInstance(Project project) {
+    return ServiceManager.getService(project, ExportableFileTemplateSettings.class);
   }
 
   @Nullable
@@ -79,7 +63,8 @@ public class ExportableFileTemplateSettings extends FileTemplatesLoader implemen
       Element templatesGroup = null;
       for (FileTemplateBase template : manager.getAllTemplates(true)) {
         // save only those settings that differ from defaults
-        boolean shouldSave = template.isReformatCode() != FileTemplateBase.DEFAULT_REFORMAT_CODE_VALUE;
+        boolean shouldSave = template.isReformatCode() != FileTemplateBase.DEFAULT_REFORMAT_CODE_VALUE ||
+                             template.isLiveTemplateEnabled() != template.isLiveTemplateEnabledByDefault();
         if (template instanceof BundledFileTemplate) {
           shouldSave |= ((BundledFileTemplate)template).isEnabled() != FileTemplateBase.DEFAULT_ENABLED_VALUE;
         }
@@ -89,6 +74,7 @@ public class ExportableFileTemplateSettings extends FileTemplatesLoader implemen
         final Element templateElement = new Element(ELEMENT_TEMPLATE);
         templateElement.setAttribute(ATTRIBUTE_NAME, template.getQualifiedName());
         templateElement.setAttribute(ATTRIBUTE_REFORMAT, Boolean.toString(template.isReformatCode()));
+        templateElement.setAttribute(ATTRIBUTE_LIVE_TEMPLATE, Boolean.toString(template.isLiveTemplateEnabled()));
         if (template instanceof BundledFileTemplate) {
           templateElement.setAttribute(ATTRIBUTE_ENABLED, Boolean.toString(((BundledFileTemplate)template).isEnabled()));
         }
@@ -106,10 +92,13 @@ public class ExportableFileTemplateSettings extends FileTemplatesLoader implemen
     return element;
   }
 
+  private FTManager[] getAllManagers() {
+    return FileTemplateManagerImpl.getInstanceImpl(myProject).getAllManagers();
+  }
+
   @Override
   public void loadState(Element state) {
     doLoad(state);
-    myLoaded = true;
   }
 
   private void doLoad(Element element) {
@@ -127,8 +116,8 @@ public class ExportableFileTemplateSettings extends FileTemplatesLoader implemen
         if (template == null) {
           continue;
         }
-        final boolean reformat = Boolean.TRUE.toString().equals(child.getAttributeValue(ATTRIBUTE_REFORMAT));
-        template.setReformatCode(reformat);
+        template.setReformatCode(Boolean.TRUE.toString().equals(child.getAttributeValue(ATTRIBUTE_REFORMAT)));
+        template.setLiveTemplateEnabled(Boolean.TRUE.toString().equals(child.getAttributeValue(ATTRIBUTE_LIVE_TEMPLATE)));
         if (template instanceof BundledFileTemplate) {
           final boolean enabled = Boolean.parseBoolean(child.getAttributeValue(ATTRIBUTE_ENABLED, "true"));
           ((BundledFileTemplate)template).setEnabled(enabled);
@@ -139,9 +128,5 @@ public class ExportableFileTemplateSettings extends FileTemplatesLoader implemen
 
   private static String getXmlElementGroupName(FTManager manager) {
     return manager.getName().toLowerCase(Locale.US) + "_templates";
-  }
-
-  public boolean isLoaded() {
-    return myLoaded;
   }
 }

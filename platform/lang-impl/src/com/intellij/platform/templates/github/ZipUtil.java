@@ -1,3 +1,18 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.platform.templates.github;
 
 import com.intellij.openapi.diagnostic.Logger;
@@ -41,13 +56,24 @@ public class ZipUtil {
     @NotNull final File extractToDir,
     final boolean unwrapSingleTopLevelFolder) throws GeneratorException
   {
+    unzipWithProgressSynchronously(project, progressTitle, zipArchive, extractToDir, null, unwrapSingleTopLevelFolder);
+  }
+
+  public static void unzipWithProgressSynchronously(
+    @Nullable Project project,
+    @NotNull String progressTitle,
+    @NotNull final File zipArchive,
+    @NotNull final File extractToDir,
+    @Nullable final NullableFunction<String, String> pathConvertor,
+    final boolean unwrapSingleTopLevelFolder) throws GeneratorException
+  {
     final Outcome<Boolean> outcome = DownloadUtil.provideDataWithProgressSynchronously(
       project, progressTitle, "Unpacking ...",
       new Callable<Boolean>() {
         @Override
         public Boolean call() throws IOException {
           ProgressIndicator progress = ProgressManager.getInstance().getProgressIndicator();
-          unzip(progress, extractToDir, zipArchive, null, null, unwrapSingleTopLevelFolder);
+          unzip(progress, extractToDir, zipArchive, pathConvertor, null, unwrapSingleTopLevelFolder);
           return true;
         }
       },
@@ -175,13 +201,7 @@ public class ZipUtil {
     else {
       byte[] content = contentProcessor.processContent(FileUtil.loadBytes(entryContentStream), child);
       if (content != null) {
-        FileOutputStream fileOutputStream = new FileOutputStream(child);
-        try {
-          fileOutputStream.write(content);
-        }
-        finally {
-          fileOutputStream.close();
-        }
+        FileUtil.writeToFile(child, content);
       }
     }
     LOG.info("Extract: " + relativeExtractPath);

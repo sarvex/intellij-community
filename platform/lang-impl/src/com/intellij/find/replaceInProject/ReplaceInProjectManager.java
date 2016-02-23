@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,7 +45,6 @@ import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.wm.StatusBar;
 import com.intellij.openapi.wm.WindowManager;
-import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
@@ -141,9 +140,8 @@ public class ReplaceInProjectManager {
     findManager.showFindDialog(findModel, new Runnable() {
       @Override
       public void run() {
-        final PsiDirectory psiDirectory = FindInProjectUtil.getPsiDirectory(findModel, myProject);
         if (!findModel.isProjectScope() &&
-            psiDirectory == null &&
+            FindInProjectUtil.getDirectory(findModel) == null &&
             findModel.getModuleName() == null &&
             findModel.getCustomScope() == null) {
           return;
@@ -158,7 +156,7 @@ public class ReplaceInProjectManager {
         final UsageViewPresentation presentation = FindInProjectUtil.setupViewPresentation(findModel.isOpenInNewTab(), findModelCopy);
         final FindUsagesProcessPresentation processPresentation = FindInProjectUtil.setupProcessPresentation(myProject, true, presentation);
 
-        UsageSearcherFactory factory = new UsageSearcherFactory(findModelCopy, psiDirectory, processPresentation);
+        UsageSearcherFactory factory = new UsageSearcherFactory(findModelCopy, processPresentation);
         searchAndShowUsages(manager, factory, findModelCopy, presentation, processPresentation, findManager);
       }
     });
@@ -254,15 +252,15 @@ public class ReplaceInProjectManager {
       final PsiFile psiFile = elt.getContainingFile();
       if (!psiFile.isWritable()) continue;
 
+      final VirtualFile virtualFile = psiFile.getVirtualFile();
+
       Runnable selectOnEditorRunnable = new Runnable() {
         @Override
         public void run() {
-          final VirtualFile virtualFile = psiFile.getVirtualFile();
-
           if (virtualFile != null && ApplicationManager.getApplication().runReadAction(new Computable<Boolean>() {
             @Override
             public Boolean compute() {
-              return virtualFile.isValid() ? Boolean.TRUE : Boolean.FALSE;
+              return virtualFile.isValid();
             }
           }).booleanValue()) {
 
@@ -274,9 +272,15 @@ public class ReplaceInProjectManager {
         }
       };
 
+      String path = ApplicationManager.getApplication().runReadAction(new Computable<String>() {
+        @Override
+        public String compute() {
+          return virtualFile != null ? virtualFile.getPath() : null;
+        }
+      });
       CommandProcessor.getInstance()
         .executeCommand(myProject, selectOnEditorRunnable, FindBundle.message("find.replace.select.on.editor.command"), null);
-      String title = FindBundle.message("find.replace.found.usage.title", i + 1, usages.length);
+      String title = FindBundle.message("find.replace.found.usage.title", i + 1, usages.length, path);
 
       int result;
       try {
@@ -479,7 +483,6 @@ public class ReplaceInProjectManager {
     return result;
   }
 
-
   private boolean getStringToReplace(int textOffset,
                                      int textEndOffset,
                                      Document document, FindModel findModel, Ref<String> stringToReplace)
@@ -494,7 +497,9 @@ public class ReplaceInProjectManager {
     final CharSequence foundString = document.getCharsSequence().subSequence(textOffset, textEndOffset);
     PsiFile file = PsiDocumentManager.getInstance(myProject).getPsiFile(document);
     FindResult findResult = findManager.findString(document.getCharsSequence(), textOffset, findModel, file != null ? file.getVirtualFile() : null);
-    if (!findResult.isStringFound()) {
+    if (!findResult.isStringFound() ||
+        // find result should be in needed range
+        !(findResult.getStartOffset() >= textOffset && findResult.getEndOffset() <= textEndOffset) ) {
       return false;
     }
 
@@ -576,14 +581,11 @@ public class ReplaceInProjectManager {
 
   private class UsageSearcherFactory implements Factory<UsageSearcher> {
     private final FindModel myFindModelCopy;
-    private final PsiDirectory myPsiDirectory;
     private final FindUsagesProcessPresentation myProcessPresentation;
 
     private UsageSearcherFactory(@NotNull FindModel findModelCopy,
-                                PsiDirectory psiDirectory,
                                 @NotNull FindUsagesProcessPresentation processPresentation) {
       myFindModelCopy = findModelCopy;
-      myPsiDirectory = psiDirectory;
       myProcessPresentation = processPresentation;
     }
 
@@ -596,7 +598,7 @@ public class ReplaceInProjectManager {
           try {
             myIsFindInProgress = true;
 
-            FindInProjectUtil.findUsages(myFindModelCopy, myPsiDirectory, myProject,
+            FindInProjectUtil.findUsages(myFindModelCopy, myProject,
                                          new AdapterProcessor<UsageInfo, Usage>(processor, UsageInfo2UsageAdapter.CONVERTER),
                                          myProcessPresentation);
           }

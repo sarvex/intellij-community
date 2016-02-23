@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,23 +35,23 @@ public class StringUtilRt {
 
   @NotNull
   @Contract(pure = true)
-  public static String toUpperCase(@NotNull String s) {
+  public static CharSequence toUpperCase(@NotNull CharSequence s) {
     StringBuilder answer = null;
 
     for (int i = 0; i < s.length(); i++) {
       char c = s.charAt(i);
-      char upcased = toUpperCase(c);
-      if (answer == null && upcased != c) {
+      char upCased = toUpperCase(c);
+      if (answer == null && upCased != c) {
         answer = new StringBuilder(s.length());
-        answer.append(s.substring(0, i));
+        answer.append(s.subSequence(0, i));
       }
 
       if (answer != null) {
-        answer.append(upcased);
+        answer.append(upCased);
       }
     }
 
-    return answer == null ? s : answer.toString();
+    return answer == null ? s : answer;
   }
 
   @Contract(pure = true)
@@ -116,12 +116,6 @@ public class StringUtilRt {
                                              @Nullable int[] offsetsToKeep,
                                              boolean keepCarriageReturn) {
     return unifyLineSeparators(text, newSeparator, offsetsToKeep, keepCarriageReturn).toString();
-  }
-
-  @NotNull
-  @Contract(pure = true)
-  public static CharSequence unifyLineSeparators(@NotNull CharSequence text) {
-    return unifyLineSeparators(text, "\n", null, false);
   }
 
   @NotNull
@@ -214,6 +208,19 @@ public class StringUtilRt {
   }
 
   @Contract(pure = true)
+  public static long parseLong(@Nullable String string, long defaultValue) {
+    if (string == null) {
+      return defaultValue;
+    }
+    try {
+      return Long.parseLong(string);
+    }
+    catch (Exception e) {
+      return defaultValue;
+    }
+  }
+
+  @Contract(pure = true)
   public static double parseDouble(final String string, final double defaultValue) {
     try {
       return Double.parseDouble(string);
@@ -294,11 +301,10 @@ public class StringUtilRt {
    */
   @Contract(pure = true)
   public static int lastIndexOf(@NotNull CharSequence s, char c, int start, int end) {
-    for (int i = end - 1; i >= start; i--) {
+    start = Math.max(start, 0);
+    for (int i = Math.min(end, s.length()) - 1; i >= start; i--) {
       if (s.charAt(i) == c) return i;
     }
     return -1;
   }
-
-
 }

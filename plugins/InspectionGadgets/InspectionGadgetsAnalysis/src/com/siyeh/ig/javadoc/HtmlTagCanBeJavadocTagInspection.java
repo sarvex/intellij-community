@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2014 Bas Leijdekkers
+ * Copyright 2011-2015 Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,13 @@ import com.intellij.codeInspection.ProblemDescriptor;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.JavaDocTokenType;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.javadoc.PsiDocToken;
+import com.intellij.psi.javadoc.PsiInlineDocTag;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
@@ -35,6 +37,9 @@ import com.siyeh.ig.InspectionGadgetsFix;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class HtmlTagCanBeJavadocTagInspection extends BaseInspection {
 
@@ -85,24 +90,24 @@ public class HtmlTagCanBeJavadocTagInspection extends BaseInspection {
       final int replaceStartOffset = element.getTextOffset() + startOffset;
       int startTag = range.getEndOffset();
       @NonNls String text = element.getText();
-      if (!"<code>".equals(text.substring(startOffset, startTag))) {
+      if (!"<code>".equalsIgnoreCase(text.substring(startOffset, startTag))) {
         return;
       }
       @NonNls final StringBuilder newCommentText = new StringBuilder("{@code");
-      int endTag = text.indexOf("</code>", startTag);
+      int endTag = StringUtil.indexOfIgnoreCase(text, "</code>", startTag);
       while (endTag < 0) {
         appendElementText(text, startTag, text.length(), newCommentText);
         element = element.getNextSibling();
         if (element == null) return;
         startTag = 0;
         text = element.getText();
-        endTag = text.indexOf("</code>");
+        endTag = StringUtil.indexOfIgnoreCase(text, "</code>", 0);
       }
       appendElementText(text, startTag, endTag, newCommentText);
       newCommentText.append('}');
       final int replaceEndOffset = element.getTextOffset() + endTag + 7;
       final String oldText = document.getText(new TextRange(replaceStartOffset, replaceEndOffset));
-      if (!oldText.startsWith("<code>") || !oldText.endsWith("</code>")) { // sanity check
+      if (!StringUtil.startsWithIgnoreCase(oldText, "<code>") || !StringUtil.endsWithIgnoreCase(oldText, "</code>")) { // sanity check
         return;
       }
       document.replaceString(replaceStartOffset, replaceEndOffset, newCommentText);
@@ -137,7 +142,7 @@ public class HtmlTagCanBeJavadocTagInspection extends BaseInspection {
       @NonNls final String text = token.getText();
       int startIndex = 0;
       while (true) {
-        startIndex = text.indexOf("<code>", startIndex);
+        startIndex = StringUtil.indexOfIgnoreCase(text, "<code>", startIndex);
         if (startIndex < 0) {
           return;
         }
@@ -149,23 +154,32 @@ public class HtmlTagCanBeJavadocTagInspection extends BaseInspection {
     }
 
     private static boolean hasMatchingCloseTag(PsiElement element, int offset) {
-      @NonNls final String text = element.getText();
-      final int endOffset1 = text.indexOf("</code>", offset);
-      if (endOffset1 >= 0) {
-        final int startOffset1 = text.indexOf("<code>", offset);
-        return startOffset1 < 0 || startOffset1 > endOffset1;
-      }
-      PsiElement sibling = element.getNextSibling();
-      while (sibling != null) {
-        @NonNls final String text1 = sibling.getText();
-        final int endOffset = text1.indexOf("</code>");
-        if (endOffset >= 0) {
-          final int startOffset = text1.indexOf("<code>");
-          return startOffset < 0 || startOffset > endOffset;
+      while (element != null) {
+        @NonNls final String text = element.getText();
+        final int endIndex = StringUtil.indexOfIgnoreCase(text, "</code>", offset);
+        if (containsHtmlTag(text, offset, endIndex >= 0 ? endIndex : text.length())) {
+          return false;
         }
-        sibling = sibling.getNextSibling();
+        if (endIndex >= 0) {
+          return true;
+        }
+        offset = 0;
+        element = element.getNextSibling();
+        if (element instanceof PsiInlineDocTag) {
+          return false;
+        }
       }
       return false;
     }
+  }
+
+  private static final Pattern START_TAG_PATTERN = Pattern.compile("<([a-zA-Z])+([^>])*>");
+
+  private static boolean containsHtmlTag(String text, int startIndex, int endIndex) {
+    final Matcher matcher = START_TAG_PATTERN.matcher(text);
+    if (matcher.find(startIndex)) {
+      return matcher.start() < endIndex;
+    }
+    return false;
   }
 }

@@ -43,6 +43,7 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 
@@ -69,6 +70,7 @@ public class PsiElementFactoryImpl extends PsiJavaParserFacadeImpl implements Ps
       if (myArrayClass == null) {
         @NonNls final String body = "public class __Array__{\n public final int length;\n public Object clone() {}\n}";
         myArrayClass = ((PsiExtensibleClass)createClassFromText(body, null)).getOwnInnerClasses().get(0);
+        ensureNonWritable(myArrayClass);
       }
       return myArrayClass;
     }
@@ -76,9 +78,17 @@ public class PsiElementFactoryImpl extends PsiJavaParserFacadeImpl implements Ps
       if (myArrayClass15 == null) {
         @NonNls final String body = "public class __Array__<T>{\n public final int length;\n public T[] clone() {}\n}";
         myArrayClass15 = ((PsiExtensibleClass)createClassFromText(body, null)).getOwnInnerClasses().get(0);
+        ensureNonWritable(myArrayClass15);
       }
       return myArrayClass15;
     }
+  }
+
+  private static void ensureNonWritable(PsiClass arrayClass) {
+    try {
+      arrayClass.getContainingFile().getViewProvider().getVirtualFile().setWritable(false);
+    }
+    catch (IOException ignored) {}
   }
 
   @NotNull
@@ -599,9 +609,18 @@ public class PsiElementFactoryImpl extends PsiJavaParserFacadeImpl implements Ps
 
   @NotNull
   @Override
-  public PsiDeclarationStatement createVariableDeclarationStatement(@NotNull String name,
+  public PsiDeclarationStatement createVariableDeclarationStatement(@NonNls @NotNull String name,
                                                                     @NotNull PsiType type,
                                                                     @Nullable PsiExpression initializer) throws IncorrectOperationException {
+    return createVariableDeclarationStatement(name, type, initializer, null);
+  }
+
+  @NotNull
+  @Override
+  public PsiDeclarationStatement createVariableDeclarationStatement(@NonNls @NotNull String name,
+                                                                    @NotNull PsiType type,
+                                                                    @Nullable PsiExpression initializer,
+                                                                    @Nullable PsiElement context) throws IncorrectOperationException {
     if (!isIdentifier(name)) {
       throw new IncorrectOperationException("\"" + name + "\" is not an identifier.");
     }
@@ -610,7 +629,7 @@ public class PsiElementFactoryImpl extends PsiJavaParserFacadeImpl implements Ps
     }
 
     String text = "X " + name + (initializer != null ? " = x" : "") + ";";
-    PsiDeclarationStatement statement = (PsiDeclarationStatement)createStatementFromText(text, null);
+    PsiDeclarationStatement statement = (PsiDeclarationStatement)createStatementFromText(text, context);
 
     PsiVariable variable = (PsiVariable)statement.getDeclaredElements()[0];
     replace(variable.getTypeElement(), createTypeElement(type), text);

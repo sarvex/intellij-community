@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import com.intellij.psi.search.searches.SuperMethodsSearch;
 import com.intellij.psi.util.MethodSignatureBackedByPsiMethod;
 import com.intellij.psi.util.PropertyUtil;
 import com.intellij.util.Consumer;
-import com.intellij.util.Function;
+import com.intellij.util.Functions;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.ContainerUtilRt;
 import com.intellij.util.containers.Stack;
@@ -70,9 +70,9 @@ public class JavaArrangementVisitor extends JavaRecursiveElementVisitor {
   @NotNull private final  ArrangementSectionDetector mySectionDetector;
   @Nullable private final Document                      myDocument;
 
-  @NotNull private HashMap<PsiClass, Set<PsiField>> myCachedClassFields = ContainerUtil.newHashMap();
+  @NotNull private final HashMap<PsiClass, Set<PsiField>> myCachedClassFields = ContainerUtil.newHashMap();
 
-  @NotNull private Set<PsiComment> myProcessedSectionsComments = ContainerUtil.newHashSet();
+  @NotNull private final Set<PsiComment> myProcessedSectionsComments = ContainerUtil.newHashSet();
 
   public JavaArrangementVisitor(@NotNull JavaArrangementParseInfo infoHolder,
                                 @Nullable Document document,
@@ -256,7 +256,7 @@ public class JavaArrangementVisitor extends JavaRecursiveElementVisitor {
   }
 
   @NotNull
-  private List<PsiField> getReferencedFields(@NotNull PsiField field) {
+  private List<PsiField> getReferencedFields(@NotNull final PsiField field) {
     final List<PsiField> referencedElements = new ArrayList<PsiField>();
 
     PsiExpression fieldInitializer = field.getInitializer();
@@ -268,7 +268,7 @@ public class JavaArrangementVisitor extends JavaRecursiveElementVisitor {
 
     Set<PsiField> classFields = myCachedClassFields.get(containingClass);
     if (classFields == null) {
-      classFields = ContainerUtil.map2Set(containingClass.getFields(), new Function.Self<PsiField, PsiField>());
+      classFields = ContainerUtil.map2Set(containingClass.getFields(), Functions.<PsiField>id());
       myCachedClassFields.put(containingClass, classFields);
     }
 
@@ -280,7 +280,7 @@ public class JavaArrangementVisitor extends JavaRecursiveElementVisitor {
       @Override
       public void visitReferenceExpression(PsiReferenceExpression expression) {
         PsiElement ref = expression.resolve();
-        if (ref instanceof PsiField && containingClassFields.contains(ref)) {
+        if (ref instanceof PsiField && containingClassFields.contains(ref) && hasSameStaticModifier(field, (PsiField)ref)) {
           referencedElements.add((PsiField)ref);
         }
         else if (ref instanceof PsiMethod && myCurrentMethodLookupDepth < MAX_METHOD_LOOKUP_DEPTH) {
@@ -296,6 +296,10 @@ public class JavaArrangementVisitor extends JavaRecursiveElementVisitor {
     return referencedElements;
   }
 
+  private static boolean hasSameStaticModifier(@NotNull PsiField first, @NotNull PsiField second) {
+    boolean isSecondFieldStatic = second.hasModifierProperty(PsiModifier.STATIC);
+    return first.hasModifierProperty(PsiModifier.STATIC) ? isSecondFieldStatic : !isSecondFieldStatic;
+  }
 
   @Nullable
   private static PsiElement getPreviousNonWsComment(@Nullable PsiElement element, int minOffset) {

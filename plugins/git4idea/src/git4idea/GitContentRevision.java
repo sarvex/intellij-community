@@ -19,8 +19,8 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.Throwable2Computable;
 import com.intellij.openapi.vcs.FilePath;
-import com.intellij.openapi.vcs.FilePathImpl;
 import com.intellij.openapi.vcs.VcsException;
+import com.intellij.openapi.vcs.changes.ByteBackedContentRevision;
 import com.intellij.openapi.vcs.changes.ContentRevision;
 import com.intellij.openapi.vcs.changes.CurrentContentRevision;
 import com.intellij.openapi.vcs.history.VcsRevisionNumber;
@@ -41,7 +41,7 @@ import java.nio.charset.Charset;
 /**
  * Git content revision
  */
-public class GitContentRevision implements ContentRevision {
+public class GitContentRevision implements ByteBackedContentRevision {
   /**
    * the file path
    */
@@ -69,18 +69,26 @@ public class GitContentRevision implements ContentRevision {
 
   @Nullable
   public String getContent() throws VcsException {
+    byte[] bytes = getContentAsBytes();
+    if (bytes == null) return null;
+    return ContentRevisionCache.getAsString(bytes, myFile, myCharset);
+  }
+
+  @Nullable
+  @Override
+  public byte[] getContentAsBytes() throws VcsException {
     if (myFile.isDirectory()) {
       return null;
     }
     try {
       return ContentRevisionCache
-        .getOrLoadAsString(myProject, myFile, myRevision, GitVcs.getKey(), ContentRevisionCache.UniqueType.REPOSITORY_CONTENT,
-                           new Throwable2Computable<byte[], VcsException, IOException>() {
-                             @Override
-                             public byte[] compute() throws VcsException, IOException {
-                               return loadContent();
-                             }
-                           }, myCharset);
+        .getOrLoadAsBytes(myProject, myFile, myRevision, GitVcs.getKey(), ContentRevisionCache.UniqueType.REPOSITORY_CONTENT,
+                          new Throwable2Computable<byte[], VcsException, IOException>() {
+                            @Override
+                            public byte[] compute() throws VcsException, IOException {
+                              return loadContent();
+                            }
+                          });
     }
     catch (IOException e) {
       throw new VcsException(e);
@@ -135,7 +143,7 @@ public class GitContentRevision implements ContentRevision {
                                                boolean isDeleted, final boolean canBeDeleted, boolean unescapePath) throws VcsException {
     final FilePath file;
     if (project.isDisposed()) {
-      file = new FilePathImpl(new File(makeAbsolutePath(vcsRoot, path, unescapePath)), false);
+      file = VcsUtil.getFilePath(makeAbsolutePath(vcsRoot, path, unescapePath), false);
     } else {
       file = createPath(vcsRoot, path, isDeleted, canBeDeleted, unescapePath);
     }
@@ -158,7 +166,7 @@ public class GitContentRevision implements ContentRevision {
     if (revisionNumber == null) {
       File file = new File(makeAbsolutePath(vcsRoot, path, unescapePath));
       VirtualFile virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file);
-      filePath = virtualFile == null ? new FilePathImpl(file, false) : new FilePathImpl(virtualFile);
+      filePath = virtualFile == null ? VcsUtil.getFilePath(file, false) : VcsUtil.getFilePath(virtualFile);
     } else {
       filePath = createPath(vcsRoot, path, false, false, unescapePath);
     }
@@ -171,7 +179,7 @@ public class GitContentRevision implements ContentRevision {
     FilePath file = isDeleted ? VcsUtil.getFilePathForDeletedFile(absolutePath, false) : VcsUtil.getFilePath(absolutePath, false);
     if (canBeDeleted && (! SystemInfo.isFileSystemCaseSensitive) && VcsFilePathUtil.caseDiffers(file.getPath(), absolutePath)) {
       // as for deleted file
-      file = FilePathImpl.createForDeletedFile(new File(absolutePath), false);
+      file = VcsUtil.getFilePath(absolutePath, false);
     }
     return file;
   }
@@ -188,7 +196,7 @@ public class GitContentRevision implements ContentRevision {
 
   public static ContentRevision createRevision(@NotNull final VirtualFile file, @Nullable final VcsRevisionNumber revisionNumber,
                                                @NotNull final Project project, @Nullable final Charset charset) {
-    final FilePathImpl filePath = new FilePathImpl(file);
+    final FilePath filePath = VcsUtil.getFilePath(file);
     return createRevision(filePath, revisionNumber, project, charset);
   }
 

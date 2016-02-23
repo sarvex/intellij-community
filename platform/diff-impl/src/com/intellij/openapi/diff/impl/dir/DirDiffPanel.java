@@ -15,18 +15,29 @@
  */
 package com.intellij.openapi.diff.impl.dir;
 
+import com.intellij.diff.DiffContentFactory;
+import com.intellij.diff.chains.DiffRequestProducerException;
+import com.intellij.diff.contents.DiffContent;
+import com.intellij.diff.impl.CacheDiffRequestProcessor;
+import com.intellij.diff.requests.DiffRequest;
+import com.intellij.diff.requests.SimpleDiffRequest;
 import com.intellij.diff.tools.util.DiffDataKeys;
+import com.intellij.diff.tools.util.PrevNextDifferenceIterable;
+import com.intellij.diff.util.DiffPlaces;
+import com.intellij.diff.util.DiffUserDataKeysEx.ScrollToPolicy;
 import com.intellij.ide.DataManager;
 import com.intellij.ide.diff.DiffElement;
-import com.intellij.ide.diff.DiffType;
 import com.intellij.ide.diff.DirDiffElement;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.diff.impl.dir.actions.DirDiffToolbarActions;
 import com.intellij.openapi.diff.impl.dir.actions.RefreshDirDiffAction;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.keymap.KeymapUtil;
+import com.intellij.openapi.progress.ProcessCanceledException;
+import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.ui.popup.Balloon;
@@ -44,14 +55,13 @@ import com.intellij.ui.components.JBLoadingPanel;
 import com.intellij.ui.components.JBLoadingPanelListener;
 import com.intellij.ui.table.JBTable;
 import com.intellij.util.containers.ContainerUtil;
-import com.intellij.util.diff.FilesTooBigForDiffException;
+import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
 import javax.swing.table.TableColumn;
@@ -69,7 +79,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @SuppressWarnings({"unchecked"})
 public class DirDiffPanel implements Disposable, DataProvider {
+  private static final Logger LOG = Logger.getInstance(DirDiffPanel.class);
+
   public static final String DIVIDER_PROPERTY = "dir.diff.panel.divider.location";
+  private static final int DIVIDER_PROPERTY_DEFAULT_VALUE = 200;
   private JPanel myDiffPanel;
   private JBTable myTable;
   private JPanel myComponent;
@@ -86,11 +99,9 @@ public class DirDiffPanel implements Disposable, DataProvider {
   private JPanel myHeaderPanel;
   private FilterComponent myFilter;
   private final DirDiffTableModel myModel;
-  public JLabel myErrorLabel;
   private final DirDiffWindow myDiffWindow;
-  private JComponent myDiffPanelComponent;
-  private JComponent myViewComponent;
-  private DiffElement myCurrentElement;
+  private final MyDiffRequestProcessor myDiffRequestProcessor;
+  private final PrevNextDifferenceIterable myPrevNextDifferenceIterable;
   private String oldFilter;
   public static final DataKey<DirDiffTableModel> DIR_DIFF_MODEL = DataKey.create("DIR_DIFF_MODEL");
   public static final DataKey<JTable> DIR_DIFF_TABLE = DataKey.create("DIR_DIFF_TABLE");
@@ -100,11 +111,11 @@ public class DirDiffPanel implements Disposable, DataProvider {
     myDiffWindow = wnd;
     mySourceDirField.setText(model.getSourceDir().getPath());
     myTargetDirField.setText(model.getTargetDir().getPath());
-    mySourceDirField.setBorder(new EmptyBorder(0, 0, 0, 8));
-    myTargetDirField.setBorder(new EmptyBorder(0, 0, 0, 12));
+    mySourceDirField.setBorder(JBUI.Borders.emptyRight(8));
+    myTargetDirField.setBorder(JBUI.Borders.emptyRight(12));
     mySourceDirLabel.setIcon(model.getSourceDir().getIcon());
     myTargetDirLabel.setIcon(model.getTargetDir().getIcon());
-    myTargetDirLabel.setBorder(new EmptyBorder(0, 8, 0, 0));
+    myTargetDirLabel.setBorder(JBUI.Borders.emptyLeft(8));
     myModel.setTable(myTable);
     myModel.setPanel(this);
     Disposer.register(this, myModel);
@@ -163,56 +174,43 @@ public class DirDiffPanel implements Disposable, DataProvider {
           return true;
         }
       }.installOn(myTable);
-
     }
     myTable.addKeyListener(new KeyAdapter() {
       @Override
       public void keyPressed(KeyEvent e) {
         final int keyCode = e.getKeyCode();
-        final int rowCount = myTable.getRowCount();
-        int row = myTable.getSelectionModel().getLeadSelectionIndex();
-        final int[] rows = myTable.getSelectedRows();
-        if (rows.length == 0) return;
-        if (keyCode == KeyEvent.VK_DOWN && row < rowCount - 1) {
-          row++;
-          final DirDiffElementImpl element = myModel.getElementAt(row);
-          if (element == null) return;
-          if (element.isSeparator()) {
-            row++;
-          }
+
+        int row;
+        if (keyCode == KeyEvent.VK_DOWN) {
+          row = getNextRow();
         }
-        else if (keyCode == KeyEvent.VK_UP && row > 0) {
-          row--;
-          final DirDiffElementImpl element = myModel.getElementAt(row);
-          if (element == null) return;
-          if (element.isSeparator()) {
-            row--;
-          }
+        else if (keyCode == KeyEvent.VK_UP) {
+          row = getPrevRow();
         }
         else {
-          return;
+          row = -1;
         }
-        final DirDiffElementImpl element = myModel.getElementAt(row);
-        if (element == null) return;
-        if (!element.isSeparator()) {
+
+        if (row != -1) {
+          selectRow(row, e.isShiftDown());
           e.consume();
-          myTable.changeSelection(row, (myModel.getColumnCount() - 1) / 2, false, e.isShiftDown());
         }
       }
     });
     final TableColumnModel columnModel = myTable.getColumnModel();
     final TableColumn operationColumn = columnModel.getColumn((columnModel.getColumnCount() - 1) / 2);
-    operationColumn.setMaxWidth(25);
-    operationColumn.setMinWidth(25);
+    operationColumn.setMaxWidth(JBUI.scale(25));
+    operationColumn.setMinWidth(JBUI.scale(25));
     for (int i = 0; i < columnModel.getColumnCount(); i++) {
       final String name = myModel.getColumnName(i);
       final TableColumn column = columnModel.getColumn(i);
       if (DirDiffTableModel.COLUMN_DATE.equals(name)) {
-        column.setMaxWidth(90);
-        column.setMinWidth(90);
-      } else if (DirDiffTableModel.COLUMN_SIZE.equals(name)) {
-        column.setMaxWidth(120);
-        column.setMinWidth(120);
+        column.setMaxWidth(JBUI.scale(90));
+        column.setMinWidth(JBUI.scale(90));
+      }
+      else if (DirDiffTableModel.COLUMN_SIZE.equals(name)) {
+        column.setMaxWidth(JBUI.scale(120));
+        column.setMinWidth(JBUI.scale(120));
       }
     }
     final DirDiffToolbarActions actions = new DirDiffToolbarActions(myModel, myDiffPanel);
@@ -220,7 +218,8 @@ public class DirDiffPanel implements Disposable, DataProvider {
     final ActionToolbar toolbar = actionManager.createActionToolbar("DirDiff", actions, true);
     registerCustomShortcuts(actions, myTable);
     myToolBarPanel.add(toolbar.getComponent(), BorderLayout.CENTER);
-    final JBLabel label = new JBLabel("Use Space button or mouse click to change operation for the selected elements. Enter to perform.", SwingConstants.CENTER);
+    final JBLabel label = new JBLabel("Use Space button or mouse click to change operation for the selected elements." +
+                                      " Enter to perform.", SwingConstants.CENTER);
     label.setForeground(UIUtil.getInactiveTextColor());
     UIUtil.applyStyle(UIUtil.ComponentStyle.MINI, label);
     DataManager.registerDataProvider(myFilesPanel, this);
@@ -244,7 +243,7 @@ public class DirDiffPanel implements Disposable, DataProvider {
           if (count < 3) {
             JBPopupFactory.getInstance().createBalloonBuilder(new JLabel(" Use Space button to change operation"))
               .setFadeoutTime(5000)
-              .setContentInsets(new Insets(15, 15, 15, 15))
+              .setContentInsets(JBUI.insets(15))
               .createBalloon().show(new RelativePoint(myTable, new Point(myTable.getWidth() / 2, 0)), Balloon.Position.above);
             PropertiesComponent.getInstance().setValue("dir.diff.space.button.info", String.valueOf(count + 1));
           }
@@ -316,15 +315,18 @@ public class DirDiffPanel implements Disposable, DataProvider {
               if (!StringUtil.equals(mySourceDirField.getText(), newElement.getPath())) {
                 myModel.setSourceDir(newElement);
                 mySourceDirField.setText(newElement.getPath());
-                myModel.clearWithMessage("Source or Target has been changed. Please run Refresh (" + KeymapUtil.getShortcutsText(
-                  RefreshDirDiffAction.REFRESH_SHORTCUT.getShortcuts()) + ")");
+                String shortcutsText = KeymapUtil.getShortcutsText(RefreshDirDiffAction.REFRESH_SHORTCUT.getShortcuts());
+                myModel.clearWithMessage("Source or Target has been changed." +
+                                         " Please run Refresh (" + shortcutsText + ")");
               }
             }
-          } catch (Exception e1) {//
+          }
+          catch (Exception ignored) {
           }
         }
       });
-    } else {
+    }
+    else {
       Dimension preferredSize = mySourceDirField.getPreferredSize();
       mySourceDirField.setButtonEnabled(false);
       mySourceDirField.getButton().setVisible(false);
@@ -344,16 +346,62 @@ public class DirDiffPanel implements Disposable, DataProvider {
               myModel.setTargetDir(newElement);
               myTargetDirField.setText(newElement.getPath());
             }
-          } catch (Exception e1) {//
+          }
+          catch (Exception ignored) {
           }
         }
       });
-    } else {
+    }
+    else {
       Dimension preferredSize = myTargetDirField.getPreferredSize();
       myTargetDirField.setButtonEnabled(false);
       myTargetDirField.getButton().setVisible(false);
       myTargetDirField.setPreferredSize(preferredSize);
     }
+
+    myDiffRequestProcessor = new MyDiffRequestProcessor(project);
+    Disposer.register(this, myDiffRequestProcessor);
+    myDiffPanel.add(myDiffRequestProcessor.getComponent(), BorderLayout.CENTER);
+
+    myPrevNextDifferenceIterable = new MyPrevNextDifferenceIterable();
+  }
+
+  private int getNextRow() {
+    if (myTable.getSelectedRows().length == 0) return -1;
+    int rowCount = myTable.getRowCount();
+    int row = myTable.getSelectionModel().getLeadSelectionIndex();
+
+    while (true) {
+      if (row >= rowCount) return -1;
+      row++;
+      DirDiffElementImpl element = myModel.getElementAt(row);
+      if (element == null) return -1;
+      if (!element.isSeparator()) break;
+    }
+
+    return row;
+  }
+
+  private int getPrevRow() {
+    if (myTable.getSelectedRows().length == 0) return -1;
+    int row = myTable.getSelectionModel().getLeadSelectionIndex();
+
+    while (true) {
+      if (row <= 0) return -1;
+      row--;
+      DirDiffElementImpl element = myModel.getElementAt(row);
+      if (element == null) return -1;
+      if (!element.isSeparator()) break;
+    }
+
+    return row;
+  }
+
+  private void selectRow(int row, boolean extend) {
+    if (row == -1) return;
+    DirDiffElementImpl element = myModel.getElementAt(row);
+    if (element == null || element.isSeparator()) return;
+    myTable.changeSelection(row, (myModel.getColumnCount() - 1) / 2, false, extend);
   }
 
   public AnAction[] getActions() {
@@ -378,61 +426,7 @@ public class DirDiffPanel implements Disposable, DataProvider {
   }
 
   public void update(boolean force) {
-    final Project project = myModel.getProject();
-    final DirDiffElementImpl element = myModel.getElementAt(myTable.getSelectedRow());
-    if (element == null) {
-      clearDiffPanel();
-      return;
-    }
-    if (!force
-        && myCurrentElement != null
-        && (myCurrentElement == element.getSource() || myCurrentElement == element.getTarget())) {
-      return;
-    }
-    clearDiffPanel();
-    if (element.getType() == DiffType.CHANGED) {
-      try {
-        myDiffPanelComponent = element.getSource().getDiffComponent(element.getTarget(), project, myDiffWindow.getWindow(), myModel);
-      }
-      catch (FilesTooBigForDiffException e) {
-        // todo KB: check
-        myDiffPanelComponent = null;
-        myErrorLabel = new JLabel("Can not build diff for file " + element.getTarget().getPath() + ". File is too big and there are too many changes.");
-      }
-      if (myDiffPanelComponent != null) {
-        myDiffPanel.add(myDiffPanelComponent, BorderLayout.CENTER);
-        myCurrentElement = element.getSource();
-      } else {
-        myDiffPanel.add(getErrorLabel(), BorderLayout.CENTER);
-      }
-    } else {
-      final DiffElement object;
-      final DiffElement target;
-      if (element.getType() == DiffType.ERROR) {
-        object = element.getSource() == null ? element.getTarget() : element.getSource();
-        target = element.getSource() == null ? element.getSource() : element.getTarget();
-      } else {
-        object = element.isSource() ? element.getSource() : element.getTarget();
-        target = element.isSource() ? element.getTarget() : element.getSource();
-      }
-      myViewComponent = object.getViewComponent(project, target, myModel);
-
-      if (myViewComponent != null) {
-        myCurrentElement = object;
-        myDiffPanel.add(myViewComponent, BorderLayout.CENTER);
-        DataProvider dataProvider = myCurrentElement.getDataProvider(project);
-        if (dataProvider != null) {
-          DataManager.registerDataProvider(myDiffPanel, dataProvider);
-        }
-        else {
-          DataManager.removeDataProvider(myDiffPanel);
-        }
-      } else {
-        myDiffPanel.add(getErrorLabel(), BorderLayout.CENTER);
-      }
-    }
-    myDiffPanel.revalidate();
-    myDiffPanel.repaint();
+    myDiffRequestProcessor.updateRequest(force);
   }
 
   private void registerCustomShortcuts(DirDiffToolbarActions actions, JComponent component) {
@@ -471,31 +465,6 @@ public class DirDiffPanel implements Disposable, DataProvider {
     }
   }
 
-  private JLabel getErrorLabel() {
-    return myErrorLabel == null ? myErrorLabel = new JLabel("Unknown or binary file type", SwingConstants.CENTER) : myErrorLabel;
-  }
-
-  private void clearDiffPanel() {
-    if (myDiffPanelComponent != null) {
-      myDiffPanel.remove(myDiffPanelComponent);
-      myDiffPanelComponent = null;
-      if (myCurrentElement != null) {
-        myCurrentElement.disposeDiffComponent();
-      }
-    }
-    if (myViewComponent != null) {
-      myDiffPanel.remove(myViewComponent);
-      myViewComponent = null;
-      if (myCurrentElement != null) {
-        myCurrentElement.disposeViewComponent();
-      }
-    }
-    myCurrentElement = null;
-    myDiffPanel.remove(getErrorLabel());
-    DataManager.removeDataProvider(myDiffPanel);
-    myDiffPanel.repaint();
-  }
-
   public JComponent getPanel() {
     return myRootPanel;
   }
@@ -506,11 +475,13 @@ public class DirDiffPanel implements Disposable, DataProvider {
 
   public void dispose() {
     myModel.stopUpdating();
-    PropertiesComponent.getInstance().setValue(DIVIDER_PROPERTY, String.valueOf(mySplitPanel.getDividerLocation()));
-    clearDiffPanel();
+    PropertiesComponent.getInstance().setValue(DIVIDER_PROPERTY, mySplitPanel.getDividerLocation(), DIVIDER_PROPERTY_DEFAULT_VALUE);
   }
 
   private void createUIComponents() {
+    mySourceDirField = new TextFieldWithBrowseButton(null, this);
+    myTargetDirField = new TextFieldWithBrowseButton(null, this);
+
     final AtomicBoolean callUpdate = new AtomicBoolean(true);
     myRootPanel = new JPanel(new BorderLayout()) {
       @Override
@@ -525,7 +496,8 @@ public class DirDiffPanel implements Disposable, DataProvider {
   }
 
   public void setupSplitter() {
-    mySplitPanel.setDividerLocation(Integer.valueOf(PropertiesComponent.getInstance().getValue(DIVIDER_PROPERTY, "200")));
+    int value = PropertiesComponent.getInstance().getInt(DIVIDER_PROPERTY, DIVIDER_PROPERTY_DEFAULT_VALUE);
+    mySplitPanel.setDividerLocation(Integer.valueOf(value));
   }
 
   @Override
@@ -548,8 +520,10 @@ public class DirDiffPanel implements Disposable, DataProvider {
     else if (DiffDataKeys.OPEN_FILE_DESCRIPTOR.is(dataId)) {
       return getOpenFileDescriptor();
     }
-    DataProvider provider = DataManager.getDataProvider(myDiffPanel);
-    return provider != null ? provider.getData(dataId) : null;
+    else if (DiffDataKeys.PREV_NEXT_DIFFERENCE_ITERABLE.is(dataId)) {
+      return myPrevNextDifferenceIterable;
+    }
+    return null;
   }
 
   @Nullable
@@ -579,5 +553,122 @@ public class DirDiffPanel implements Disposable, DataProvider {
       if (descriptor2 != null) descriptors.add(descriptor2);
     }
     return ContainerUtil.toArray(descriptors, new OpenFileDescriptor[descriptors.size()]);
+  }
+
+  private class MyPrevNextDifferenceIterable implements PrevNextDifferenceIterable {
+    @Override
+    public boolean canGoPrev() {
+      return getPrevRow() != -1;
+    }
+
+    @Override
+    public boolean canGoNext() {
+      return getNextRow() != -1;
+    }
+
+    @Override
+    public void goPrev() {
+      selectRow(getPrevRow(), false);
+    }
+
+    @Override
+    public void goNext() {
+      selectRow(getNextRow(), false);
+    }
+  }
+
+  private class MyDiffRequestProcessor extends CacheDiffRequestProcessor<ElementWrapper> {
+    public MyDiffRequestProcessor(@Nullable Project project) {
+      super(project, DiffPlaces.DIR_DIFF);
+    }
+
+    @Nullable
+    @Override
+    protected String getRequestName(@NotNull ElementWrapper element) {
+      return null;
+    }
+
+    @Override
+    protected ElementWrapper getCurrentRequestProvider() {
+      DirDiffElementImpl element = myModel.getElementAt(myTable.getSelectedRow());
+      return element != null ? new ElementWrapper(element) : null;
+    }
+
+    @NotNull
+    @Override
+    protected DiffRequest loadRequest(@NotNull ElementWrapper element, @NotNull ProgressIndicator indicator)
+      throws ProcessCanceledException, DiffRequestProducerException {
+      final Project project = myModel.getProject();
+      DiffElement sourceElement = element.sourceElement;
+      DiffElement targetElement = element.targetElement;
+
+      DiffContent sourceContent = sourceElement != null ? sourceElement.createDiffContent(project, indicator) :
+                                  DiffContentFactory.getInstance().createEmpty();
+      DiffContent targetContent = targetElement != null ? targetElement.createDiffContent(project, indicator) :
+                                  DiffContentFactory.getInstance().createEmpty();
+
+      return new SimpleDiffRequest(null, sourceContent, targetContent, null, null);
+    }
+
+    //
+    // Navigation
+    //
+
+    @Override
+    protected boolean hasNextChange() {
+      return getNextRow() != -1;
+    }
+
+    @Override
+    protected boolean hasPrevChange() {
+      return getPrevRow() != -1;
+    }
+
+    @Override
+    protected void goToNextChange(boolean fromDifferences) {
+      selectRow(getNextRow(), false);
+      updateRequest(false, fromDifferences ? ScrollToPolicy.FIRST_CHANGE : null);
+    }
+
+    @Override
+    protected void goToPrevChange(boolean fromDifferences) {
+      selectRow(getPrevRow(), false);
+      updateRequest(false, fromDifferences ? ScrollToPolicy.LAST_CHANGE : null);
+    }
+
+    @Override
+    protected boolean isNavigationEnabled() {
+      return myModel.getRowCount() > 0;
+    }
+  }
+
+  private static class ElementWrapper {
+    @Nullable public final DiffElement sourceElement;
+    @Nullable public final DiffElement targetElement;
+
+    public ElementWrapper(@NotNull DirDiffElementImpl element) {
+      sourceElement = element.getSource();
+      targetElement = element.getTarget();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+
+      ElementWrapper wrapper = (ElementWrapper)o;
+
+      if (sourceElement != null ? !sourceElement.equals(wrapper.sourceElement) : wrapper.sourceElement != null) return false;
+      if (targetElement != null ? !targetElement.equals(wrapper.targetElement) : wrapper.targetElement != null) return false;
+
+      return true;
+    }
+
+    @Override
+    public int hashCode() {
+      int result = sourceElement != null ? sourceElement.hashCode() : 0;
+      result = 31 * result + (targetElement != null ? targetElement.hashCode() : 0);
+      return result;
+    }
   }
 }

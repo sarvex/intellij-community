@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.intellij.psi.impl.source;
 
+import com.intellij.codeInsight.AnnotationTargetUtil;
 import com.intellij.lang.ASTNode;
 import com.intellij.openapi.util.Condition;
 import com.intellij.psi.*;
@@ -81,7 +82,7 @@ public class PsiModifierListImpl extends JavaStubPsiElement<PsiModifierListStub>
         if (type == JavaTokenType.PUBLIC_KEYWORD) {
           return true;
         }
-        if (type == null /* package local */) {
+        if (type == null /* package-private */) {
           return false;
         }
         if (type == JavaTokenType.STATIC_KEYWORD) {
@@ -126,11 +127,19 @@ public class PsiModifierListImpl extends JavaStubPsiElement<PsiModifierListStub>
         if (type == JavaTokenType.PUBLIC_KEYWORD) {
           return true;
         }
-        if (type == null /* package local */) {
+        if (type == null /* package-private */) {
           return false;
         }
         if (type == JavaTokenType.ABSTRACT_KEYWORD) {
-          return getNode().findChildByType(JavaTokenType.DEFAULT_KEYWORD) == null && getNode().findChildByType(JavaTokenType.STATIC_KEYWORD) == null;
+          final ASTNode node = getNode();
+          return node.findChildByType(JavaTokenType.DEFAULT_KEYWORD) == null && 
+                 node.findChildByType(JavaTokenType.STATIC_KEYWORD) == null &&
+                 node.findChildByType(JavaTokenType.PRIVATE_KEYWORD) == null;
+        }
+      }
+      else if (aClass != null && aClass.isEnum() && ((PsiMethod)parent).isConstructor()) {
+        if (type == JavaTokenType.PRIVATE_KEYWORD) {
+          return true;
         }
       }
     }
@@ -144,7 +153,7 @@ public class PsiModifierListImpl extends JavaStubPsiElement<PsiModifierListStub>
           if (type == JavaTokenType.PUBLIC_KEYWORD) {
             return true;
           }
-          if (type == null /* package local */) {
+          if (type == null /* package-private */) {
             return false;
           }
           if (type == JavaTokenType.STATIC_KEYWORD) {
@@ -163,7 +172,7 @@ public class PsiModifierListImpl extends JavaStubPsiElement<PsiModifierListStub>
       if (type == JavaTokenType.FINAL_KEYWORD) return true;
     }
 
-    if (type == null /* package local */) {
+    if (type == null /* package-private */) {
       return !hasModifierProperty(PsiModifier.PUBLIC) &&
              !hasModifierProperty(PsiModifier.PRIVATE) &&
              !hasModifierProperty(PsiModifier.PROTECTED);
@@ -199,7 +208,7 @@ public class PsiModifierListImpl extends JavaStubPsiElement<PsiModifierListStub>
       if (type == JavaTokenType.PUBLIC_KEYWORD ||
           type == JavaTokenType.PRIVATE_KEYWORD ||
           type == JavaTokenType.PROTECTED_KEYWORD ||
-          type == null /* package local */) {
+          type == null /* package-private */) {
         if (type != JavaTokenType.PUBLIC_KEYWORD) {
           setModifierProperty(PsiModifier.PUBLIC, false);
         }
@@ -231,8 +240,8 @@ public class PsiModifierListImpl extends JavaStubPsiElement<PsiModifierListStub>
       }
     }
     else {
-      if (type == null /* package local */) {
-        throw new IncorrectOperationException("Cannot reset package local modifier."); //?
+      if (type == null /* package-private */) {
+        throw new IncorrectOperationException("Cannot reset package-private modifier."); //?
       }
 
       ASTNode child = treeElement.findChildByType(type);
@@ -258,11 +267,11 @@ public class PsiModifierListImpl extends JavaStubPsiElement<PsiModifierListStub>
   @Override
   @NotNull
   public PsiAnnotation[] getApplicableAnnotations() {
-    final PsiAnnotation.TargetType[] targets = PsiImplUtil.getTargetsForLocation(this);
+    final PsiAnnotation.TargetType[] targets = AnnotationTargetUtil.getTargetsForLocation(this);
     List<PsiAnnotation> filtered = ContainerUtil.findAll(getAnnotations(), new Condition<PsiAnnotation>() {
       @Override
       public boolean value(PsiAnnotation annotation) {
-        PsiAnnotation.TargetType target = PsiImplUtil.findApplicableTarget(annotation, targets);
+        PsiAnnotation.TargetType target = AnnotationTargetUtil.findAnnotationTarget(annotation, targets);
         return target != null && target != PsiAnnotation.TargetType.UNKNOWN;
       }
     });

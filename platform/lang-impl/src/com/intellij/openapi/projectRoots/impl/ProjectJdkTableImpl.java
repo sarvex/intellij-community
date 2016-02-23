@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,21 @@ package com.intellij.openapi.projectRoots.impl;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.components.*;
-import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.fileTypes.FileTypes;
 import com.intellij.openapi.project.ProjectBundle;
 import com.intellij.openapi.projectRoots.*;
 import com.intellij.openapi.util.Comparing;
-import com.intellij.openapi.util.InvalidDataException;
-import com.intellij.openapi.util.WriteExternalException;
-import com.intellij.openapi.vfs.*;
+import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.openapi.vfs.VfsUtil;
+import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileManager;
+import com.intellij.openapi.vfs.newvfs.BulkFileListener;
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
+import com.intellij.util.containers.SmartHashSet;
 import com.intellij.util.messages.MessageBus;
+import com.intellij.util.messages.MessageBusConnection;
 import com.intellij.util.messages.impl.MessageListenerList;
 import org.jdom.Element;
 import org.jetbrains.annotations.NonNls;
@@ -35,23 +40,18 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @State(
   name = "ProjectJdkTable",
-  storages = {@Storage(file = StoragePathMacros.APP_CONFIG + "/jdk.table.xml", roamingType = RoamingType.DISABLED)}
+  storages = @Storage(value = "jdk.table.xml", roamingType = RoamingType.DISABLED)
 )
 public class ProjectJdkTableImpl extends ProjectJdkTable implements ExportableComponent, PersistentStateComponent<Element> {
-  private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.projectRoots.impl.ProjectJdkTableImpl");
-
   private final List<Sdk> mySdks = new ArrayList<Sdk>();
 
   private final MessageListenerList<Listener> myListenerList;
 
-  @NonNls public static final String ELEMENT_JDK = "jdk";
+  @NonNls private static final String ELEMENT_JDK = "jdk";
 
   private final Map<String, ProjectJdkImpl> myCachedProjectJdks = new HashMap<String, ProjectJdkImpl>();
   private final MessageBus myMessageBus;
@@ -60,34 +60,56 @@ public class ProjectJdkTableImpl extends ProjectJdkTable implements ExportableCo
     myMessageBus = ApplicationManager.getApplication().getMessageBus();
     myListenerList = new MessageListenerList<Listener>(myMessageBus, JDK_TABLE_TOPIC);
     // support external changes to jdk libraries (Endorsed Standards Override)
-    VirtualFileManager.getInstance().addVirtualFileListener(new VirtualFileAdapter() {
+    final MessageBusConnection connection = ApplicationManager.getApplication().getMessageBus().connect();
+    connection.subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener() {
       private FileTypeManager myFileTypeManager = FileTypeManager.getInstance();
 
       @Override
-      public void fileCreated(@NotNull VirtualFileEvent event) {
-        updateJdks(event.getFile());
+      public void before(@NotNull List<? extends VFileEvent> events) {
       }
 
-      private void updateJdks(VirtualFile file) {
-        if (file.isDirectory() ||
-            // avoid calling getFileType() because it will try to detect file type from content for unknown/text file types
-            !FileTypes.ARCHIVE.equals(myFileTypeManager.getFileTypeByFileName(file.getName()))) {
-          // consider only archive files that may contain libraries
-          return;
+      @Override
+      public void after(@NotNull List<? extends VFileEvent> events) {
+        if (!events.isEmpty()) {
+          final Set<Sdk> affected = new SmartHashSet<Sdk>();
+          for (VFileEvent event : events) {
+            addAffectedJavaSdk(event, affected);
+          }
+          if (!affected.isEmpty()) {
+            for (Sdk sdk : affected) {
+              ((SdkType)sdk.getSdkType()).setupSdkPaths(sdk);
+            }
+          }
         }
+      }
+
+      private void addAffectedJavaSdk(VFileEvent event, Set<Sdk> affected) {
+        final VirtualFile file = event.getFile();
+        String fileName = null;
+        if (file != null && file.isValid()) {
+          if (file.isDirectory()) {
+            return;
+          }
+          fileName = file.getName();
+        }
+        final String eventPath = event.getPath();
+        if (fileName == null) {
+          fileName = VfsUtil.extractFileName(eventPath);
+        }
+        if (fileName != null) {
+          // avoid calling getFileType() because it will try to detect file type from content for unknown/text file types
+          // consider only archive files that may contain libraries
+          if (!FileTypes.ARCHIVE.equals(myFileTypeManager.getFileTypeByFileName(fileName))) {
+            return;
+          }
+        }
+
         for (Sdk sdk : mySdks) {
-          final SdkType sdkType = (SdkType)sdk.getSdkType();
-          if (!(sdkType instanceof JavaSdkType)) {
-            continue;
-          }
-          final VirtualFile home = sdk.getHomeDirectory();
-          if (home == null) {
-            continue;
-          }
-          if (VfsUtilCore.isAncestor(home, file, true)) {
-            sdkType.setupSdkPaths(sdk);
-            // no need to iterate further assuming the file cannot be under the home of several SDKs
-            break;
+          if (sdk.getSdkType() instanceof JavaSdkType && !affected.contains(sdk)) {
+            final String homePath = sdk.getHomePath();
+            if (!StringUtil.isEmpty(homePath) && FileUtil.isAncestor(homePath, eventPath, true)) {
+              affected.add(sdk);
+            }
           }
         }
       }
@@ -123,7 +145,7 @@ public class ProjectJdkTableImpl extends ProjectJdkTable implements ExportableCo
   @Nullable
   public Sdk findJdk(String name, String type) {
     Sdk projectJdk = findJdk(name);
-    if (projectJdk != null){
+    if (projectJdk != null) {
       return projectJdk;
     }
     final String sdkTypeName = getSdkTypeName(type);
@@ -137,7 +159,7 @@ public class ProjectJdkTableImpl extends ProjectJdkTable implements ExportableCo
 
     final SdkType[] sdkTypes = SdkType.getAllTypes();
     for (SdkType sdkType : sdkTypes) {
-      if (Comparing.strEqual(sdkTypeName, sdkType.getName())){
+      if (Comparing.strEqual(sdkTypeName, sdkType.getName())) {
         if (sdkType.isValidSdkHome(jdkPath)) {
           ProjectJdkImpl projectJdkImpl = new ProjectJdkImpl(name, sdkType);
           projectJdkImpl.setHomePath(jdkPath);
@@ -164,7 +186,7 @@ public class ProjectJdkTableImpl extends ProjectJdkTable implements ExportableCo
   public List<Sdk> getSdksOfType(final SdkTypeId type) {
     List<Sdk> result = new ArrayList<Sdk>();
     final Sdk[] sdks = getAllJdks();
-    for(Sdk sdk: sdks) {
+    for (Sdk sdk : sdks) {
       if (sdk.getSdkType() == type) {
         result.add(sdk);
       }
@@ -238,31 +260,19 @@ public class ProjectJdkTableImpl extends ProjectJdkTable implements ExportableCo
   public void loadState(Element element) {
     mySdks.clear();
 
-    final List children = element.getChildren(ELEMENT_JDK);
-    for (final Object aChildren : children) {
-      final Element e = (Element)aChildren;
-      final ProjectJdkImpl jdk = new ProjectJdkImpl(null, null);
-      try {
-        jdk.readExternal(e);
-      }
-      catch (InvalidDataException ex) {
-        LOG.error(ex);
-      }
+    for (Element child : element.getChildren(ELEMENT_JDK)) {
+      ProjectJdkImpl jdk = new ProjectJdkImpl(null, null);
+      jdk.readExternal(child, this);
       mySdks.add(jdk);
     }
   }
 
   @Override
   public Element getState() {
-    Element element = new Element("ProjectJdkTableImpl");
+    Element element = new Element("state");
     for (Sdk jdk : mySdks) {
-      final Element e = new Element(ELEMENT_JDK);
-      try {
-        ((ProjectJdkImpl)jdk).writeExternal(e);
-      }
-      catch (WriteExternalException ignored) {
-        continue;
-      }
+      Element e = new Element(ELEMENT_JDK);
+      ((ProjectJdkImpl)jdk).writeExternal(e);
       element.addContent(e);
     }
     return element;

@@ -15,13 +15,14 @@
  */
 package com.jetbrains.python.testing.nosetest;
 
-import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.execution.configurations.ParamsGroup;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
+import com.jetbrains.python.PythonHelper;
 import com.jetbrains.python.testing.PythonTestCommandLineStateBase;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -31,7 +32,6 @@ import java.util.List;
  */
 public class PythonNoseTestCommandLineState extends PythonTestCommandLineStateBase {
   private final PythonNoseTestRunConfiguration myConfig;
-  private static final String NOSERUNNER_PY = "pycharm/noserunner.py";
 
   public PythonNoseTestCommandLineState(PythonNoseTestRunConfiguration runConfiguration, ExecutionEnvironment env) {
     super(runConfiguration, env);
@@ -39,10 +39,11 @@ public class PythonNoseTestCommandLineState extends PythonTestCommandLineStateBa
   }
 
   @Override
-  protected String getRunner() {
-    return NOSERUNNER_PY;
+  protected PythonHelper getRunner() {
+    return PythonHelper.NOSE;
   }
 
+  @NotNull
   protected List<String> getTestSpecs() {
     List<String> specs = new ArrayList<String>();
 
@@ -70,7 +71,7 @@ public class PythonNoseTestCommandLineState extends PythonTestCommandLineStateBa
   }
 
   @Override
-  protected void addAfterParameters(GeneralCommandLine cmd) throws ExecutionException {
+  protected void addAfterParameters(GeneralCommandLine cmd)  {
     ParamsGroup script_params = cmd.getParametersList().getParamsGroup(GROUP_SCRIPT);
     assert script_params != null;
     if (myConfig.useParam() && !StringUtil.isEmptyOrSpaces(myConfig.getParams()))

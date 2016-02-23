@@ -14,18 +14,21 @@
  * limitations under the License.
  */
 package com.intellij.codeInsight
-
-import com.intellij.idea.Bombed
 import com.intellij.openapi.module.JavaModuleType
+import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.roots.ModuleRootModificationUtil
+import com.intellij.openapi.roots.ModuleSourceOrderEntry
+import com.intellij.openapi.roots.OrderEntry
 import com.intellij.testFramework.PsiTestUtil
 import com.intellij.testFramework.fixtures.JavaCodeInsightFixtureTestCase
+import com.intellij.util.Consumer
+import com.intellij.util.containers.ContainerUtil
+
 /**
  * @author peter
  */
 class MultipleModuleHighlightingTest extends JavaCodeInsightFixtureTestCase {
 
-  @Bombed(day = 1, month = Calendar.APRIL)
   public void "test use original place classpath for reference type resolving"() {
     addTwoModules()
 
@@ -60,7 +63,6 @@ class Class3 {
     myFixture.checkHighlighting()
   }
 
-  @Bombed(day = 1, month = Calendar.APRIL)
   public void "test use original place classpath for new expression type resolving"() {
     addTwoModules()
 
@@ -98,4 +100,51 @@ class Class3 {
     ModuleRootModificationUtil.addDependency(myModule, mod1)
     ModuleRootModificationUtil.addDependency(myModule, mod2)
   }
+
+  public void testOverridingJdkExceptions() {
+    def dep = PsiTestUtil.addModule(project, JavaModuleType.moduleType, "dep", myFixture.tempDirFixture.findOrCreateDir("dep"))
+    ModuleRootModificationUtil.setModuleSdk(dep, ModuleRootManager.getInstance(myModule).sdk)
+    ModuleRootModificationUtil.updateModel(myModule, { model ->
+      model.addModuleOrderEntry(dep)
+
+      List<OrderEntry> entries = model.orderEntries as List
+      def srcEntry = ContainerUtil.findInstance(entries, ModuleSourceOrderEntry)
+      assert srcEntry
+
+      model.rearrangeOrderEntries(([srcEntry] + (entries - srcEntry)) as OrderEntry[])
+    } as Consumer)
+
+    myFixture.addFileToProject "java/lang/IllegalArgumentException.java", '''
+package java.lang;
+
+public class IllegalArgumentException extends Exception { }
+'''
+
+    myFixture.addFileToProject 'dep/foo/Foo.java', '''
+package foo;
+
+public class Foo {
+  public static void libraryMethod() throws IllegalArgumentException {}
+}
+'''
+
+    myFixture.configureFromExistingVirtualFile(myFixture.addFileToProject('Bar.java', '''
+class Bar {
+
+void caught() {
+  try {
+    foo.Foo.libraryMethod();
+  } catch (IllegalArgumentException e) {}
+}
+
+void uncaught() {
+  <error descr="Unhandled exception: java.lang.IllegalArgumentException">foo.Foo.libraryMethod();</error>
+}
+
+}
+
+''').virtualFile)
+    myFixture.checkHighlighting()
+  }
+
 }

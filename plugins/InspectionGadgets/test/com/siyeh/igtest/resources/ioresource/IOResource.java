@@ -1,3 +1,18 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.siyeh.igtest.resources.ioresource;
 
 import java.io.*;
@@ -58,29 +73,25 @@ public class IOResource {
         } finally {
         }
     }
-
     public void foo7() throws IOException {
         FileInputStream str = null;
-        BufferedInputStream str2 = null;
+        InputStreamReader str2 = null;
         try {
-            str = new <warning descr="'FileInputStream' should be opened in front of a 'try' block and closed in the corresponding 'finally' block">FileInputStream</warning>("bar");
-            str2 = new BufferedInputStream(str);
+            str = new FileInputStream("bar");
+            str2 = new <warning descr="'InputStreamReader' should be opened in front of a 'try' block and closed in the corresponding 'finally' block">InputStreamReader</warning>(str);
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         }
         str.close();
     }
-
-    /*public void correct() throws IOException {
-        FileInputStream str = null;
-        InputStreamReader reader = null;
+    public void correct() throws IOException {
+        FileInputStream str = new FileInputStream("xxxx");
+        InputStreamReader reader = new InputStreamReader(str);
         try {
-            str = new FileInputStream("xxxx");
-            reader = new InputStreamReader(str);
         } finally {
             reader.close();
         }
-    }*/
+    }
 
     public void correct2() throws IOException {
         FileInputStream str = new FileInputStream("xxxx");
@@ -189,5 +200,17 @@ public class IOResource {
       finally {
           in.close();
       }
+  }
+
+  Reader escaped6(InputStream stream, String cs) {
+    return cs == null ? new InputStreamReader(stream) : new InputStreamReader(stream, cs);
+  }
+
+  void closeable() {
+    new <warning descr="'Closeable' should be opened in front of a 'try' block and closed in the corresponding 'finally' block">Closeable</warning>() {
+      public void close() throws IOException {
+
+      }
+    };
   }
 }

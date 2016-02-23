@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@ package com.intellij.ide.actions;
 
 import com.intellij.ide.BrowserUtil;
 import com.intellij.ide.IdeBundle;
+import com.intellij.ide.ui.UISettings;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CustomShortcutSet;
 import com.intellij.openapi.application.ApplicationInfo;
@@ -24,17 +26,25 @@ import com.intellij.openapi.application.ex.ApplicationInfoEx;
 import com.intellij.openapi.application.impl.ApplicationInfoImpl;
 import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.DumbAwareAction;
+import com.intellij.openapi.ui.GraphicsConfig;
+import com.intellij.openapi.ui.popup.JBPopup;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.IconLoader;
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.ui.Gray;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.LicensingFacade;
 import com.intellij.ui.UI;
 import com.intellij.ui.awt.RelativePoint;
+import com.intellij.util.Alarm;
 import com.intellij.util.text.DateFormatUtil;
+import com.intellij.util.ui.GraphicsUtil;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -44,19 +54,20 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Calendar;
+import java.util.*;
 import java.util.List;
-import java.util.Properties;
 
 /**
  * @author Konstantin Bulenkov
  */
 public class AboutPopup {
-  public void show(@Nullable Window window) {
+  private static final String COPY_URL = "copy://";
+  private static JBPopup ourPopup;
+
+  public static void show(@Nullable Window window) {
     ApplicationInfoEx appInfo = (ApplicationInfoEx)ApplicationInfo.getInstance();
 
-    JPanel panel = new JPanel(new BorderLayout());
+    final JPanel panel = new JPanel(new BorderLayout());
     Icon image = IconLoader.getIcon(appInfo.getAboutImageUrl());
     if (appInfo.showLicenseeInfo()) {
       final InfoSurface infoSurface = new InfoSurface(image);
@@ -84,7 +95,7 @@ public class AboutPopup {
       location = new RelativePoint(new Point((r.width - image.getIconWidth()) / 2, (r.height - image.getIconHeight()) / 2));
     }
 
-    JBPopupFactory.getInstance().createComponentPopupBuilder(panel, panel)
+    ourPopup = JBPopupFactory.getInstance().createComponentPopupBuilder(panel, panel)
       .setRequestFocus(true)
       .setFocusable(true)
       .setResizable(false)
@@ -95,8 +106,16 @@ public class AboutPopup {
       .setCancelKeyEnabled(true)
       .setCancelOnClickOutside(true)
       .setCancelOnOtherWindowOpen(true)
-      .createPopup()
-      .show(location);
+      .createPopup();
+
+    Disposer.register(ourPopup, new Disposable() {
+      @Override
+      public void dispose() {
+        ourPopup = null;
+      }
+    });
+
+    ourPopup.show(location);
   }
 
   private static void copyInfoToClipboard(String text) {
@@ -116,6 +135,9 @@ public class AboutPopup {
     private StringBuilder myInfo = new StringBuilder();
     private final List<Link> myLinks = new ArrayList<Link>();
     private Link myActiveLink;
+    private boolean myShowCopy = false;
+    private float myShowCopyAlpha;
+    private Alarm myAlarm = new Alarm();
 
     public InfoSurface(Icon image) {
       ApplicationInfoImpl appInfo = (ApplicationInfoImpl)ApplicationInfoEx.getInstanceEx();
@@ -127,7 +149,7 @@ public class AboutPopup {
 
       setOpaque(false);
       setBackground(myColor);
-
+      setFocusable(true);
       Calendar cal = appInfo.getBuildDate();
       myLines.add(new AboutBoxLine(appInfo.getFullApplicationName(), true, null));
       appendLast();
@@ -170,7 +192,7 @@ public class AboutPopup {
         myLines.add(new AboutBoxLine(""));
         myLines.add(new AboutBoxLine(""));
         myLines.add(new AboutBoxLine("Powered by ").keepWithNext());
-        myLines.add(new AboutBoxLine("open-source software", false, thirdParty).keepWithNext());
+        myLines.add(new AboutBoxLine("open-source software", false, thirdParty));
       }
 
       addMouseListener(new MouseAdapter() {
@@ -178,7 +200,54 @@ public class AboutPopup {
         public void mousePressed(MouseEvent event) {
           if (myActiveLink != null) {
             event.consume();
+            if (COPY_URL.equals(myActiveLink.myUrl)) {
+              copyInfoToClipboard(myInfo.toString());
+              if (ourPopup != null) {
+                ourPopup.cancel();
+              }
+              return;
+            }
             BrowserUtil.browse(myActiveLink.myUrl);
+          }
+        }
+
+        final static double maxAlpha = 0.5;
+        final static double fadeStep = 0.05;
+        final static int animationDelay = 15;
+
+        @Override
+        public void mouseEntered(MouseEvent e) {
+          if (!myShowCopy) {
+            myShowCopy = true;
+            myAlarm.cancelAllRequests();
+            myAlarm.addRequest(new Runnable() {
+              @Override
+              public void run() {
+                if (myShowCopyAlpha < maxAlpha) {
+                  myShowCopyAlpha += fadeStep;
+                  repaint();
+                  myAlarm.addRequest(this, animationDelay);
+                }
+              }
+            }, animationDelay);
+          }
+        }
+
+        @Override
+        public void mouseExited(MouseEvent e) {
+          if (myShowCopy) {
+            myShowCopy = false;
+            myAlarm.cancelAllRequests();
+            myAlarm.addRequest(new Runnable() {
+              @Override
+              public void run() {
+                if (myShowCopyAlpha > 0) {
+                  myShowCopyAlpha -= fadeStep;
+                  repaint();
+                  myAlarm.addRequest(this, animationDelay);
+                }
+              }
+            }, animationDelay);
           }
         }
       });
@@ -213,20 +282,21 @@ public class AboutPopup {
       super.paintChildren(g);
 
       Graphics2D g2 = (Graphics2D)g;
-      UIUtil.applyRenderingHints(g);
+      UISettings.setupAntialiasing(g);
 
       Font labelFont = JBUI.Fonts.label();
       if (SystemInfo.isWindows) {
         labelFont = JBUI.Fonts.create("Tahoma", 12);
       }
 
-      for (int labelSize = JBUI.scale(10); labelSize != JBUI.scale(6); labelSize -= 1) {
+      int startFontSize = Registry.is("ide.new.about") ? 14 : 10;
+      for (int labelSize = JBUI.scale(startFontSize); labelSize != JBUI.scale(6); labelSize -= 1) {
         myLinks.clear();
         g2.setPaint(myColor);
         myImage.paintIcon(this, g2, 0, 0);
 
         g2.setColor(myColor);
-        TextRenderer renderer = new TextRenderer(0, 165, 398, 120, g2);
+        TextRenderer renderer = createTextRenderer(g2);
         UIUtil.setupComposite(g2);
         myFont = labelFont.deriveFont(Font.PLAIN, labelSize);
         myBoldFont = labelFont.deriveFont(Font.BOLD, labelSize + 1);
@@ -254,7 +324,22 @@ public class AboutPopup {
       } else {
         g2.setColor(JBColor.BLACK);
       }
-      g2.drawString("\u00A9 2000\u2013" + Calendar.getInstance().get(Calendar.YEAR) + " JetBrains s.r.o. All rights reserved.", JBUI.scale(30), JBUI.scale(284));
+
+      if (Registry.is("ide.new.about")) {
+        g2.setColor(Gray.x33);
+        g2.setFont(JBUI.Fonts.label(12));
+      }
+      final int copyrightX = Registry.is("ide.new.about") ? JBUI.scale(140) : JBUI.scale(30);
+      final int copyrightY = Registry.is("ide.new.about") ? JBUI.scale(390) : JBUI.scale(284);
+      g2.drawString("\u00A9 2000\u2013" + Calendar.getInstance(Locale.US).get(Calendar.YEAR) + " JetBrains s.r.o. All rights reserved.", copyrightX, copyrightY);
+    }
+
+    @NotNull
+    private TextRenderer createTextRenderer(Graphics2D g) {
+      if (Registry.is("ide.new.about")) {
+        return new TextRenderer(18, 200, 500, 220, g);
+      }
+      return new TextRenderer(0, 165, 398, 120, g);
     }
 
     public String getText() {
@@ -293,18 +378,32 @@ public class AboutPopup {
         x = indentX;
         y = indentY;
         ApplicationInfoEx appInfo = (ApplicationInfoEx)ApplicationInfo.getInstance();
+        boolean showCopyButton = myShowCopy || myShowCopyAlpha > 0;
         for (AboutBoxLine line : lines) {
           final String s = line.getText();
           setFont(line.isBold() ? myBoldFont : myFont);
           if (line.getUrl() != null) {
             g2.setColor(myLinkColor);
             FontMetrics metrics = g2.getFontMetrics(font);
-            myLinks.add(new Link(new Rectangle(x, yBase + y - fontAscent, metrics.stringWidth(s), fontHeight), line.getUrl()));
+            myLinks.add(new Link(new Rectangle(xBase + x, yBase + y - fontAscent, metrics.stringWidth(s + " "), fontHeight), line.getUrl()));
           }
           else {
-            g2.setColor(appInfo.getAboutForeground());
+            g2.setColor(Registry.is("ide.new.about") ? Gray.x33 : appInfo.getAboutForeground());
           }
           renderString(s, indentX);
+          if (showCopyButton) {
+            final FontMetrics metrics = g2.getFontMetrics(myFont);
+            String copyString = "Copy to Clipboard";
+            final int width = metrics.stringWidth(copyString);
+            g2.setFont(myFont);
+            g2.setColor(myLinkColor);
+            final int xOffset = myImage.getIconWidth() - width - 10;
+            final GraphicsConfig config = GraphicsUtil.paintWithAlpha(g2, myShowCopyAlpha);
+            g2.drawString(copyString, xOffset, yBase + y);
+            config.restore();
+            myLinks.add(new Link(new Rectangle(xOffset, yBase + y - fontAscent, width, fontHeight), COPY_URL));
+            showCopyButton = false;
+          }
           if (!line.isKeepWithNext() && !line.equals(lines.get(lines.size()-1))) {
             lineFeed(indentX, s);
           }

@@ -53,8 +53,8 @@ public class HighlightDisplayLevel {
   }
 
   public static final HighlightDisplayLevel WARNING = new HighlightDisplayLevel(HighlightSeverity.WARNING, createIconByKey(CodeInsightColors.WARNINGS_ATTRIBUTES));
-  private static final Icon DO_NOT_SHOW_KEY = createIconByKey(TextAttributesKey.createTextAttributesKey("DO_NOT_SHOW"));
-  public static final HighlightDisplayLevel DO_NOT_SHOW = new HighlightDisplayLevel(HighlightSeverity.INFORMATION, DO_NOT_SHOW_KEY);
+  private static final TextAttributesKey DO_NOT_SHOW_KEY = TextAttributesKey.createTextAttributesKey("DO_NOT_SHOW");
+  public static final HighlightDisplayLevel DO_NOT_SHOW = new HighlightDisplayLevel(HighlightSeverity.INFORMATION, createIconByKey(DO_NOT_SHOW_KEY));
   /**
    * use #WEAK_WARNING instead
    */
@@ -180,7 +180,9 @@ public class HighlightDisplayLevel {
     @Override
     public void paintIcon(Component c, Graphics g, int x, int y) {
       g.setColor(getColor());
-      g.fillRect(x + 2, y + 2, 10, 10);
+      int shift = JBUI.scale(2);
+      int size = JBUI.scale(10);
+      g.fillRect(x + shift, y + shift, size, size);
     }
 
     @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.*;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.refactoring.BaseRefactoringProcessor;
 import com.intellij.refactoring.RefactoringBundle;
 import com.intellij.refactoring.util.CanonicalTypes;
@@ -41,7 +42,7 @@ import java.util.Map;
  */
 class DetectedJavaChangeInfo extends JavaChangeInfoImpl {
   private PsiMethod mySuperMethod;
-  private String[] myModifiers;
+  private final String[] myModifiers;
 
   DetectedJavaChangeInfo(@PsiModifier.ModifierConstant String newVisibility,
                          PsiMethod method,
@@ -75,6 +76,10 @@ class DetectedJavaChangeInfo extends JavaChangeInfoImpl {
         if (!parameterInfo.getTypeWrapper().isValid()) {
           return null;
         }
+      }
+
+      if (PsiTreeUtil.findChildOfType(method.getParameterList(), PsiErrorElement.class) != null) {
+        return null;
       }
     }
     catch (IncorrectOperationException e) {
@@ -188,7 +193,7 @@ class DetectedJavaChangeInfo extends JavaChangeInfoImpl {
       }
     }) {
       @Override
-      protected void performRefactoring(UsageInfo[] usages) {
+      protected void performRefactoring(@NotNull UsageInfo[] usages) {
         super.performRefactoring(usages);
         final PsiElementFactory elementFactory = JavaPsiFacade.getElementFactory(method.getProject());
         final PsiParameter[] parameters = method.getParameterList().getParameters();

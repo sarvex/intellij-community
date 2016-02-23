@@ -26,10 +26,7 @@ import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.AbstractPainter;
-import com.intellij.openapi.util.ActionCallback;
-import com.intellij.openapi.util.ActiveRunnable;
-import com.intellij.openapi.util.Disposer;
-import com.intellij.openapi.util.Ref;
+import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.wm.IdeFocusManager;
 import com.intellij.openapi.wm.IdeFrame;
@@ -81,6 +78,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
 public class RunnerContentUi implements ContentUI, Disposable, CellTransform.Facade, ViewContextEx, PropertyChangeListener, SwitchProvider,
                                         QuickActionProvider, DockContainer.Dialog {
   public static final DataKey<RunnerContentUi> KEY = DataKey.create("DebuggerContentUI");
+  public static final Key<Boolean> LIGHTWEIGHT_CONTENT_MARKER = Key.create("LightweightContent");
 
   @NonNls private static final String LAYOUT = "Runner.Layout";
   @NonNls private static final String SETTINGS = "XDebugger.Settings";
@@ -234,6 +232,7 @@ public class RunnerContentUi implements ContentUI, Disposable, CellTransform.Fac
     final NonOpaquePanel wrappper = new NonOpaquePanel(new BorderLayout(0, 0));
     wrappper.add(myToolbar, BorderLayout.WEST);
     wrappper.add(myTabs.getComponent(), BorderLayout.CENTER);
+    wrappper.setBorder(new EmptyBorder(-1, 0, 0, 0));
 
     myComponent.setContent(wrappper);
 
@@ -435,7 +434,7 @@ public class RunnerContentUi implements ContentUI, Disposable, CellTransform.Fac
       location.translate(size.width / 2, size.height / 2);
       getDockManager().createNewDockContainerFor(content, new RelativePoint(location));
     }
-    return new ActionCallback.Done();
+    return ActionCallback.DONE;
   }
 
   private void storeDefaultIndices(@NotNull Content[] contents) {
@@ -642,6 +641,16 @@ public class RunnerContentUi implements ContentUI, Disposable, CellTransform.Fac
       @Override
       public void contentAdded(final ContentManagerEvent event) {
         initUi();
+        if (event.getContent().getUserData(LIGHTWEIGHT_CONTENT_MARKER) == Boolean.TRUE) {
+          myLayoutSettings.setLightWeight(event.getContent());
+          Disposer.register(event.getContent(), new Disposable() {
+            @Override
+            public void dispose() {
+              myLayoutSettings.clearStateFor(event.getContent());
+            }
+          });
+        }
+
 
         GridImpl grid = getGridFor(event.getContent(), true);
         if (grid == null) {
@@ -963,7 +972,7 @@ public class RunnerContentUi implements ContentUI, Disposable, CellTransform.Fac
   }
 
   private ActionCallback restoreLastUiState() {
-    if (isStateBeingRestored()) return new ActionCallback.Rejected();
+    if (isStateBeingRestored()) return ActionCallback.REJECTED;
 
     try {
       setStateIsBeingRestored(true, this);
@@ -1561,7 +1570,7 @@ public class RunnerContentUi implements ContentUI, Disposable, CellTransform.Fac
         saveUiState();
         select(content, true);
         updateTabsUI(false);
-        return new ActionCallback.Done();
+        return ActionCallback.DONE;
       }
     }));
 
@@ -1609,11 +1618,11 @@ public class RunnerContentUi implements ContentUI, Disposable, CellTransform.Fac
   @Override
   public ActionCallback select(final Content content, final boolean requestFocus) {
     final GridImpl grid = (GridImpl)findGridFor(content);
-    if (grid == null) return new ActionCallback.Done();
+    if (grid == null) return ActionCallback.DONE;
 
 
     final TabInfo info = myTabs.findInfo(grid);
-    if (info == null) return new ActionCallback.Done();
+    if (info == null) return ActionCallback.DONE;
 
 
     final ActionCallback result = new ActionCallback();
@@ -1692,7 +1701,9 @@ public class RunnerContentUi implements ContentUI, Disposable, CellTransform.Fac
         Dimension leftMinSize = myLeft.getMinimumSize();
         Dimension rightMinSize = myRight.getMinimumSize();
 
-        int delta = (prefSize.width - size.width) / 2;
+        // see IDEA-140557, always shrink left component last
+        int delta = 0;
+        //int delta = (prefSize.width - size.width) / 2;
 
         myLeft.setBounds(0, 0, myLeft.getPreferredSize().width - delta, parent.getHeight());
         int rightX = (int)myLeft.getBounds().getMaxX();

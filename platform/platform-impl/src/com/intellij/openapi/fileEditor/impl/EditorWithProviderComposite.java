@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -88,10 +88,10 @@ public class EditorWithProviderComposite extends EditorComposite {
     final int selectedProviderIndex = ArrayUtil.find(editors, getSelectedEditor());
     LOG.assertTrue(selectedProviderIndex != -1);
     final FileEditorProvider[] providers = getProviders();
-    return new HistoryEntry(getFile(), providers, states, providers[selectedProviderIndex]);
+    return HistoryEntry.createLight(getFile(), providers, states, providers[selectedProviderIndex]);
   }
 
-  void addEditor(FileEditor editor, FileEditorProvider provider) {
+  public void addEditor(@NotNull FileEditor editor, FileEditorProvider provider) {
     addEditor(editor);
     myProviders = ArrayUtil.append(myProviders, provider);
   }

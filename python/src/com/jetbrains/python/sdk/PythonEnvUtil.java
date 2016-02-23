@@ -15,7 +15,6 @@
  */
 package com.jetbrains.python.sdk;
 
-import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.intellij.openapi.util.text.StringUtil;
 import org.jetbrains.annotations.NotNull;
@@ -23,7 +22,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.util.Collection;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -35,6 +33,7 @@ public class PythonEnvUtil {
   @SuppressWarnings("SpellCheckingInspection") public static final String PYTHONUNBUFFERED = "PYTHONUNBUFFERED";
   @SuppressWarnings("SpellCheckingInspection") public static final String PYTHONIOENCODING = "PYTHONIOENCODING";
   @SuppressWarnings("SpellCheckingInspection") public static final String IPYTHONENABLE = "IPYTHONENABLE";
+  @SuppressWarnings("SpellCheckingInspection") public static final String PYTHONDONTWRITEBYTECODE = "PYTHONDONTWRITEBYTECODE";
 
   private PythonEnvUtil() { }
 
@@ -85,5 +84,19 @@ public class PythonEnvUtil {
 
   public static void addToPythonPath(@NotNull Map<String, String> env, String value) {
     addPathToEnv(env, PYTHONPATH, value);
+  }
+
+  public static void mergePythonPath(@NotNull Map<String, String> from, @NotNull Map<String, String> to) {
+    String value = from.get(PYTHONPATH);
+    if (value != null) {
+      Set<String> paths = Sets.newHashSet(value.split(File.pathSeparator));
+      addToPythonPath(to, paths);
+    }
+  }
+
+  @NotNull
+  public static Map<String, String> setPythonDontWriteBytecode(@NotNull Map<String, String> env) {
+    env.put(PYTHONDONTWRITEBYTECODE, "1");
+    return env;
   }
 }

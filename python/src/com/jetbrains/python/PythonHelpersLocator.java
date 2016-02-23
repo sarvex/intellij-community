@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,22 +17,23 @@ package com.jetbrains.python;
 
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.PathUtil;
 import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
 
 public class PythonHelpersLocator {
   private static final Logger LOG = Logger.getInstance("#com.jetbrains.python.PythonHelpersLocator");
-
   private static final String COMMUNITY_SUFFIX = "-community";
 
-  private PythonHelpersLocator() {
-  }
+  private PythonHelpersLocator() {}
 
   /**
    * @return the base directory under which various scripts, etc are stored.
    */
+  @NotNull
   public static File getHelpersRoot() {
     @NonNls String jarPath = PathUtil.getJarPathForClass(PythonHelpersLocator.class);
     if (jarPath.endsWith(".jar")) {
@@ -43,30 +44,32 @@ public class PythonHelpersLocator {
       return new File(pluginBaseDir, "helpers");
     }
 
-    if (jarPath.endsWith(COMMUNITY_SUFFIX)) {
-      jarPath = jarPath.substring(0, jarPath.length() - COMMUNITY_SUFFIX.length());
-    }
+    jarPath = StringUtil.trimEnd(jarPath, COMMUNITY_SUFFIX);
 
     return new File(jarPath + "-helpers");
   }
 
   /**
    * Find a resource by name under helper root.
+   *
    * @param resourceName a path relative to helper root
    * @return absolute path of the resource
    */
-  public static String getHelperPath(String resourceName) {
+  public static String getHelperPath(@NotNull String resourceName) {
     return getHelperFile(resourceName).getAbsolutePath();
   }
 
   /**
    * Finds a resource file by name under helper root.
+   *
    * @param resourceName a path relative to helper root
    * @return a file object pointing to that path; existence is not checked.
    */
-  public static File getHelperFile(String resourceName) {
+  @NotNull
+  public static File getHelperFile(@NotNull String resourceName) {
     return new File(getHelpersRoot(), resourceName);
   }
+
 
   public static String getPythonCommunityPath() {
     File pathFromUltimate = new File(PathManager.getHomePath(), "community/python");

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 package com.intellij.codeInsight.daemon.impl.quickfix;
 
 import com.intellij.codeInsight.FileModificationService;
-import com.intellij.codeInsight.TargetElementUtil;
+import com.intellij.codeInsight.JavaTargetElementEvaluator;
 import com.intellij.codeInsight.daemon.QuickFixBundle;
 import com.intellij.codeInsight.daemon.impl.analysis.JavaHighlightUtil;
 import com.intellij.codeInsight.intention.IntentionAction;
@@ -231,7 +231,7 @@ public class ChangeMethodSignatureFromUsageFix implements IntentionAction/*, Hig
         }
 
         @Override
-        protected void performRefactoring(UsageInfo[] usages) {
+        protected void performRefactoring(@NotNull UsageInfo[] usages) {
           CommandProcessor.getInstance().setCurrentCommandName(getCommandName());
           super.performRefactoring(usages);
         }
@@ -243,18 +243,18 @@ public class ChangeMethodSignatureFromUsageFix implements IntentionAction/*, Hig
           UndoUtil.markPsiFileForUndo(file);
         }
       });
+      return Arrays.asList(newParametersInfo);
     }
     else {
       final List<ParameterInfoImpl> parameterInfos = newParametersInfo != null
                                                      ? new ArrayList<ParameterInfoImpl>(Arrays.asList(newParametersInfo))
                                                      : new ArrayList<ParameterInfoImpl>();
-      final PsiReferenceExpression refExpr = TargetElementUtil.findReferenceExpression(editor);
+      final PsiReferenceExpression refExpr = JavaTargetElementEvaluator.findReferenceExpression(editor);
       JavaChangeSignatureDialog dialog = JavaChangeSignatureDialog.createAndPreselectNew(project, method, parameterInfos, allowDelegation, refExpr);
       dialog.setParameterInfos(parameterInfos);
       dialog.show();
-      return dialog.getParameters();
+      return dialog.isOK() ? dialog.getParameters() : null;
     }
-    return null;
   }
 
   public static String getNewParameterNameByOldIndex(int oldIndex, final ParameterInfoImpl[] parametersInfo) {
@@ -294,7 +294,7 @@ public class ChangeMethodSignatureFromUsageFix implements IntentionAction/*, Hig
         if (buf.length() > 0) buf.append(", ");
         final PsiType parameterType = PsiUtil.convertAnonymousToBaseType(paramType);
         final String presentableText = escapePresentableType(parameterType);
-        final ParameterInfoImpl parameterInfo = new ParameterInfoImpl(pi, parameter.getName(), parameterType);
+        final ParameterInfoImpl parameterInfo = new ParameterInfoImpl(pi, parameter.getName(), parameter.getType());
         if (TypeConversionUtil.areTypesAssignmentCompatible(paramType, expression)) {
           buf.append(presentableText);
           result.add(parameterInfo);

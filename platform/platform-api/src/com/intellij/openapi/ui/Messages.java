@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,11 +29,7 @@ import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.wm.IdeFrame;
 import com.intellij.openapi.wm.WindowManager;
-import com.intellij.ui.BrowserHyperlinkListener;
-import com.intellij.ui.DocumentAdapter;
-import com.intellij.ui.InsertPathAction;
-import com.intellij.ui.ScrollPaneFactory;
-import com.intellij.ui.MessageException;
+import com.intellij.ui.*;
 import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.mac.MacMessages;
 import com.intellij.ui.mac.foundation.MacUtil;
@@ -1519,25 +1515,8 @@ public class Messages {
         panel.add(container, BorderLayout.WEST);
       }
       if (myMessage != null) {
-        final JTextPane messageComponent = createMessageComponent(myMessage);
-
-        final Dimension screenSize = messageComponent.getToolkit().getScreenSize();
-        final Dimension textSize = messageComponent.getPreferredSize();
-        if (myMessage.length() > 100) {
-          final JScrollPane pane = ScrollPaneFactory.createScrollPane(messageComponent);
-          pane.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
-          pane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
-          pane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
-          final int scrollSize = (int)new JScrollBar(Adjustable.VERTICAL).getPreferredSize().getWidth();
-          final Dimension preferredSize =
-            new Dimension(Math.min(textSize.width, screenSize.width / 2) + scrollSize,
-                          Math.min(textSize.height, screenSize.height / 3) + scrollSize);
-          pane.setPreferredSize(preferredSize);
-          panel.add(pane, BorderLayout.CENTER);
-        }
-        else {
-          panel.add(messageComponent, BorderLayout.CENTER);
-        }
+        JTextPane messageComponent = createMessageComponent(myMessage);
+        panel.add(wrapToScrollPaneIfNeeded(messageComponent, 100, 10), BorderLayout.CENTER);
       }
       return panel;
     }
@@ -1586,22 +1565,25 @@ public class Messages {
 
   @NotNull
   public static JTextPane configureMessagePaneUi(JTextPane messageComponent, String message) {
-    return configureMessagePaneUi(messageComponent, message, true);
+    JTextPane pane = configureMessagePaneUi(messageComponent, message, null);
+    if (UIUtil.HTML_MIME.equals(pane.getContentType())) {
+      pane.addHyperlinkListener(BrowserHyperlinkListener.INSTANCE);
+    }
+    return pane;
   }
 
   @NotNull
-  public static JTextPane configureMessagePaneUi(JTextPane messageComponent,
-                                                 String message,
-                                                 final boolean addBrowserHyperlinkListener) {
-    messageComponent.setFont(UIUtil.getLabelFont());
+  public static JTextPane configureMessagePaneUi(@NotNull JTextPane messageComponent,
+                                                 @Nullable String message,
+                                                 @Nullable UIUtil.FontSize fontSize) {
+    UIUtil.FontSize fixedFontSize = fontSize == null ? UIUtil.FontSize.NORMAL : fontSize;
+    messageComponent.setFont(UIUtil.getLabelFont(fixedFontSize));
     if (BasicHTML.isHTMLString(message)) {
-      final HTMLEditorKit editorKit = new HTMLEditorKit();
-      editorKit.getStyleSheet().addRule(UIUtil.displayPropertiesToCSS(UIUtil.getLabelFont(), UIUtil.getLabelForeground()));
+      HTMLEditorKit editorKit = new HTMLEditorKit();
+      Font font = UIUtil.getLabelFont(fixedFontSize);
+      editorKit.getStyleSheet().addRule(UIUtil.displayPropertiesToCSS(font, UIUtil.getLabelForeground()));
       messageComponent.setEditorKit(editorKit);
       messageComponent.setContentType(UIUtil.HTML_MIME);
-      if (addBrowserHyperlinkListener) {
-        messageComponent.addHyperlinkListener(BrowserHyperlinkListener.INSTANCE);
-      }
     }
     messageComponent.setText(message);
     messageComponent.setEditable(false);
@@ -1619,6 +1601,28 @@ public class Messages {
 
     messageComponent.setForeground(UIUtil.getLabelForeground());
     return messageComponent;
+  }
+
+  @NotNull
+  public static JComponent wrapToScrollPaneIfNeeded(@NotNull JComponent comp, int columns, int lines) {
+    float fontSize = comp.getFont().getSize2D();
+    Dimension maxDim = new Dimension((int)(fontSize * columns), (int)(fontSize * lines));
+    Dimension prefDim = comp.getPreferredSize();
+    if (prefDim.width <= maxDim.width && prefDim.height <= maxDim.height) return comp;
+
+    JScrollPane scrollPane = ScrollPaneFactory.createScrollPane(comp);
+    scrollPane.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+    scrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+    scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+    int barWidth = UIUtil.getScrollBarWidth();
+    Dimension preferredSize = new Dimension(
+      Math.min(prefDim.width, maxDim.width) + barWidth,
+      Math.min(prefDim.height, maxDim.height) + barWidth);
+    if (prefDim.width > maxDim.width) { //Too wide single-line message should be wrapped
+      preferredSize.height = Math.max(preferredSize.height, (int)(4 * fontSize) + barWidth);
+    }
+    scrollPane.setPreferredSize(preferredSize);
+    return scrollPane;
   }
 
   protected static class TwoStepConfirmationDialog extends MessageDialog {
@@ -1706,6 +1710,7 @@ public class Messages {
       super(project, message, title, options, defaultOption, icon, true);
       myValidator = validator;
       myField.setText(initialValue);
+      enableOkAction();
     }
 
     public InputDialog(@Nullable Project project,
@@ -1726,6 +1731,7 @@ public class Messages {
       super(parent, message, title, new String[]{OK_BUTTON, CANCEL_BUTTON}, 0, icon, true);
       myValidator = validator;
       myField.setText(initialValue);
+      enableOkAction();
     }
 
     public InputDialog(String message,
@@ -1736,6 +1742,11 @@ public class Messages {
       super(message, title, new String[]{OK_BUTTON, CANCEL_BUTTON}, 0, icon, true);
       myValidator = validator;
       myField.setText(initialValue);
+      enableOkAction();
+    }
+
+    private void enableOkAction() {
+      getOKAction().setEnabled(myValidator == null || myValidator.checkInput(myField.getText().trim()));
     }
 
     @NotNull

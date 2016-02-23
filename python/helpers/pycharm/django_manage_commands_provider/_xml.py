@@ -2,6 +2,12 @@
 """
 This module exports information about manage commands and options from django to PyCharm.
 Information is provided in XML (to prevent encoding troubles and simplify deserialization on java side).
+
+Right after xml declaration, before root tag it contains following comment:
+<!--jb pycharm data start-->
+
+Use it to make sure you found correct XML
+
 It does not have schema (yet!) but here is XML format it uses.
 
 <commandInfo-array> -- root
@@ -19,9 +25,12 @@ It does not have schema (yet!) but here is XML format it uses.
 
 Classes like DjangoCommandsInfo is used on Java side.
 
+TODO: Since Django 1.8 we can fetch much more info from argparse like positional argument names, nargs etc. Use it!
+
 """
 from xml.dom import minidom
 from xml.dom.minidom import Element
+from _jb_utils import VersionAgnosticUtils
 
 __author__ = 'Ilya.Kazakevich'
 
@@ -42,6 +51,7 @@ class XmlDumper(object):
     def __init__(self):
         self.__document = minidom.Document()
         self.__root = self.__document.createElement("{0}-array".format(XmlDumper.__command_info_tag))
+        self.__document.appendChild(self.__document.createComment("jb pycharm data start"))
         self.__document.appendChild(self.__root)
         self.__command_element = None
 
@@ -60,17 +70,16 @@ class XmlDumper(object):
         """
         for value in values:
             tag = self.__document.createElement(tag_name)
-            text = self.__document.createTextNode(value)
+            text = self.__document.createTextNode(str(value))
             tag.appendChild(text)
             parent.appendChild(tag)
 
-    def start_command(self, command_name, command_help_text, command_args_text):
+    def start_command(self, command_name, command_help_text):
         """
         Starts manage command
 
         :param command_name: command name
         :param command_help_text: command help
-        :param command_args_text: command text for args
 
 
         """
@@ -78,8 +87,19 @@ class XmlDumper(object):
         self.__command_element = self.__document.createElement(XmlDumper.__command_info_tag)
         self.__command_element.setAttribute("name", command_name)
         self.__command_element.setAttribute("help", command_help_text)
-        self.__command_element.setAttribute("args", command_args_text)
         self.__root.appendChild(self.__command_element)
+
+    def set_arguments(self, command_args_text):
+        """
+        Adds "arguments help" to command.
+
+                TODO: Use real list of arguments instead of this text when people migrate to argparse (Dj. 1.8)
+
+        :param command_args_text: command text for args
+        :type command_args_text str
+        """
+        assert bool(self.__command_element), "Not in a a command"
+        self.__command_element.setAttribute("args", VersionAgnosticUtils().to_unicode(command_args_text))
 
     def add_command_option(self, long_opt_names, short_opt_names, help_text, argument_info):
         """
@@ -93,10 +113,10 @@ class XmlDumper(object):
         :param short_opt_names: list of short opt names
         :param help_text: help text
 
-        :type long_opt_names list of str
-        :type short_opt_names list of str
+        :type long_opt_names iterable of str
+        :type short_opt_names iterable of str
         :type help_text str
-        :type argument_info tuple
+        :type argument_info tuple or None
         """
         assert isinstance(self.__command_element, Element), "Add option in command only"
 
@@ -140,4 +160,5 @@ class XmlDumper(object):
         :return: current commands as XML as described in package
         :rtype str
         """
-        return self.__document.toprettyxml()
+        document = self.__document.toxml(encoding="utf-8")
+        return VersionAgnosticUtils().to_unicode(document.decode("utf-8") if isinstance(document, bytes) else document)

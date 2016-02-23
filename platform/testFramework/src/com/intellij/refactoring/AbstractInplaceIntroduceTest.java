@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.intellij.refactoring;
 import com.intellij.codeInsight.template.impl.TemplateManagerImpl;
 import com.intellij.codeInsight.template.impl.TemplateState;
 import com.intellij.openapi.util.Pass;
+import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
 import com.intellij.refactoring.introduce.inplace.AbstractInplaceIntroducer;
 import com.intellij.testFramework.LightPlatformCodeInsightTestCase;
 
@@ -67,7 +68,7 @@ public abstract class AbstractInplaceIntroduceTest extends LightPlatformCodeInsi
 
       final AbstractInplaceIntroducer introducer = invokeRefactoring();
       pass.pass(introducer);
-      TemplateState state = TemplateManagerImpl.getTemplateState(getEditor());
+      TemplateState state = TemplateManagerImpl.getTemplateState(InjectedLanguageUtil.getTopLevelEditor(getEditor()));
       assert state != null;
       state.gotoEnd(false);
       checkResultByFile(getBasePath() + name + "_after" + getExtension());
@@ -78,9 +79,4 @@ public abstract class AbstractInplaceIntroduceTest extends LightPlatformCodeInsi
   }
 
   protected abstract AbstractInplaceIntroducer invokeRefactoring();
-
-  @Override
-  protected boolean isRunInWriteAction() {
-    return false;
-  }
 }

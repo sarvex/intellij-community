@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@ import com.intellij.openapi.command.CommandEvent;
 import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.command.undo.UndoManager;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectLocator;
@@ -246,7 +245,9 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
       return false;
     }
 
-    FileDocumentManager.getInstance().saveAllDocuments();
+    // save all documents here when !myMovedFiles.isEmpty() deletes these files from VFS
+    // these leads to psi invalidation during refactoring inside write action
+    // FileDocumentManager.getInstance().saveAllDocuments();
     if (sourceVcs == null) {
       return createItem(toDir, file.getName(), file.isDirectory(), true);
     }
@@ -269,7 +270,9 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
     File dstFile = new File(srcFile.getParentFile(), newName);
     SvnVcs vcs = getVCS(file);
     if (vcs != null) {
-      FileDocumentManager.getInstance().saveAllDocuments();
+      // save all documents here when !myMovedFiles.isEmpty() deletes these files from VFS
+      // these leads to psi invalidation during refactoring inside write action
+      // FileDocumentManager.getInstance().saveAllDocuments();
 
       myFilesToRefresh.add(file.getParent());
       return doMove(vcs, srcFile, dstFile);
@@ -278,7 +281,6 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
   }
 
   private boolean doMove(@NotNull SvnVcs vcs, final File src, final File dst) {
-    long srcTime = src.lastModified();
     try {
       final boolean isUndo = isUndo(vcs);
       final String list = isUndo ? null : SvnChangelistListener.getCurrentMapping(vcs, src);
@@ -298,7 +300,6 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
       if (! isUndo && list != null) {
         SvnChangelistListener.putUnderList(vcs.getProject(), list, dst);
       }
-      dst.setLastModified(srcTime);
     }
     catch(VcsException e) {
       addToMoveExceptions(vcs.getProject(), e);
@@ -334,7 +335,7 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
       // check destination directory
       if (isUnversioned(vcs, dst.getParentFile())) {
         try {
-          copyFileOrDir(src, dst);
+          FileUtil.copyFileOrDir(src, dst);
         }
         catch (IOException e) {
           throw new SvnBindException(e);
@@ -366,7 +367,7 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
           File newFile = new File(dst, relativePath);
           if (!newFile.exists()) {
             try {
-              copyFileOrDir(src, dst);
+              FileUtil.copyFileOrDir(src, dst);
             }
             catch (IOException e) {
               exc[0] = new SvnBindException(e);
@@ -379,14 +380,6 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
       if (exc[0] != null) {
         throw exc[0];
       }
-    }
-  }
-
-  private static void copyFileOrDir(File src, File dst) throws IOException {
-    if (src.isDirectory()) {
-      FileUtil.copyDir(src, dst);
-    } else {
-      FileUtil.copy(src, dst);
     }
   }
 
@@ -535,7 +528,7 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
     return new RepeatSvnActionThroughBusy() {
       @Override
       protected void executeImpl() throws VcsException {
-        vcs.getFactory(file).createRevertClient().revert(new File[]{file}, Depth.allOrFiles(recursive), null);
+        vcs.getFactory(file).createRevertClient().revert(Collections.singletonList(file), Depth.allOrFiles(recursive), null);
       }
     };
   }

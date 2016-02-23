@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,13 @@
  */
 package com.intellij.psi.impl.source.tree.java;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.intellij.lang.ASTNode;
 import com.intellij.openapi.diagnostic.LogUtil;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
+import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
@@ -27,11 +29,11 @@ import com.intellij.psi.codeStyle.JavaCodeStyleManager;
 import com.intellij.psi.codeStyle.JavaCodeStyleSettingsFacade;
 import com.intellij.psi.filters.*;
 import com.intellij.psi.impl.CheckUtil;
+import com.intellij.psi.impl.PsiClassImplUtil;
 import com.intellij.psi.impl.PsiImplUtil;
 import com.intellij.psi.impl.PsiManagerEx;
 import com.intellij.psi.impl.source.SourceJavaCodeReference;
 import com.intellij.psi.impl.source.SourceTreeToPsiMap;
-import com.intellij.psi.impl.source.codeStyle.CodeEditUtil;
 import com.intellij.psi.impl.source.resolve.*;
 import com.intellij.psi.impl.source.tree.*;
 import com.intellij.psi.infos.CandidateInfo;
@@ -47,6 +49,7 @@ import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.TypeConversionUtil;
 import com.intellij.util.*;
+import com.intellij.util.containers.ContainerUtil;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -231,6 +234,17 @@ public class PsiReferenceExpressionImpl extends PsiReferenceExpressionBase imple
           PsiReferenceExpressionImpl expression = (PsiReferenceExpressionImpl)element;
           qualifiers.add(resolveCache.resolveWithCaching(expression, INSTANCE, false, false, containingFile));
         }
+
+        // walk only qualifiers, not their argument and other associated stuff
+
+        @Override
+        public void visitExpressionList(PsiExpressionList list) { }
+
+        @Override
+        public void visitLambdaExpression(PsiLambdaExpression expression) { }
+
+        @Override
+        public void visitClass(PsiClass aClass) { }
       });
       return qualifiers;
     }
@@ -405,11 +419,11 @@ public class PsiReferenceExpressionImpl extends PsiReferenceExpressionBase imple
           PsiUtil.ensureValidType(substitutedType);
           PsiType normalized = PsiImplUtil.normalizeWildcardTypeByPosition(substitutedType, expr);
           PsiUtil.ensureValidType(normalized);
-          return normalized;
+          return PsiClassImplUtil.correctType(normalized, expr.getResolveScope());
         }
       }
 
-      return TypeConversionUtil.erasure(ret);
+      return PsiClassImplUtil.correctType(TypeConversionUtil.erasure(ret), expr.getResolveScope());
     }
   }
 
@@ -486,12 +500,37 @@ public class PsiReferenceExpressionImpl extends PsiReferenceExpressionBase imple
     PsiScopesUtil.resolveAndWalk(filterProcessor, this, null, true);
   }
 
-  public static boolean seemsScrambled(PsiClass aClass) {
-    if (!(aClass instanceof PsiCompiledElement)) {
+  public static boolean seemsScrambled(@Nullable PsiClass aClass) {
+    return aClass instanceof PsiCompiledElement && seemsScrambledByStructure(aClass);
+  }
+
+  @VisibleForTesting
+  public static boolean seemsScrambledByStructure(@NotNull PsiClass aClass) {
+    PsiClass containingClass = aClass.getContainingClass();
+    if (containingClass != null && !seemsScrambledByStructure(containingClass)) {
       return false;
     }
 
-    final String name = aClass.getName();
+    if (seemsScrambled(aClass.getName())) {
+      List<PsiMethod> methods = ContainerUtil.filter(aClass.getMethods(), new Condition<PsiMethod>() {
+        @Override
+        public boolean value(PsiMethod method) {
+          return !method.hasModifierProperty(PsiModifier.PRIVATE);
+        }
+      });
+
+      return !methods.isEmpty() && ContainerUtil.and(methods, new Condition<PsiMethod>() {
+        @Override
+        public boolean value(PsiMethod method) {
+          return seemsScrambled(method.getName());
+        }
+      });
+    }
+
+    return false;
+  }
+
+  private static boolean seemsScrambled(String name) {
     return name != null && !name.isEmpty() && name.length() <= 2;
   }
 
@@ -569,7 +608,7 @@ public class PsiReferenceExpressionImpl extends PsiReferenceExpressionBase imple
       getTreeParent().replaceChildInternal(this, (TreeElement)ref.getNode());
       final JavaCodeStyleManager codeStyleManager = JavaCodeStyleManager.getInstance(manager.getProject());
       if (!preserveQualification) {
-        ref = (PsiExpression)codeStyleManager.shortenClassReferences(ref, JavaCodeStyleManager.UNCOMPLETE_CODE);
+        ref = (PsiExpression)codeStyleManager.shortenClassReferences(ref, JavaCodeStyleManager.INCOMPLETE_CODE);
       }
       return ref;
     }
@@ -714,25 +753,6 @@ public class PsiReferenceExpressionImpl extends PsiReferenceExpressionBase imple
   @Override
   public boolean isQualified() {
     return getChildRole(getFirstChildNode()) == ChildRole.QUALIFIER;
-  }
-
-  @Override
-  public void subtreeChanged() {
-    super.subtreeChanged();
-
-    // We want to reformat method call arguments on method name change because there is a possible situation that they are aligned
-    // and method change breaks the alignment.
-    // Example:
-    //     test(1,
-    //          2);
-    // Suppose we're renaming the method to test123. We get the following if parameter list is not reformatted:
-    //     test123(1,
-    //          2);
-    PsiElement methodCallCandidate = getParent();
-    if (methodCallCandidate instanceof PsiMethodCallExpression) {
-      PsiMethodCallExpression methodCallExpression = (PsiMethodCallExpression)methodCallCandidate;
-      CodeEditUtil.markToReformat(methodCallExpression.getArgumentList().getNode(), true);
-    }
   }
 
   private String getCachedNormalizedText() {

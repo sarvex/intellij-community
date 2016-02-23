@@ -67,7 +67,7 @@ class TextPainter extends BasePainter {
   private final PrintSettings myPrintSettings;
   private final String myFullFileName;
   private final String myShortFileName;
-  private int myPageIndex;
+  private int myPageIndex = -1;
   private int myNumberOfPages = -1;
   private int mySegmentEnd;
   private final LineMarkerInfo[] myMethodSeparators;
@@ -178,6 +178,8 @@ class TextPainter extends BasePainter {
 
   @Override
   public int print(final Graphics g, final PageFormat pageFormat, final int pageIndex) throws PrinterException {
+    myPerformActualDrawing = false;
+
     if (myProgress.isCanceled()) {
       return NO_SUCH_PAGE;
     }
@@ -187,34 +189,46 @@ class TextPainter extends BasePainter {
     if (myNumberOfPages < 0) {
       myProgress.setText(CodeEditorBundle.message("print.file.calculating.number.of.pages.progress"));
       
-      myPerformActualDrawing = false;
-      
       if (!calculateNumberOfPages(g2d, pageFormat)) {
         return NO_SUCH_PAGE;
       }
     }
 
-    myPerformActualDrawing = true;
+    if (pageIndex >= myNumberOfPages) {
+      return NO_SUCH_PAGE;
+    }
 
-    return ApplicationManager.getApplication().runReadAction(new Computable<Integer>() {
-      @Override
-      public Integer compute() {
-        if (!isValidRange(myRangeToPrint)) {
+    isPrintingPass = !isPrintingPass;
+    if (!isPrintingPass) {
+      while(++myPageIndex < pageIndex) {
+        if (!printPageInReadAction(g2d, pageFormat, "print.skip.page.progress")) {
           return NO_SUCH_PAGE;
         }
-
-        isPrintingPass = !isPrintingPass;
-        if (!isPrintingPass) {
-          return PAGE_EXISTS;
+      }      
+      return ApplicationManager.getApplication().runReadAction(new Computable<Integer>() {
+        @Override
+        public Integer compute() {
+          return isValidRange(myRangeToPrint) ? PAGE_EXISTS : NO_SUCH_PAGE;
         }
-
-        myProgress.setText(CodeEditorBundle.message("print.file.page.progress", myShortFileName, (pageIndex + 1), myNumberOfPages));
-        myPageIndex = pageIndex;
-
-        RangeMarker newRange = printPage(g2d, pageFormat, myRangeToPrint);
-        setSegment(newRange);
-
-        return PAGE_EXISTS;
+      });
+    }
+    else {
+      myPerformActualDrawing = true;
+      printPageInReadAction(g2d, pageFormat, "print.file.page.progress");
+      return PAGE_EXISTS;
+    }
+  }
+  
+  private boolean printPageInReadAction(final Graphics2D g2d, final PageFormat pageFormat, final String progressMessageKey) {
+    return ApplicationManager.getApplication().runReadAction(new Computable<Boolean>() {
+      @Override
+      public Boolean compute() {
+        if (!isValidRange(myRangeToPrint)) {
+          return false;
+        }
+        myProgress.setText(CodeEditorBundle.message(progressMessageKey, myShortFileName, (myPageIndex + 1), myNumberOfPages));
+        setSegment(printPage(g2d, pageFormat, myRangeToPrint));
+        return true;
       }
     });
   }
@@ -360,7 +374,7 @@ class TextPainter extends BasePainter {
     double lineY = position.getY();
 
     if (myPerformActualDrawing) {
-      setInitialMethodSeparatorIndex(lIterator.getEnd());
+      getMethodSeparator(lIterator.getLineNumber());
     }
 
     while (!hIterator.atEnd() && !lIterator.atEnd()) {
@@ -376,9 +390,12 @@ class TextPainter extends BasePainter {
         drawLineNumber(g, 0, lineY);
         lIterator.advance();
         myLineNumber++;
+        position.setLocation(0, position.getY() + lineHeight);
+        lineY = position.getY();
+        myOffset = lEnd;
 
         if (myPerformActualDrawing) {
-          LineMarkerInfo marker = getMethodSeparator(lEnd);
+          LineMarkerInfo marker = getMethodSeparator(lIterator.getLineNumber());
           if (marker != null) {
             Color save = g.getColor();
             setForegroundColor(g, marker.separatorColor);
@@ -387,9 +404,6 @@ class TextPainter extends BasePainter {
           }
         }
 
-        position.setLocation(0, position.getY() + lineHeight);
-        lineY = position.getY();
-        myOffset = lEnd;
         if (position.getY() > clip.getY() + clip.getHeight() - lineHeight) {
           break;
         }
@@ -429,24 +443,17 @@ class TextPainter extends BasePainter {
 
     g.translate(-clip.getX(), 0);
   }
-  
-  private void setInitialMethodSeparatorIndex(int initialOffset) {
-    while (myCurrentMethodSeparator < myMethodSeparators.length) {
-      LineMarkerInfo marker = myMethodSeparators[myCurrentMethodSeparator];
-      if (marker != null && marker.startOffset >= initialOffset) break;
+
+  private LineMarkerInfo getMethodSeparator(int line) {
+    LineMarkerInfo marker = null;
+    LineMarkerInfo tmpMarker;
+    while (myCurrentMethodSeparator < myMethodSeparators.length &&
+           (tmpMarker = myMethodSeparators[myCurrentMethodSeparator]) != null &&
+           FileSeparatorProvider.getDisplayLine(tmpMarker, myDocument) <= line) {
+      marker = tmpMarker;
       myCurrentMethodSeparator++;
     }
-  }
-
-  private LineMarkerInfo getMethodSeparator(int currentOffset) {
-    if (myCurrentMethodSeparator < myMethodSeparators.length) {
-      LineMarkerInfo marker = myMethodSeparators[myCurrentMethodSeparator];
-      if (marker != null && marker.startOffset < currentOffset) {
-        myCurrentMethodSeparator++;
-        return marker;
-      }
-    }
-    return null;
+    return marker;
   }
 
   private double drawHeader(Graphics2D g, Rectangle2D clip) {

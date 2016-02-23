@@ -61,8 +61,8 @@ public class CompareFilesAction extends BaseShowDiffAction {
           case DIRECTORY:
             text = "Compare Directories";
             break;
-          case ARCHIEVE:
-            text = "Compare Archieves";
+          case ARCHIVE:
+            text = "Compare Archives";
             break;
         }
       }
@@ -70,6 +70,7 @@ public class CompareFilesAction extends BaseShowDiffAction {
     e.getPresentation().setText(text);
   }
 
+  @Override
   protected boolean isAvailable(@NotNull AnActionEvent e) {
     DiffRequest request = e.getData(DIFF_REQUEST);
     if (request != null) {
@@ -105,6 +106,7 @@ public class CompareFilesAction extends BaseShowDiffAction {
     if (data.length == 1) {
       VirtualFile otherFile = getOtherFile(project, data[0]);
       if (otherFile == null) return null;
+      if (!data[0].isValid()) return null;
       return DiffRequestFactory.getInstance().createFromFiles(project, data[0], otherFile);
     }
     else {
@@ -118,8 +120,8 @@ public class CompareFilesAction extends BaseShowDiffAction {
     String key;
 
     Type type = getType(file);
-    if (type == Type.DIRECTORY || type == Type.ARCHIEVE) {
-      descriptor = new FileChooserDescriptor(false, true, true, false, false, false);
+    if (type == Type.DIRECTORY || type == Type.ARCHIVE) {
+      descriptor = new FileChooserDescriptor(false, true, true, true, true, false);
       key = LAST_USED_FOLDER_KEY;
     }
     else {
@@ -127,8 +129,7 @@ public class CompareFilesAction extends BaseShowDiffAction {
       key = LAST_USED_FILE_KEY;
     }
     VirtualFile selectedFile = getDefaultSelection(project, key, file);
-    VirtualFile[] result = FileChooser.chooseFiles(descriptor, project, selectedFile);
-    VirtualFile otherFile = result.length == 1 ? result[0] : null;
+    VirtualFile otherFile = FileChooser.chooseFile(descriptor, project, selectedFile);
     if (otherFile != null) updateDefaultSelection(project, key, otherFile);
     return otherFile;
   }
@@ -151,9 +152,9 @@ public class CompareFilesAction extends BaseShowDiffAction {
   private static Type getType(@Nullable VirtualFile file) {
     if (file == null) return Type.FILE;
     if (file.isDirectory()) return Type.DIRECTORY;
-    if (file.getFileType() instanceof ArchiveFileType) return Type.ARCHIEVE;
+    if (file.getFileType() instanceof ArchiveFileType) return Type.ARCHIVE;
     return Type.FILE;
   }
 
-  private enum Type {FILE, DIRECTORY, ARCHIEVE}
+  private enum Type {FILE, DIRECTORY, ARCHIVE}
 }

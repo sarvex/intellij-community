@@ -22,7 +22,10 @@
 package com.intellij.compiler.impl;
 
 import com.intellij.CommonBundle;
-import com.intellij.compiler.*;
+import com.intellij.compiler.CompilerWorkspaceConfiguration;
+import com.intellij.compiler.ModuleCompilerUtil;
+import com.intellij.compiler.ModuleSourceSet;
+import com.intellij.compiler.ProblemsView;
 import com.intellij.compiler.progress.CompilerTask;
 import com.intellij.compiler.server.BuildManager;
 import com.intellij.compiler.server.DefaultMessageHandler;
@@ -73,6 +76,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 import org.jetbrains.jps.api.CmdlineProtoUtil;
 import org.jetbrains.jps.api.CmdlineRemoteProto;
+import org.jetbrains.jps.api.GlobalOptions;
 import org.jetbrains.jps.api.TaskFuture;
 import org.jetbrains.jps.model.java.JavaSourceRootType;
 
@@ -318,6 +322,7 @@ public class CompileDriver {
               ArtifactsCompiler.addWrittenPaths(compileContext, writtenArtifactOutputPaths);
             }
             break;
+
           case BUILD_COMPLETED:
             ExitStatus status = ExitStatus.SUCCESS;
             if (event.hasCompletionStatus()) {
@@ -339,6 +344,19 @@ public class CompileDriver {
             }
             compileContext.putUserDataIfAbsent(COMPILE_SERVER_BUILD_STATUS, status);
             break;
+
+          case CUSTOM_BUILDER_MESSAGE:
+             if (event.hasCustomBuilderMessage()) {
+               final CmdlineRemoteProto.Message.BuilderMessage.BuildEvent.CustomBuilderMessage message = event.getCustomBuilderMessage();
+               if (GlobalOptions.JPS_SYSTEM_BUILDER_ID.equals(message.getBuilderId()) && GlobalOptions.JPS_UNPROCESSED_FS_CHANGES_MESSAGE_ID.equals(message.getMessageType())) {
+                 final String text = message.getMessageText();
+                 if (!StringUtil.isEmpty(text)) {
+                   compileContext.addMessage(CompilerMessageCategory.INFORMATION, text, null, -1, -1);
+                 }
+               }
+             }
+             break;
+
         }
       }
     });
@@ -415,6 +433,9 @@ public class CompileDriver {
             }
           }
         }
+        catch (ProcessCanceledException ignored) {
+          compileContext.putUserDataIfAbsent(COMPILE_SERVER_BUILD_STATUS, ExitStatus.CANCELLED);
+        }
         catch (Throwable e) {
           LOG.error(e); // todo
         }
@@ -471,25 +492,8 @@ public class CompileDriver {
         if (!outputs.isEmpty()) {
           final ProgressIndicator indicator = compileContext.getProgressIndicator();
           indicator.setText("Synchronizing output directories...");
-          CompilerUtil.refreshOutputDirectories(outputs, _status == ExitStatus.CANCELLED);
+          CompilerUtil.refreshOutputDirectories(outputs, false);
           indicator.setText("");
-        }
-      }
-
-      if (compileContext.isAnnotationProcessorsEnabled() && !myProject.isDisposed()) {
-        final Set<File> genSourceRoots = new THashSet<File>(FileUtil.FILE_HASHING_STRATEGY);
-        final CompilerConfiguration config = CompilerConfiguration.getInstance(myProject);
-        for (Module module : affectedModules) {
-          if (config.getAnnotationProcessingConfiguration(module).isEnabled()) {
-            final String path = CompilerPaths.getAnnotationProcessorsGenerationPath(module);
-            if (path != null) {
-              genSourceRoots.add(new File(path));
-            }
-          }
-        }
-        if (!genSourceRoots.isEmpty()) {
-          // refresh generates source roots asynchronously; needed for error highlighting update
-          LocalFileSystem.getInstance().refreshIoFiles(genSourceRoots, true, true, null);
         }
       }
     }
@@ -629,7 +633,10 @@ public class CompileDriver {
     }
     finally {
       progressIndicator.popState();
-      WindowManager.getInstance().getStatusBar(myProject).setInfo("");
+      StatusBar statusBar = WindowManager.getInstance().getStatusBar(myProject);
+      if (statusBar != null) {
+        statusBar.setInfo("");
+      }
       if (progressIndicator instanceof CompilerTask) {
         ApplicationManager.getApplication().invokeLater(new Runnable() {
           public void run() {

@@ -1,4 +1,20 @@
 /*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
  * User: anna
  * Date: 29-Jan-2007
  */
@@ -16,6 +32,7 @@ import com.intellij.codeInspection.ui.RefElementNode;
 import com.intellij.openapi.actionSystem.ActionGroup;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.Separator;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.diagnostic.Logger;
@@ -33,6 +50,8 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.tree.TreeNode;
 import javax.swing.tree.TreePath;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Set;
 
 public class SuppressActionWrapper extends ActionGroup {
@@ -44,7 +63,7 @@ public class SuppressActionWrapper extends ActionGroup {
 
   public SuppressActionWrapper(@NotNull final Project project,
                                @NotNull final InspectionToolWrapper toolWrapper,
-                               @NotNull final TreePath[] paths) {
+                               @NotNull final TreePath... paths) {
     super(InspectionsBundle.message("suppress.inspection.problem"), false);
     myProject = project;
     myManager = (InspectionManagerEx)InspectionManager.getInstance(myProject);
@@ -67,21 +86,35 @@ public class SuppressActionWrapper extends ActionGroup {
 
   @Override
   @NotNull
-  public SuppressTreeAction[] getChildren(@Nullable final AnActionEvent e) {
+  public AnAction[] getChildren(@Nullable final AnActionEvent e) {
     final SuppressIntentionAction[] suppressActions = InspectionManagerEx.getSuppressActions(myToolWrapper);
     if (suppressActions == null || suppressActions.length == 0) return new SuppressTreeAction[0];
-    final SuppressTreeAction[] actions = new SuppressTreeAction[suppressActions.length];
+    final AnAction[] actions = new AnAction[suppressActions.length + 1];
     for (int i = 0; i < suppressActions.length; i++) {
       final SuppressIntentionAction suppressAction = suppressActions[i];
       actions[i] = new SuppressTreeAction(suppressAction);
     }
+    actions[suppressActions.length] = Separator.getInstance();
+    Arrays.sort(actions, new Comparator<AnAction>() {
+      @Override
+      public int compare(AnAction a1, AnAction a2) {
+        return getWeight(a1) - getWeight(a2);
+      }
+
+      public int getWeight(AnAction a) {
+        return a instanceof Separator ? 0 : ((SuppressTreeAction)a).isSuppressAll() ? 1 : -1;
+      }
+    });
     return actions;
   }
 
-  private boolean suppress(final PsiElement element,
+  private boolean suppress(@NotNull final PsiElement element,
                            final CommonProblemDescriptor descriptor,
                            final SuppressIntentionAction action,
                            final RefEntity refEntity) {
+    if (action instanceof SuppressIntentionActionFromFix && !(descriptor instanceof ProblemDescriptor)) {
+      LOG.info("local suppression fix for specific problem descriptor:  " + myToolWrapper.getTool().getClass().getName());
+    }
     final PsiModificationTracker tracker = PsiManager.getInstance(myProject).getModificationTracker();
     ApplicationManager.getApplication().runWriteAction(new Runnable() {
       @Override
@@ -199,6 +232,10 @@ public class SuppressActionWrapper extends ActionGroup {
         }
       }
       return false;
+    }
+
+    public boolean isSuppressAll() {
+      return mySuppressAction.isSuppressAll();
     }
   }
 }

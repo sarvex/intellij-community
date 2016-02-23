@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@ import com.intellij.openapi.actionSystem.DataProvider;
 import com.intellij.openapi.actionSystem.EmptyAction;
 import com.intellij.openapi.actionSystem.IdeActions;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.command.undo.UndoUtil;
 import com.intellij.openapi.editor.*;
-import com.intellij.openapi.editor.actions.EditorActionUtil;
 import com.intellij.openapi.editor.colors.EditorColorsManager;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.editor.ex.FocusChangeListener;
@@ -43,19 +43,20 @@ import com.intellij.openapi.fileEditor.impl.FileEditorManagerImpl;
 import com.intellij.openapi.fileTypes.SyntaxHighlighter;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
+import com.intellij.openapi.util.Computable;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiManager;
-import com.intellij.psi.SingleRootFileViewProvider;
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
 import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.testFramework.LightVirtualFile;
 import com.intellij.ui.components.JBScrollBar;
 import com.intellij.util.DocumentUtil;
 import com.intellij.util.FileContentUtil;
 import com.intellij.util.ObjectUtils;
-import com.intellij.util.PairFunction;
+import com.intellij.util.messages.MessageBusConnection;
 import com.intellij.util.ui.AbstractLayoutManager;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
@@ -75,23 +76,20 @@ import java.util.Collections;
  * In case of REPL consider to use {@link LanguageConsoleBuilder}
  */
 public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageConsoleView, DataProvider {
-  private final Project myProject;
+  private final Helper myHelper;
 
   private final EditorEx myConsoleEditor;
   private final EditorEx myHistoryViewer;
   private final Document myEditorDocument;
-  private final VirtualFile myVirtualFile;
-
-  protected PsiFile myFile; // will change on language change
 
   private final JPanel myPanel = new JPanel(new MyLayout());
-  private String myTitle;
   @Nullable
   private String myPrompt = "> ";
   private ConsoleViewContentType myPromptAttributes = ConsoleViewContentType.USER_INPUT;
 
   private EditorEx myCurrentEditor;
 
+  private final MessageBusConnection myBusConnection;
   private final FocusChangeListener myFocusListener = new FocusChangeListener() {
     @Override
     public void focusGained(Editor editor) {
@@ -107,52 +105,46 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
   };
 
   public LanguageConsoleImpl(@NotNull Project project, @NotNull String title, @NotNull Language language) {
-    this(project, title, new LightVirtualFile(title, language, ""));
+    this(new Helper(project, new LightVirtualFile(title, language, "")));
   }
 
   public LanguageConsoleImpl(@NotNull Project project, @NotNull String title, @NotNull VirtualFile virtualFile) {
-    this(project, title, virtualFile, null);
+    this(new Helper(project, virtualFile).setTitle(title));
   }
 
-  LanguageConsoleImpl(@NotNull Project project,
-                      @NotNull String title,
-                      @NotNull VirtualFile lightFile,
-                      @Nullable PairFunction<VirtualFile, Project, PsiFile> psiFileFactory) {
-    super(project, GlobalSearchScope.allScope(project), true, true);
-    myProject = project;
-    myTitle = title;
-    myVirtualFile = lightFile;
+  public LanguageConsoleImpl(@NotNull Helper helper) {
+    super(helper.project, GlobalSearchScope.allScope(helper.project), true, true);
+    myHelper = helper;
     EditorFactory editorFactory = EditorFactory.getInstance();
-    myEditorDocument = FileDocumentManager.getInstance().getDocument(lightFile);
-    if (myEditorDocument == null) {
-      throw new AssertionError("no document for: " + lightFile);
-    }
-    myFile = psiFileFactory == null ? createFile(myProject, myVirtualFile) : psiFileFactory.fun(myVirtualFile, myProject);
-    myConsoleEditor = (EditorEx)editorFactory.createEditor(myEditorDocument, myProject);
+    myEditorDocument = helper.getDocument();
+    myConsoleEditor = (EditorEx)editorFactory.createEditor(myEditorDocument, getProject());
     myConsoleEditor.addFocusListener(myFocusListener);
     myCurrentEditor = myConsoleEditor;
-    myHistoryViewer = (EditorEx)editorFactory.createViewer(((EditorFactoryImpl)editorFactory).createDocument(true), myProject);
+    Document historyDocument = ((EditorFactoryImpl)editorFactory).createDocument(true);
+    UndoUtil.disableUndoFor(historyDocument);
+    myHistoryViewer = (EditorEx)editorFactory.createViewer(historyDocument, getProject());
 
+    myBusConnection = getProject().getMessageBus().connect();
     // action shortcuts are not yet registered
     ApplicationManager.getApplication().invokeLater(new Runnable() {
       @Override
       public void run() {
         installEditorFactoryListener();
       }
-    }, myProject.getDisposed());
+    }, getProject().getDisposed());
   }
 
   @Override
-  protected EditorEx doCreateConsoleEditor() {
+  protected final EditorEx doCreateConsoleEditor() {
     return myHistoryViewer;
   }
 
   @Override
-  protected void disposeEditor() {
+  protected final void disposeEditor() {
   }
 
   @Override
-  protected JComponent createCenterComponent() {
+  protected final JComponent createCenterComponent() {
     initComponents();
     return myPanel;
   }
@@ -180,7 +172,7 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
     myPanel.removeAll();
 
     if (consoleEditorEnabled) {
-      FileEditorManager.getInstance(getProject()).closeFile(myVirtualFile);
+      FileEditorManager.getInstance(getProject()).closeFile(getVirtualFile());
 
       setHistoryScrollBarVisible(false);
       myPanel.add(myHistoryViewer.getComponent());
@@ -207,16 +199,16 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
   }
 
   private void setupComponents() {
-    setupEditorDefault(myConsoleEditor);
-    setupEditorDefault(myHistoryViewer);
+    myHelper.setupEditor(myConsoleEditor);
+    myHelper.setupEditor(myHistoryViewer);
 
     myHistoryViewer.getComponent().setMinimumSize(JBUI.emptySize());
     myHistoryViewer.getComponent().setPreferredSize(JBUI.emptySize());
     myHistoryViewer.setCaretEnabled(false);
 
-    myConsoleEditor.addEditorMouseListener(EditorActionUtil.createEditorPopupHandler(IdeActions.GROUP_CONSOLE_EDITOR_POPUP));
+    myConsoleEditor.setContextMenuGroupId(IdeActions.GROUP_CONSOLE_EDITOR_POPUP);
     myConsoleEditor.setHighlighter(
-      EditorHighlighterFactory.getInstance().createEditorHighlighter(myVirtualFile, myConsoleEditor.getColorsScheme(), myProject));
+      EditorHighlighterFactory.getInstance().createEditorHighlighter(getVirtualFile(), myConsoleEditor.getColorsScheme(), getProject()));
 
     myConsoleEditor.getScrollPane().getHorizontalScrollBar().setModel(
       myHistoryViewer.getScrollPane().getHorizontalScrollBar().getModel());
@@ -235,22 +227,8 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
     EmptyAction.registerActionShortcuts(myHistoryViewer.getComponent(), myConsoleEditor.getComponent());
   }
 
-  public boolean isConsoleEditorEnabled() {
+  public final boolean isConsoleEditorEnabled() {
     return myPanel.getComponentCount() > 1;
-  }
-
-  protected void setupEditorDefault(@NotNull EditorEx editor) {
-    ConsoleViewUtil.setupConsoleEditor(editor, false, false);
-    editor.getContentComponent().setFocusCycleRoot(false);
-    editor.setHorizontalScrollbarVisible(true);
-    editor.setVerticalScrollbarVisible(true);
-    editor.setBorder(null);
-
-    final EditorSettings editorSettings = editor.getSettings();
-    if (myHistoryViewer != editor) {
-      editorSettings.setAdditionalLinesCount(1);
-    }
-    editorSettings.setAdditionalColumnsCount(1);
   }
 
   @Nullable
@@ -277,7 +255,9 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
     UIUtil.invokeAndWaitIfNeeded(new Runnable() {
       @Override
       public void run() {
-        myConsoleEditor.setPrefixTextAndAttributes(prompt, myPromptAttributes.getAttributes());
+        if (!myConsoleEditor.isDisposed()) {
+          myConsoleEditor.setPrefixTextAndAttributes(prompt, myPromptAttributes.getAttributes());
+        }
       }
     });
   }
@@ -292,42 +272,37 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
   }
 
   @NotNull
-  public PsiFile getFile() {
-    return myFile;
+  public final PsiFile getFile() {
+    return myHelper.getFileSafe();
   }
 
   @NotNull
-  public VirtualFile getVirtualFile() {
-    return myVirtualFile;
+  public final VirtualFile getVirtualFile() {
+    return myHelper.virtualFile;
   }
 
   @NotNull
-  public EditorEx getHistoryViewer() {
+  public final EditorEx getHistoryViewer() {
     return myHistoryViewer;
   }
 
   @NotNull
-  public Document getEditorDocument() {
+  public final Document getEditorDocument() {
     return myEditorDocument;
   }
 
   @NotNull
-  public EditorEx getConsoleEditor() {
+  public final EditorEx getConsoleEditor() {
     return myConsoleEditor;
   }
 
   @NotNull
-  public Project getProject() {
-    return myProject;
-  }
-
-  @NotNull
   public String getTitle() {
-    return myTitle;
+    return myHelper.title;
   }
 
   public void setTitle(@NotNull String title) {
-    myTitle = title;
+    myHelper.setTitle(title);
   }
 
   public String addToHistory(@NotNull TextRange textRange, @NotNull EditorEx editor, boolean preserveMarkup) {
@@ -451,14 +426,17 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
     // double dispose via RunContentDescriptor and ContentImpl
     if (myHistoryViewer.isDisposed()) return;
 
+    myBusConnection.deliverImmediately();
+    Disposer.dispose(myBusConnection);
+
     EditorFactory editorFactory = EditorFactory.getInstance();
     editorFactory.releaseEditor(myConsoleEditor);
     editorFactory.releaseEditor(myHistoryViewer);
 
     if (getProject().isOpen()) {
       FileEditorManager editorManager = FileEditorManager.getInstance(getProject());
-      if (editorManager.isFileOpen(myVirtualFile)) {
-        editorManager.closeFile(myVirtualFile);
+      if (editorManager.isFileOpen(getVirtualFile())) {
+        editorManager.closeFile(getVirtualFile());
       }
     }
   }
@@ -466,7 +444,11 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
   @Nullable
   @Override
   public Object getData(@NonNls String dataId) {
-    if (OpenFileDescriptor.NAVIGATE_IN_EDITOR.is(dataId)) {
+    Object data = super.getData(dataId);
+    if (data != null) {
+      return data;
+    }
+    else if (OpenFileDescriptor.NAVIGATE_IN_EDITOR.is(dataId)) {
       return myConsoleEditor;
     }
     else if (getProject().isInitialized()) {
@@ -480,7 +462,7 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
     FileEditorManagerAdapter fileEditorListener = new FileEditorManagerAdapter() {
       @Override
       public void fileOpened(@NotNull FileEditorManager source, @NotNull VirtualFile file) {
-        if (myConsoleEditor == null || !Comparing.equal(file, myVirtualFile)) {
+        if (myConsoleEditor == null || !Comparing.equal(file, getVirtualFile())) {
           return;
         }
 
@@ -501,7 +483,7 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
 
       @Override
       public void fileClosed(@NotNull FileEditorManager source, @NotNull VirtualFile file) {
-        if (!Comparing.equal(file, myVirtualFile)) {
+        if (!Comparing.equal(file, getVirtualFile())) {
           return;
         }
         if (!Boolean.TRUE.equals(file.getUserData(FileEditorManagerImpl.CLOSING_TO_REOPEN))) {
@@ -511,10 +493,10 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
         }
       }
     };
-    myProject.getMessageBus().connect(this).subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, fileEditorListener);
+    myBusConnection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, fileEditorListener);
     FileEditorManager editorManager = FileEditorManager.getInstance(getProject());
-    if (editorManager.isFileOpen(myVirtualFile)) {
-      fileEditorListener.fileOpened(editorManager, myVirtualFile);
+    if (editorManager.isFileOpen(getVirtualFile())) {
+      fileEditorListener.fileOpened(editorManager, getVirtualFile());
     }
   }
 
@@ -525,18 +507,12 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
 
   @NotNull
   public Language getLanguage() {
-    return myFile.getLanguage();
+    return getFile().getLanguage();
   }
 
   public void setLanguage(@NotNull Language language) {
-    if (!(myVirtualFile instanceof LightVirtualFile)) {
-      throw new UnsupportedOperationException();
-    }
-    LightVirtualFile virtualFile = (LightVirtualFile)myVirtualFile;
-    virtualFile.setLanguage(language);
-    virtualFile.setContent(myEditorDocument, myEditorDocument.getText(), false);
-    FileContentUtil.reparseFiles(myProject, Collections.<VirtualFile>singletonList(virtualFile), false);
-    myFile = createFile(myProject, virtualFile);
+    myHelper.setLanguage(language);
+    myHelper.getFileSafe();
   }
 
   public void setInputText(@NotNull final String query) {
@@ -548,26 +524,75 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
     });
   }
 
-  @NotNull
-  protected PsiFile createFile(@NotNull Project project, @NotNull VirtualFile virtualFile) {
-    PsiFile file = PsiManager.getInstance(project).findFile(virtualFile);
-    if (file == null) {
-      Language language = new SingleRootFileViewProvider(PsiManager.getInstance(project), virtualFile).getBaseLanguage();
-      throw new AssertionError(String.format("no PSI for '%s'\nfile valid=%s, fileType=%s, language=%s",
-                                             virtualFile.getName(),
-                                             virtualFile.isValid(),
-                                             virtualFile.getFileType(),
-                                             language));
-    }
-    return file;
-  }
-
   boolean isHistoryViewerForceAdditionalColumnsUsage() {
     return true;
   }
 
   int getMinHistoryLineCount() {
     return 2;
+  }
+
+  public static class Helper {
+    public final Project project;
+    public final VirtualFile virtualFile;
+    String title;
+    PsiFile file;
+
+    public Helper(@NotNull Project project, @NotNull VirtualFile virtualFile) {
+      this.project = project;
+      this.virtualFile = virtualFile;
+      title = virtualFile.getName();
+    }
+
+    public Helper setTitle(String title) {
+      this.title = title;
+      return this;
+    }
+
+    @NotNull
+    public PsiFile getFile() {
+      return ApplicationManager.getApplication().runReadAction(new Computable<PsiFile>() {
+        @Override
+        public PsiFile compute() {
+          return PsiUtilCore.getPsiFile(project, virtualFile);
+        }
+      });
+    }
+
+    @NotNull
+    public Document getDocument() {
+      Document document = FileDocumentManager.getInstance().getDocument(virtualFile);
+      if (document == null) {
+        throw new AssertionError("no document for: " + virtualFile);
+      }
+      return document;
+    }
+
+    public void setLanguage(Language language) {
+      if (!(virtualFile instanceof LightVirtualFile)) {
+        throw new UnsupportedOperationException();
+      }
+      ((LightVirtualFile)virtualFile).setLanguage(language);
+      ((LightVirtualFile)virtualFile).setContent(getDocument(), getDocument().getText(), false);
+      FileContentUtil.reparseFiles(project, Collections.singletonList(virtualFile), false);
+    }
+
+    public void setupEditor(@NotNull EditorEx editor) {
+      ConsoleViewUtil.setupConsoleEditor(editor, false, false);
+      editor.getContentComponent().setFocusCycleRoot(false);
+      editor.setHorizontalScrollbarVisible(true);
+      editor.setVerticalScrollbarVisible(true);
+      editor.setBorder(null);
+
+      EditorSettings editorSettings = editor.getSettings();
+      editorSettings.setAdditionalLinesCount(1);
+      editorSettings.setAdditionalColumnsCount(1);
+    }
+
+    @NotNull
+    PsiFile getFileSafe() {
+      return file == null || !file.isValid() ? file = getFile() : file;
+    }
   }
 
   private class MyLayout extends AbstractLayoutManager {
@@ -628,10 +653,23 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
         newInputHeight = panelSize.height - historyPreferredHeight;
       }
 
+      int oldHistoryHeight = history.getComponent().getHeight();
       int newHistoryHeight = panelSize.height - newInputHeight;
-      // apply
+      int delta = newHistoryHeight - ((newHistoryHeight / history.getLineHeight()) * history.getLineHeight());
+      newHistoryHeight -= delta;
+      newInputHeight += delta;
+
+      // apply new bounds & scroll history viewer
       input.getComponent().setBounds(0, newHistoryHeight, panelSize.width, newInputHeight);
       history.getComponent().setBounds(0, 0, panelSize.width, newHistoryHeight);
+      input.getComponent().doLayout();
+      history.getComponent().doLayout();
+      if (newHistoryHeight < oldHistoryHeight) {
+        JViewport viewport = history.getScrollPane().getViewport();
+        Point position = viewport.getViewPosition();
+        position.translate(0, oldHistoryHeight - newHistoryHeight);
+        viewport.setViewPosition(position);
+      }
     }
   }
 

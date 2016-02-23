@@ -18,6 +18,7 @@ package com.intellij.openapi.wm.impl;
 import com.intellij.featureStatistics.FeatureUsageTracker;
 import com.intellij.ide.actions.ActivateToolWindowAction;
 import com.intellij.ide.ui.UISettings;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.ActionGroup;
 import com.intellij.openapi.actionSystem.ActionManager;
 import com.intellij.openapi.actionSystem.ActionPlaces;
@@ -46,7 +47,7 @@ import java.awt.image.BufferedImage;
  * @author Eugene Belyaev
  * @author Vladimir Kondratyev
  */
-public final class StripeButton extends AnchoredButton implements ActionListener {
+public final class StripeButton extends AnchoredButton implements ActionListener, Disposable {
   private final Color ourBackgroundColor = new Color(247, 243, 239);
 
   /**
@@ -125,7 +126,7 @@ public final class StripeButton extends AnchoredButton implements ActionListener
         processDrag(e);
       }
     });
-    KeymapManager.getInstance().addKeymapManagerListener(myKeymapListener);
+    KeymapManager.getInstance().addKeymapManagerListener(myKeymapListener, this);
   }
 
   
@@ -300,10 +301,10 @@ public final class StripeButton extends AnchoredButton implements ActionListener
 
   public void apply(@NotNull WindowInfoImpl info) {
     setSelected(info.isVisible() || info.isActive());
+    updateState();
   }
 
-  void dispose() {
-    KeymapManager.getInstance().removeKeymapManagerListener(myKeymapListener);
+  public void dispose() {
   }
 
   private void showPopup(final Component component, final int x, final int y) {
@@ -352,10 +353,10 @@ public final class StripeButton extends AnchoredButton implements ActionListener
     ToolWindowImpl window = myDecorator.getToolWindow();
     boolean toShow = window.isAvailable() || window.isPlaceholderMode();
     if (UISettings.getInstance().ALWAYS_SHOW_WINDOW_BUTTONS) {
-      setVisible(true);
+      setVisible(window.isShowStripeButton() || isSelected());
     }
     else {
-      setVisible(toShow);
+      setVisible(toShow && (window.isShowStripeButton() || isSelected()));
     }
     setEnabled(toShow && !window.isPlaceholderMode());
   }

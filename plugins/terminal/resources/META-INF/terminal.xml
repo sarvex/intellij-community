@@ -1,4 +1,6 @@
 <idea-plugin version="2">
+  <depends optional="true" config-file="terminal-for-remote-servers.xml">com.intellij.modules.remoteServers</depends>
+
   <extensions defaultExtensionNs="com.intellij">
     <toolWindow id="Terminal" anchor="bottom" icon="TerminalIcons.OpenTerminal_13x13"
                 factoryClass="org.jetbrains.plugins.terminal.TerminalToolWindowFactory" secondary="false"/>
@@ -6,6 +8,8 @@
     <projectConfigurable groupId="tools" groupWeight="130" displayName="Terminal" id="terminal" instance="org.jetbrains.plugins.terminal.TerminalOptionsConfigurable"/>
 
     <fileEditorProvider implementation="org.jetbrains.plugins.terminal.vfs.TerminalSessionEditorProvider"/>
+
+    <applicationService serviceImplementation="org.jetbrains.plugins.terminal.TerminalOptionsProvider"/>
   </extensions>
 
   <project-components>
@@ -14,11 +18,4 @@
       <implementation-class>org.jetbrains.plugins.terminal.TerminalView</implementation-class>
     </component>
   </project-components>
-
-  <application-components>
-    <component>
-      <interface-class>org.jetbrains.plugins.terminal.TerminalOptionsProvider</interface-class>
-      <implementation-class>org.jetbrains.plugins.terminal.TerminalOptionsProvider</implementation-class>
-    </component>
-  </application-components>
 </idea-plugin>

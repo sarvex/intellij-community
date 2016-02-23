@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,12 @@ import com.intellij.execution.process.OSProcessHandler;
 import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessListener;
+import com.intellij.openapi.progress.ProcessCanceledException;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -117,28 +121,40 @@ public abstract class GitTextHandler extends GitHandler {
 
   protected void waitForProcess() {
     if (myHandler != null) {
-      myHandler.waitFor();
+      ProgressIndicator indicator = ProgressManager.getInstance().getProgressIndicator();
+      while (!myHandler.waitFor(50)) {
+        try {
+          if (indicator != null) {
+            indicator.checkCanceled();
+          }
+        }
+        catch (ProcessCanceledException pce) {
+          myHandler.destroyProcess();
+          throw pce;
+        }
+      }
     }
   }
 
   public ProcessHandler createProcess(@NotNull GeneralCommandLine commandLine) throws ExecutionException {
-    Process process = commandLine.createProcess();
-    return new MyOSProcessHandler(process, commandLine, getCharset());
+    commandLine.setCharset(getCharset());
+    return new MyOSProcessHandler(commandLine);
   }
 
   private static class MyOSProcessHandler extends OSProcessHandler {
-    @NotNull
-    private final Charset myCharset;
-
-    public MyOSProcessHandler(Process process, GeneralCommandLine commandLine, @NotNull Charset charset) {
-      super(process, commandLine.getCommandLineString());
-      myCharset = charset;
+    private MyOSProcessHandler(@NotNull GeneralCommandLine commandLine) throws ExecutionException {
+      super(commandLine);
     }
 
     @NotNull
     @Override
     public Charset getCharset() {
       return myCharset;
+    }
+
+    @Override
+    protected boolean useNonBlockingRead() {
+      return !Registry.is("git.blocking.read");
     }
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,18 +19,24 @@ import com.intellij.openapi.util.Couple;
 import com.intellij.openapi.vfs.DeprecatedVirtualFileSystem;
 import com.intellij.openapi.vfs.StandardFileSystems;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.util.containers.ConcurrentFactoryMap;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.io.IOException;
-import java.util.HashMap;
 import java.util.Map;
 
 /**
  * @author yole
  */
 public class CoreJarFileSystem extends DeprecatedVirtualFileSystem {
-  private final Map<String, CoreJarHandler> myHandlers = new HashMap<String, CoreJarHandler>();
+  private final Map<String, CoreJarHandler> myHandlers = new ConcurrentFactoryMap<String, CoreJarHandler>() {
+    @Nullable
+    @Override
+    protected CoreJarHandler create(String key) {
+      return new CoreJarHandler(CoreJarFileSystem.this, key);
+    }
+  };
 
   @NotNull
   @Override
@@ -41,7 +47,7 @@ public class CoreJarFileSystem extends DeprecatedVirtualFileSystem {
   @Override
   public VirtualFile findFileByPath(@NotNull @NonNls String path) {
     Couple<String> pair = splitPath(path);
-    return getHandler(pair.first).findFileByPath(pair.second);
+    return myHandlers.get(pair.first).findFileByPath(pair.second);
   }
 
   @NotNull
@@ -55,16 +61,6 @@ public class CoreJarFileSystem extends DeprecatedVirtualFileSystem {
     return Couple.of(localPath, pathInJar);
   }
 
-  @NotNull
-  private CoreJarHandler getHandler(String localPath) {
-    CoreJarHandler handler = myHandlers.get(localPath);
-    if (handler == null) {
-      handler = new CoreJarHandler(this, localPath);
-      myHandlers.put(localPath, handler);
-    }
-    return handler;
-  }
-
   @Override
   public void refresh(boolean asynchronous) { }
 
@@ -73,39 +69,8 @@ public class CoreJarFileSystem extends DeprecatedVirtualFileSystem {
     return findFileByPath(path);
   }
 
-  @Override
-  protected void deleteFile(Object requestor, @NotNull VirtualFile vFile) throws IOException {
-    throw new UnsupportedOperationException("JarFileSystem is read-only");
-  }
-
-  @Override
-  protected void moveFile(Object requestor, @NotNull VirtualFile vFile, @NotNull VirtualFile newParent) throws IOException {
-    throw new UnsupportedOperationException("JarFileSystem is read-only");
-  }
-
-  @Override
-  protected void renameFile(Object requestor, @NotNull VirtualFile vFile, @NotNull String newName) throws IOException {
-    throw new UnsupportedOperationException("JarFileSystem is read-only");
-  }
-
-  @NotNull
-  @Override
-  protected VirtualFile createChildFile(Object requestor, @NotNull VirtualFile vDir, @NotNull String fileName) throws IOException {
-    throw new UnsupportedOperationException("JarFileSystem is read-only");
-  }
-
-  @NotNull
-  @Override
-  protected VirtualFile createChildDirectory(Object requestor, @NotNull VirtualFile vDir, @NotNull String dirName) throws IOException {
-    throw new UnsupportedOperationException("JarFileSystem is read-only");
-  }
-
-  @NotNull
-  @Override
-  protected VirtualFile copyFile(Object requestor,
-                                 @NotNull VirtualFile virtualFile,
-                                 @NotNull VirtualFile newParent,
-                                 @NotNull String copyName) throws IOException {
-    throw new UnsupportedOperationException("JarFileSystem is read-only");
+  @SuppressWarnings("unused")  // used in Kotlin
+  public void clearHandlersCache() {
+    myHandlers.clear();
   }
 }

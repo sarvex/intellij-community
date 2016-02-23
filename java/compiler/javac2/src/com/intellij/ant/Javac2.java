@@ -15,6 +15,7 @@
  */
 package com.intellij.ant;
 
+import com.intellij.compiler.instrumentation.FailSafeClassReader;
 import com.intellij.compiler.instrumentation.InstrumentationClassFinder;
 import com.intellij.compiler.instrumentation.InstrumenterClassWriter;
 import com.intellij.compiler.notNullVerification.NotNullVerifyingInstrumenter;
@@ -431,12 +432,12 @@ public class Javac2 extends Javac {
         try {
           final FileInputStream inputStream = new FileInputStream(file);
           try {
-            ClassReader reader = new ClassReader(inputStream);
+            FailSafeClassReader reader = new FailSafeClassReader(inputStream);
 
             int version = getClassFileVersion(reader);
             
             if (version >= Opcodes.V1_5 && !shouldBeSkippedByAnnotationPattern(reader)) {
-              ClassWriter writer = new InstrumenterClassWriter(getAsmClassWriterFlags(version), finder);
+              ClassWriter writer = new InstrumenterClassWriter(reader, getAsmClassWriterFlags(version), finder);
 
               if (NotNullVerifyingInstrumenter.processClassFile(reader, writer)) {
                 final FileOutputStream fileOutputStream = new FileOutputStream(path);

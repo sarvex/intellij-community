@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -389,5 +389,39 @@ def foo(anObject) {
 
 foo(5)
 ''')
+  }
+  
+  void testIntroduceFromInjection() {
+    doTest(IntroduceParameterRefactoring.REPLACE_FIELDS_WITH_GETTERS_NONE, false, false, null, false ,'''\
+def foo() {
+  def bar = "bar"
+  println "$<selection>bar</selection>"
+}
+''', '''\
+def foo(String anObject) {
+  def bar = "bar"
+  println "${anObject}"
+}
+''')
+  }
+
+  void testIntroduceFromStringByCaret() {
+    doTest IntroduceParameterRefactoring.REPLACE_FIELDS_WITH_GETTERS_NONE, false, false, null, false, '''\
+def test() {
+    createFile();
+}
+
+def createFile() {
+     new File("na<caret>me").createNewFile()
+}
+''', '''\
+def test() {
+    createFile("name");
+}
+
+def createFile(String anObject) {
+     new File(anObject).createNewFile()
+}
+'''
   }
 }

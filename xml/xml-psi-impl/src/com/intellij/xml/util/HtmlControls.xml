@@ -31,7 +31,7 @@
   <control name="cite" type="HtmlGenericControl" startTag="required" endTag="required" emptyAllowed="false"/>
   <control name="code" type="HtmlGenericControl" startTag="required" endTag="required" emptyAllowed="false"/>
   <control name="col" type="HtmlGenericControl" startTag="required" endTag="forbidden" emptyAllowed="true"/>
-  <control name="colGroup" type="HtmlGenericControl" startTag="required" endTag="optional" emptyAllowed="false" autoClosedBy="colGroup"/>
+  <control name="colGroup" type="HtmlGenericControl" startTag="required" endTag="optional" emptyAllowed="false" autoClosedBy="colGroup,thead,tbody,tfoot"/>
   
   <control name="DD" type="HtmlGenericControl" startTag="required" endTag="optional" emptyAllowed="false" autoClosedBy="dt, dd"/>
   <control name="del" type="HtmlGenericControl" startTag="required" endTag="required" emptyAllowed="false">
@@ -115,7 +115,7 @@
     <attribute name="usemap" type="%URL" />
   </control>
   <control name="ol" type="HtmlGenericControl" startTag="required" endTag="required" emptyAllowed="false"/>
-  <control name="option" type="HtmlGenericControl" startTag="required" endTag="optional" emptyAllowed="false" autoClosedBy="option"/>
+  <control name="option" type="HtmlGenericControl" startTag="required" endTag="optional" emptyAllowed="false" autoClosedBy="option,optgroup"/>
   
   <control name="P" type="HtmlGenericControl" startTag="required" endTag="optional" emptyAllowed="false" autoClosedBy="p"/>
   <control name="param" type="HtmlGenericControl" startTag="required" endTag="forbidden" emptyAllowed="true"/>

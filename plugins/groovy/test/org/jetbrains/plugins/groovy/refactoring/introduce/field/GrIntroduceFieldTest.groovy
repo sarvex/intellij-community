@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetbrains.plugins.groovy.refactoring.introduce.field;
-
+package org.jetbrains.plugins.groovy.refactoring.introduce.field
 
 import com.intellij.openapi.application.WriteAction
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiType
 import com.intellij.psi.impl.source.PostprocessReformattingAspect
+import com.intellij.refactoring.introduce.inplace.OccurrencesChooser.ReplaceChoice
 import org.jetbrains.annotations.NotNull
 import org.jetbrains.annotations.Nullable
+import org.jetbrains.plugins.groovy.GroovyFileType
 import org.jetbrains.plugins.groovy.LightGroovyTestCase
+import org.jetbrains.plugins.groovy.refactoring.introduce.IntroduceConstantTest
+import org.jetbrains.plugins.groovy.refactoring.introduce.field.GrIntroduceFieldSettings.Init
 import org.jetbrains.plugins.groovy.util.TestUtils
 
+import static com.intellij.refactoring.introduce.inplace.OccurrencesChooser.ReplaceChoice.ALL
 import static org.jetbrains.plugins.groovy.refactoring.introduce.field.GrIntroduceFieldSettings.Init.*
 
 /**
@@ -307,6 +311,29 @@ class GroovyLightProjectDescriptor  {
 ''', false, false, false, CUR_METHOD)
   }
 
+  void 'test GString closure injection and initialize in current method'() {
+    doTest '''\
+class GroovyLightProjectDescriptor  {
+    public void configureModule() {
+        print ("${<selection>mockGroovy2_1LibraryName</selection>}!/");
+    }
+
+    def getMockGroovy2_1LibraryName() {''}
+}
+''', '''\
+class GroovyLightProjectDescriptor  {
+    def f
+
+    public void configureModule() {
+        f = mockGroovy2_1LibraryName
+        print ("${f}!/");
+    }
+
+    def getMockGroovy2_1LibraryName() {''}
+}
+''', false, false, false, CUR_METHOD
+  }
+
   void testInitializeInMethodInThenBranch() {
     doTest('''\
 class A {
@@ -345,6 +372,229 @@ class A {
 }''', false, true, false, FIELD_DECLARATION, true, null)
   }
 
+  void 'test replace top level expression within constructor and initialize in current method'() {
+    doTest '''\
+class TestClass {
+    TestClass() {
+        new St<caret>ring()
+    }
+
+    TestClass(a) {
+    }
+}
+''', '''\
+class TestClass {
+    def f
+
+    TestClass() {
+        f = new String()
+    }
+
+    TestClass(a) {
+    }
+}
+''', false, false, false, CUR_METHOD
+  }
+
+  void 'test replace top level expression within constructor and initialize field'() {
+    doTest '''\
+class TestClass {
+    TestClass() {
+        new St<caret>ring()
+    }
+
+    TestClass(a) {
+    }
+}
+''', '''\
+class TestClass {
+    def f = new String()
+
+    TestClass() {
+        f
+    }
+
+    TestClass(a) {
+    }
+}
+''', false, false, false, FIELD_DECLARATION
+  }
+
+  void 'test replace top level expression within constructor and initialize in constructor'() {
+    doTest '''\
+class TestClass {
+    TestClass() {
+        new St<caret>ring()
+    }
+
+    TestClass(a) {
+    }
+}
+''', '''\
+class TestClass {
+    def f
+
+    TestClass() {
+        f = new String()
+    }
+
+    TestClass(a) {
+        f = new String()
+    }
+}
+''', false, false, false, CONSTRUCTOR
+  }
+
+  void 'test replace non top level expression within constructor and initialize in current method'() {
+    doTest '''\
+class TestClass {
+    TestClass() {
+        <selection>new String()</selection>.empty
+    }
+
+    TestClass(a) {
+    }
+}
+''', '''\
+class TestClass {
+    def f
+
+    TestClass() {
+        f = new String()
+        f.empty
+    }
+
+    TestClass(a) {
+    }
+}
+''', false, false, false, CUR_METHOD
+  }
+
+  void 'test replace non top level expression within constructor and initialize field'() {
+    doTest '''\
+class TestClass {
+    TestClass() {
+        <selection>new String()</selection>.empty
+    }
+
+    TestClass(a) {
+    }
+}
+''', '''\
+class TestClass {
+    def f = new String()
+
+    TestClass() {
+        f.empty
+    }
+
+    TestClass(a) {
+    }
+}
+''', false, false, false, FIELD_DECLARATION
+  }
+
+  void 'test replace non top level expression within constructor and initialize in constructor'() {
+    doTest '''\
+class TestClass {
+    TestClass() {
+        <selection>new String()</selection>.empty
+    }
+
+    TestClass(a) {
+    }
+}
+''', '''\
+class TestClass {
+    def f
+
+    TestClass() {
+        f = new String()
+        f.empty
+    }
+
+    TestClass(a) {
+        f = new String()
+    }
+}
+''', false, false, false, CONSTRUCTOR
+  }
+
+  void 'test replace string injection and initialize in constructor'() {
+    doTest '''\
+class TestClass {
+    TestClass() {
+        "${<selection>new String()</selection>}"
+    }
+    TestClass(a) {
+    }
+}
+''','''\
+class TestClass {
+    def f
+
+    TestClass() {
+        f = new String()
+        "${f}"
+    }
+    TestClass(a) {
+        f = new String()
+    }
+}
+''', false, false, false, CONSTRUCTOR
+  }
+
+  void 'test cannot initialize in current method when introducing from field initializer'() {
+    doTestInitInTarget '''
+class A {
+  def object = <selection>new Object()</selection>
+}
+''', EnumSet.of(CONSTRUCTOR, FIELD_DECLARATION)
+
+    doTestInitInTarget '''
+class A {
+  def object = <selection>new Object()</selection>
+  def object2 = new Object()
+}
+''', EnumSet.of(CONSTRUCTOR, FIELD_DECLARATION)
+
+    doTestInitInTarget '''
+class A {
+  def object = <selection>new Object()</selection>
+  def object2 = new Object()
+}
+''', EnumSet.of(CONSTRUCTOR, FIELD_DECLARATION), ReplaceChoice.NO
+  }
+
+  void 'test can not initialize in current method with some occurence outside'() {
+    doTestInitInTarget '''
+class A {
+  def field = new Object()
+  def foo() {
+    def a = <selection>new Object()</selection>
+  }
+}
+''', EnumSet.of(CONSTRUCTOR, FIELD_DECLARATION)
+  }
+
+  void 'test can initialize in current method from within method'() {
+    doTestInitInTarget '''
+class A {
+  def foo() {
+    def a = <selection>new Object()</selection>
+  }
+}
+''', EnumSet.of(CONSTRUCTOR, FIELD_DECLARATION, CUR_METHOD)
+
+    doTestInitInTarget '''
+class A {
+  def field = new Object()
+  def foo() {
+    def a = <selection>new Object()</selection>
+  }
+}
+''', EnumSet.of(CONSTRUCTOR, FIELD_DECLARATION, CUR_METHOD), ReplaceChoice.NO
+  }
 
   private void doTest(final boolean isStatic,
                       final boolean removeLocal,
@@ -382,5 +632,21 @@ class A {
     finally {
       accessToken.finish()
     }
+  }
+
+  private void doTestInitInTarget(String text, EnumSet<Init> expected = EnumSet.noneOf(Init), ReplaceChoice replaceChoice = ALL) {
+    myFixture.configureByText(GroovyFileType.GROOVY_FILE_TYPE, text)
+    def handler = new GrIntroduceFieldHandler()
+
+    def expression = IntroduceConstantTest.findExpression(myFixture)
+    def variable = IntroduceConstantTest.findVariable(myFixture)
+    def stringPart = IntroduceConstantTest.findStringPart(myFixture)
+    def scopes = handler.findPossibleScopes(expression, variable, stringPart, editor)
+    assert scopes.length == 1
+    def scope = scopes[0]
+
+    def context = handler.getContext(getProject(), myFixture.editor, expression, variable, stringPart, scope)
+    def initPlaces = GrInplaceFieldIntroducer.getApplicableInitPlaces(context, replaceChoice == ALL)
+    assert initPlaces == expected
   }
 }

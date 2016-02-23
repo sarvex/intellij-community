@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,9 @@
 
 package com.intellij.ui;
 
+import javax.accessibility.AccessibleAction;
+import javax.accessibility.AccessibleContext;
+import javax.accessibility.AccessibleRole;
 import com.intellij.ide.BrowserUtil;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.markup.EffectType;
@@ -35,6 +38,7 @@ import javax.swing.text.html.HTML;
 import javax.swing.text.html.HTMLEditorKit;
 import javax.swing.text.html.parser.ParserDelegator;
 import java.awt.*;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.io.StringReader;
@@ -66,16 +70,11 @@ public class HyperlinkLabel extends HighlightableComponent {
   }
 
   public HyperlinkLabel(String text) {
-    this(text,
-         PlatformColors.BLUE,
-         new JBColor(new NotNullProducer<Color>() {
-           @NotNull
-           @Override
-           public Color produce() {
-             return UIUtil.getLabelBackground();
-           }
-         }),
-         PlatformColors.BLUE);
+    this(text, UIUtil.getLabelBackground());
+  }
+  
+  public HyperlinkLabel(String text, Color background) {
+    this(text, PlatformColors.BLUE, background, PlatformColors.BLUE);
   }
 
   public HyperlinkLabel(String text, final Color textForegroundColor, final Color textBackgroundColor, final Color textEffectColor) {
@@ -112,6 +111,13 @@ public class HyperlinkLabel extends HighlightableComponent {
     this.setMinimumSize(preferredSize);
   }
 
+  @Override
+  protected void processComponentKeyEvent(KeyEvent event) {
+    if (event.getModifiers() == 0 && event.getKeyCode() == KeyEvent.VK_SPACE) {
+      event.consume();
+      fireHyperlinkEvent();
+    }
+  }
 
   protected void processMouseEvent(MouseEvent e) {
     if (e.getID() == MouseEvent.MOUSE_EXITED) {
@@ -241,5 +247,54 @@ public class HyperlinkLabel extends HighlightableComponent {
   @Override
   public void updateUI() {
     setFont(UIUtil.getLabelFont());
+  }
+
+  @Override
+  public AccessibleContext getAccessibleContext() {
+    if (accessibleContext == null) {
+      accessibleContext = new AccessibleHyperlinkLabel();
+    }
+    return accessibleContext;
+  }
+
+  /**
+   * Hyperlink accessibility: "HYPERLINK" role and expose a "click" action.
+   * @see javax.swing.AbstractButton.AccessibleAbstractButton
+   */
+  protected class AccessibleHyperlinkLabel extends AccessibleHighlightable implements AccessibleAction {
+    @Override
+    public AccessibleRole getAccessibleRole() {
+      return AccessibleRole.HYPERLINK;
+    }
+
+    @Override
+    public AccessibleAction getAccessibleAction() {
+      return this;
+    }
+
+    @Override
+    public int getAccessibleActionCount() {
+      return 1;
+    }
+
+    @Override
+    public String getAccessibleActionDescription(int i) {
+      if (i == 0) {
+        return UIManager.getString("AbstractButton.clickText");
+      }
+      else {
+        return null;
+      }
+    }
+
+    @Override
+    public boolean doAccessibleAction(int i) {
+      if (i == 0) {
+        doClick();
+        return true;
+      } else {
+        return false;
+      }
+    }
   }
 }

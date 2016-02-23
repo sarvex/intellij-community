@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ public abstract class MavenIndicesStressTest extends MavenIndicesTestCase implem
           isFinished.set(true);
         }
       }
-    });
+    },"maven index 1");
 
     Thread t2 = new Thread(new Runnable() {
       @Override
@@ -71,7 +71,7 @@ public abstract class MavenIndicesStressTest extends MavenIndicesTestCase implem
           fail();
         }
       }
-    });
+    }, "maven index 2");
 
     t1.start();
     t2.start();
@@ -86,6 +86,8 @@ public abstract class MavenIndicesStressTest extends MavenIndicesTestCase implem
     t2.join(100);
 
     indices.close();
+    t1.join();
+    t2.join();
   }
 
   public void test2() throws Exception {
@@ -130,6 +132,8 @@ public abstract class MavenIndicesStressTest extends MavenIndicesTestCase implem
 
     indices1.close();
     indices2.close();
+    t1.join();
+    t2.join();
   }
 
   private static Thread createThread(final MavenIndex index, final AtomicInteger finishedCount) {
@@ -147,7 +151,7 @@ public abstract class MavenIndicesStressTest extends MavenIndicesTestCase implem
           finishedCount.incrementAndGet();
         }
       }
-    });
+    },"maven test");
     return t2;
   }
 

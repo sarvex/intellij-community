@@ -15,10 +15,16 @@
  */
 package com.jetbrains.python;
 
+import com.intellij.openapi.projectRoots.Sdk;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
+import com.intellij.psi.impl.source.PsiFileImpl;
 import com.jetbrains.python.fixtures.PyMultiFileResolveTestCase;
 import com.jetbrains.python.fixtures.PyTestCase;
 import com.jetbrains.python.psi.*;
+import com.jetbrains.python.sdk.PythonSdkType;
+
+import java.util.List;
 
 /**
  * @author yole
@@ -39,23 +45,23 @@ public class PyMultiFileResolveTest extends PyMultiFileResolveTestCase {
   }
 
   public void testFromImport() {
-    ResolveResult[] results = doMultiResolve();
-    assertTrue(results.length == 2); // func and import stmt
-    PsiElement func_elt = results[0].getElement();
-    assertTrue("is PyFunction?", func_elt instanceof PyFunction);
-    assertEquals("named 'func'?", "func", ((PyFunction)func_elt).getName());
-    PsiElement import_elt = results[1].getElement();
-    assertTrue("is import?", import_elt instanceof PyImportElement);
+    List<PsiElement> results = doMultiResolve();
+    assertSize(2, results); // func and import stmt
+    PsiElement funcElt = results.get(0);
+    assertTrue("is PyFunction?", funcElt instanceof PyFunction);
+    assertEquals("named 'func'?", "func", ((PyFunction)funcElt).getName());
+    PsiElement importElt = results.get(1);
+    assertTrue("is import?", importElt instanceof PyImportElement);
   }
 
   public void testFromImportStar() {
-    ResolveResult[] results = doMultiResolve();
-    assertTrue(results.length == 2); // func and import-* stmt
-    PsiElement func_elt = results[0].getElement();
-    assertTrue("is PyFunction?", func_elt instanceof PyFunction);
-    assertEquals("named 'func'?", "func", ((PyFunction)func_elt).getName());
-    PsiElement import_elt = results[1].getElement();
-    assertTrue("is import?", import_elt instanceof PyStarImportElement);
+    List<PsiElement> results = doMultiResolve();
+    assertSize(2, results); // func and import-* stmt
+    PsiElement funcElt = results.get(0);
+    assertTrue("is PyFunction?", funcElt instanceof PyFunction);
+    assertEquals("named 'func'?", "func", ((PyFunction)funcElt).getName());
+    PsiElement importElt = results.get(1);
+    assertTrue("is import?", importElt instanceof PyStarImportElement);
   }
 
   public void testFromPackageImport() {
@@ -99,9 +105,9 @@ public class PyMultiFileResolveTest extends PyMultiFileResolveTestCase {
   }
 
   public void testTransitiveImport() {
-    ResolveResult[] results = doMultiResolve();
-    assertTrue(results.length == 2); // func and import stmt
-    PsiElement elt = results[0].getElement();
+    List<PsiElement> results = doMultiResolve();
+    assertSize(2, results); // func and import stmt
+    PsiElement elt = results.get(0);
     assertTrue("is target?", elt instanceof PyTargetExpression);
   }
 
@@ -114,13 +120,13 @@ public class PyMultiFileResolveTest extends PyMultiFileResolveTestCase {
   }
 
   public void testResolveInPkg() {
-    ResolveResult[] results = doMultiResolve();
-    assertTrue(results.length == 2); // func and import stmt
-    PsiElement func_elt = results[0].getElement();
-    assertTrue("is PyFunction?", func_elt instanceof PyFunction);
-    assertEquals("named 'token'?", "token", ((PyFunction)func_elt).getName());
-    PsiElement import_elt = results[1].getElement();
-    assertTrue("is import?", import_elt instanceof PyImportElement);
+    List<PsiElement> results = doMultiResolve();
+    assertSize(2, results); // func and import stmt
+    final PsiElement funcElt = results.get(0);
+    assertTrue("is PyFunction?", funcElt instanceof PyFunction);
+    assertEquals("named 'token'?", "token", ((PyFunction)funcElt).getName());
+    PsiElement importElt = results.get(1);
+    assertTrue("is import?", importElt instanceof PyImportElement);
   }
 
   public void testCircularImport() {
@@ -382,5 +388,44 @@ public class PyMultiFileResolveTest extends PyMultiFileResolveTestCase {
         assertResolvesTo(PyFile.class, "m1.py");
       }
     });
+  }
+
+  public void testKeywordArgument() {
+    final PsiFile file = prepareFile();
+    final PsiManager psiManager = myFixture.getPsiManager();
+    final VirtualFile dir = myFixture.findFileInTempDir("a.py");
+    final PsiFile psiFile = psiManager.findFile(dir);
+    //noinspection ConstantConditions   we need to unstub a.py here
+    ((PsiFileImpl)psiFile).calcTreeElement();
+    final PsiElement element;
+    try {
+      element = doResolve(file);
+    }
+    catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+    assertResolveResult(element, PyClass.class, "A");
+  }
+
+  public void testRelativeImport() {
+    assertResolvesTo(PyFile.class, "z.py");
+  }
+
+  // PY-11454
+  public void testImportSubModuleDunderAll() {
+    assertResolvesTo(PyFile.class, "m1.py");
+  }
+
+  // PY-11454
+  public void testFromImportSubModuleDunderAll() {
+    assertResolvesTo(PyFile.class, "m1.py");
+  }
+
+  // PY-17941
+  public void testEmptyModuleNamesake() {
+    final PsiElement module = doResolve();
+    assertNotNull(module);
+    final Sdk moduleSdk = PythonSdkType.findPythonSdk(myFixture.getModule());
+    assertFalse(PythonSdkType.isStdLib(module.getContainingFile().getVirtualFile(), moduleSdk));
   }
 }

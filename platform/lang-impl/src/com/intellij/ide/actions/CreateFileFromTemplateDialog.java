@@ -40,6 +40,7 @@ public class CreateFileFromTemplateDialog extends DialogWrapper {
   private JPanel myPanel;
   private JLabel myUpDownHint;
   private JLabel myKindLabel;
+  private JLabel myNameLabel;
 
   private ElementCreator myCreator;
   private InputValidator myInputValidator;
@@ -82,6 +83,14 @@ public class CreateFileFromTemplateDialog extends DialogWrapper {
     return myKindCombo;
   }
 
+  protected JLabel getKindLabel() {
+    return myKindLabel;
+  }
+
+  protected JLabel getNameLabel() {
+    return myNameLabel;
+  }
+
   private String getEnteredName() {
     final JTextField nameField = getNameField();
     final String text = nameField.getText().trim();
@@ -96,7 +105,7 @@ public class CreateFileFromTemplateDialog extends DialogWrapper {
 
   @Override
   protected void doOKAction() {
-    if (myCreator.tryCreate(getEnteredName()).length == 0) {
+    if (myCreator != null && myCreator.tryCreate(getEnteredName()).length == 0) {
       return;
     }
     super.doOKAction();

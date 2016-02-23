@@ -1,10 +1,11 @@
 import sys
 import imp
 import os
+import fnmatch
 
 helpers_dir = os.getenv("PYCHARM_HELPERS_DIR", sys.path[0])
 if sys.path[0] != helpers_dir:
-    sys.path.insert(0, helpers_dir)
+  sys.path.insert(0, helpers_dir)
 
 from tcunittest import TeamcityTestRunner
 from nose_helper import TestLoader, ContextSuite
@@ -37,6 +38,8 @@ def loadSource(fileName):
       cnt += 1
     moduleName = getModuleName(prefix, cnt)
   debug("/ Loading " + fileName + " as " + moduleName)
+  if os.path.isdir(fileName):
+    fileName = fileName + os.path.sep
   module = imp.load_source(moduleName, fileName)
   modules[moduleName] = module
   return module
@@ -44,24 +47,26 @@ def loadSource(fileName):
 def walkModules(modulesAndPattern, dirname, names):
   modules = modulesAndPattern[0]
   pattern = modulesAndPattern[1]
-  prog_list = [re.compile(pat.strip()) for pat in pattern.split(',')]
+  # fnmatch converts glob to regexp
+  prog_list = [re.compile(fnmatch.translate(pat.strip())) for pat in pattern.split(',')]
   for name in names:
     for prog in prog_list:
       if name.endswith(".py") and prog.match(name):
         modules.append(loadSource(os.path.join(dirname, name)))
 
-def loadModulesFromFolderRec(folder, pattern = "test.*"):
-  modules = []
-  if PYTHON_VERSION_MAJOR == 3:
-    prog_list = [re.compile(pat.strip()) for pat in pattern.split(',')]
-    for root, dirs, files in os.walk(folder):
-      for name in files:
-        for prog in prog_list:
-          if name.endswith(".py") and prog.match(name):
-            modules.append(loadSource(os.path.join(root, name)))
-  else:   # actually for jython compatibility
-    os.path.walk(folder, walkModules, (modules, pattern))
 
+# For default pattern see https://docs.python.org/2/library/unittest.html#test-discovery
+def loadModulesFromFolderRec(folder, pattern="test*.py"):
+  modules = []
+  # fnmatch converts glob to regexp
+  prog_list = [re.compile(fnmatch.translate(pat.strip())) for pat in pattern.split(',')]
+  for root, dirs, files in os.walk(folder):
+    files = [f for f in files if not f[0] == '.']
+    dirs[:] = [d for d in dirs if not d[0] == '.']
+    for name in files:
+      for prog in prog_list:
+        if name.endswith(".py") and prog.match(name):
+          modules.append(loadSource(os.path.join(root, name)))
   return modules
 
 testLoader = TestLoader()
@@ -101,14 +106,14 @@ if __name__ == "__main__":
     a = arg.split("::")
     if len(a) == 1:
       # From module or folder
-      a_splitted = a[0].split(";")
+      a_splitted = a[0].split("_args_separator_")  # ";" can't be used with bash, so we use "_args_separator_"
       if len(a_splitted) != 1:
         # means we have pattern to match against
-        if a_splitted[0].endswith(os.path.sep):
+        if os.path.isdir(a_splitted[0]):
           debug("/ from folder " + a_splitted[0] + ". Use pattern: " + a_splitted[1])
           modules = loadModulesFromFolderRec(a_splitted[0], a_splitted[1])
       else:
-        if a[0].endswith(os.path.sep):
+        if  os.path.isdir(a[0]):
           debug("/ from folder " + a[0])
           modules = loadModulesFromFolderRec(a[0])
         else:
@@ -128,7 +133,7 @@ if __name__ == "__main__":
         all.addTests(testLoader.loadTestsFromTestCase(getattr(module, a[1])))
       else:
         all.addTests(testLoader.loadTestsFromTestClass(getattr(module, a[1])),
-          getattr(module, a[1]))
+                     getattr(module, a[1]))
     else:
       # From method in class or from function
       debug("/ from method " + a[2] + " in testcase " + a[1] + " in " + a[0])

@@ -2,6 +2,7 @@ package com.siyeh.igtest.bugs.mismatched_collection_query_update;
 
 import java.util.*;
 import java.io.FileInputStream;
+import java.util.concurrent.BlockingQueue;
 
 public class MismatchedCollectionQueryUpdate {
     private Set foo = new HashSet();
@@ -188,6 +189,12 @@ public class MismatchedCollectionQueryUpdate {
   }
 
   List<String> boo() {return null;}
+
+  private List<? extends CharSequence> sequences = null;
+
+  {
+    sequences.stream().map(CharSequence ::length);
+  }
 }
 
 class MethReference<E> {
@@ -258,6 +265,37 @@ class CollectionsUser {
   public void add() {
     Collections.addAll(list, "Hello");
   }
+
+  Supplier<List<String>> i() {
+    final List<String> bas = new ArrayList<>();
+    bas.add("asdf");
+    return () -> bas;
+  }
+
+  Supplier<List<String>> j() {
+    final List<String> bas = new ArrayList<>();
+    bas.add("asdf");
+    return () -> {return bas;};
+  }
+
+  interface Supplier<T> {
+    T get();
+  }
+
+  void draining(BlockingQueue<Object> queue) {
+    List<Object> objects = new ArrayList<>();
+    queue.drainTo(objects);
+    // ...
+    for (Object obj : objects) {
+      //  ...
+    }
+  }
+
+  void merging() {
+    Map<String, String> map = new HashMap<>();
+    map.merge("key", "value", (i,j)->j);
+    map.forEach((k,v) -> System.out.println(k + " : " + v));
+  }
 }
 
 class SimpleAdd {
@@ -290,3 +328,8 @@ class EnumConstant {
     }
   }
 }
+class ToArray {{
+  List list = new ArrayList();
+  list.add("A thing");
+  list.toArray(new Object[1]);
+}}

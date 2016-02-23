@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package com.intellij.openapi.ui;
 
 import com.intellij.icons.AllIcons;
+import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 
@@ -23,7 +24,7 @@ import javax.swing.*;
 import java.awt.*;
 
 /**
- * This class represents non resizable, nonfocusable button with the
+ * This class represents non-resizable, non-focusable button with the
  * same height and length.
  */
 public class FixedSizeButton extends JButton {
@@ -45,10 +46,10 @@ public class FixedSizeButton extends JButton {
     }
     mySize = size;
     myComponent = component;
-    setMargin(new Insets(0, 0, 0, 0));
+    setMargin(JBUI.emptyInsets());
     setDefaultCapable(false);
     setFocusable(false);
-    if (((UIUtil.isUnderAquaLookAndFeel())&& size == -1) || UIUtil.isUnderIntelliJLaF() || UIUtil.isUnderDarcula()) {
+    if (((UIUtil.isUnderAquaLookAndFeel()) && size == -1) || UIUtil.isUnderIntelliJLaF() || UIUtil.isUnderDarcula()) {
       putClientProperty("JButton.buttonType", "square");
     }
   }
@@ -56,7 +57,7 @@ public class FixedSizeButton extends JButton {
   /**
    * Creates the <code>FixedSizeButton</code> with specified size.
    *
-   * @throws java.lang.IllegalArgumentException
+   * @throws IllegalArgumentException
    *          if <code>size</code> isn't
    *          positive integer number.
    */

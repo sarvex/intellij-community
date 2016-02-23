@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@ import com.intellij.codeInsight.CodeInsightBundle;
 import com.intellij.formatting.FormattingProgressTask;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.EditorFactory;
 import com.intellij.openapi.editor.SelectionModel;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
@@ -34,8 +36,11 @@ import com.intellij.util.diff.FilesTooBigForDiffException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.awt.*;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
 
@@ -54,7 +59,7 @@ public class ReformatCodeProcessor extends AbstractLayoutCodeProcessor {
   }
 
   public ReformatCodeProcessor(@NotNull PsiFile file, @NotNull SelectionModel selectionModel) {
-    super(file.getProject(), file, COMMAND_NAME, PROGRESS_TEXT, false);
+    super(file.getProject(), file, PROGRESS_TEXT, COMMAND_NAME, false);
     mySelectionModel = selectionModel;
   }
 
@@ -106,8 +111,6 @@ public class ReformatCodeProcessor extends AbstractLayoutCodeProcessor {
     throws IncorrectOperationException
   {
     return new FutureTask<Boolean>(new Callable<Boolean>() {
-      private Document myDocument;
-
       @Override
       public Boolean call() throws Exception {
         FormattingProgressTask.FORMATTING_CANCELLED_FLAG.set(false);
@@ -115,16 +118,25 @@ public class ReformatCodeProcessor extends AbstractLayoutCodeProcessor {
           Collection<TextRange> ranges = getRangesToFormat(processChangedTextOnly, file);
 
           CharSequence before = null;
+          Document document = PsiDocumentManager.getInstance(myProject).getDocument(file);
           if (getInfoCollector() != null) {
-            myDocument = PsiDocumentManager.getInstance(myProject).getDocument(file);
-            LOG.assertTrue(myDocument != null);
-            before = myDocument.getImmutableCharSequence();
+            LOG.assertTrue(document != null);
+            before = document.getImmutableCharSequence();
           }
 
-          CodeStyleManager.getInstance(myProject).reformatText(file, ranges);
+          CaretVisualPositionKeeper caretPositionKeeper = new CaretVisualPositionKeeper(document);
+
+          if (processChangedTextOnly) {
+            CodeStyleManager.getInstance(myProject).reformatTextWithContext(file, ranges);
+          }
+          else {
+            CodeStyleManager.getInstance(myProject).reformatText(file, ranges);
+          }
+
+          caretPositionKeeper.restoreOriginalLocation();
 
           if (before != null) {
-            prepareUserNotificationMessage(myDocument, before);
+            prepareUserNotificationMessage(document, before);
           }
 
           return !FormattingProgressTask.FORMATTING_CANCELLED_FLAG.get();
@@ -146,7 +158,7 @@ public class ReformatCodeProcessor extends AbstractLayoutCodeProcessor {
 
   private void prepareUserNotificationMessage(@NotNull Document document, @NotNull CharSequence before) {
     LOG.assertTrue(getInfoCollector() != null);
-    int number = FormatChangedTextUtil.calculateChangedLinesNumber(document, before);
+    int number = FormatChangedTextUtil.getInstance().calculateChangedLinesNumber(document, before);
     if (number > 0) {
       String message = "formatted " + number + " line" + (number > 1 ? "s" : "");
       getInfoCollector().setReformatCodeNotification(message);
@@ -160,9 +172,37 @@ public class ReformatCodeProcessor extends AbstractLayoutCodeProcessor {
     }
 
     if (processChangedTextOnly) {
-      return FormatChangedTextUtil.getChangedTextRanges(myProject, file);
+      return FormatChangedTextUtil.getInstance().getChangedTextRanges(myProject, file);
     }
 
     return !myRanges.isEmpty() ? myRanges : ContainerUtil.newArrayList(file.getTextRange());
+  }
+
+  private static class CaretVisualPositionKeeper {
+    private final Map<Editor, Integer> myCaretRelativeVerticalPositions = new HashMap<Editor, Integer>();
+    
+    private CaretVisualPositionKeeper(@Nullable Document document) {
+      if (document == null) return;
+  
+      Editor[] editors = EditorFactory.getInstance().getEditors(document);
+      for (Editor editor : editors) {
+        Rectangle visibleArea = editor.getScrollingModel().getVisibleArea();
+        Point pos = editor.visualPositionToXY(editor.getCaretModel().getVisualPosition());
+        int relativePosition = pos.y - visibleArea.y;
+        myCaretRelativeVerticalPositions.put(editor, relativePosition);
+      }
+    }
+    
+    private void restoreOriginalLocation() {
+      for (Map.Entry<Editor, Integer> e : myCaretRelativeVerticalPositions.entrySet()) {
+        Editor editor = e.getKey();
+        int relativePosition = e.getValue();
+        Point caretLocation = editor.visualPositionToXY(editor.getCaretModel().getVisualPosition());
+        int scrollOffset = caretLocation.y - relativePosition;
+        editor.getScrollingModel().disableAnimation();
+        editor.getScrollingModel().scrollVertically(scrollOffset);
+        editor.getScrollingModel().enableAnimation();
+      }
+    }
   }
 }

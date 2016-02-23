@@ -22,7 +22,6 @@ import com.intellij.openapi.project.ProjectLocator;
 import com.intellij.openapi.util.Couple;
 import com.intellij.openapi.vcs.ConstantZipperUpdater;
 import com.intellij.openapi.vcs.FilePath;
-import com.intellij.openapi.vcs.FilePathImpl;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.openapi.vfs.newvfs.BulkFileListener;
@@ -33,9 +32,7 @@ import com.intellij.util.containers.HashSet;
 import com.intellij.util.messages.MessageBusConnection;
 import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -127,16 +124,15 @@ public class VcsDirtyScopeVfsListener implements ApplicationComponent, BulkFileL
     final FileAndDirsCollector dirtyFilesAndDirs = new FileAndDirsCollector();
     // collect files and directories - sources of events
     for (VFileEvent event : events) {
-      final VirtualFile file = getFileForEvent(event);
-      if (file == null) {
+      if (event instanceof VFileCreateEvent) continue;
+      final VirtualFile file = event.getFile();
+
+      if (file == null || !file.isInLocalFileSystem()) {
         continue;
       }
 
-      if (event instanceof VFileDeleteEvent) {
-        if (!file.isInLocalFileSystem()) { continue; }
-        dirtyFilesAndDirs.add(file, true);
-      } else if (event instanceof VFileMoveEvent || event instanceof VFilePropertyChangeEvent) {
-        dirtyFilesAndDirs.add(file, true);
+      if (event instanceof VFileDeleteEvent || event instanceof VFileMoveEvent || event instanceof VFilePropertyChangeEvent) {
+        dirtyFilesAndDirs.add(file);
       }
     }
     // and notify VCSDirtyScopeManager
@@ -151,24 +147,24 @@ public class VcsDirtyScopeVfsListener implements ApplicationComponent, BulkFileL
     for (VFileEvent event : events) {
       if (event instanceof VFileDeleteEvent) continue;
 
-      final VirtualFile file = getFileForEvent(event);
-      if (file == null) {
+      final VirtualFile file = event.getFile();
+      if (file == null || !file.isInLocalFileSystem()) {
         continue;
       }
 
       if (event instanceof VFileContentChangeEvent || event instanceof VFileCopyEvent || event instanceof VFileCreateEvent ||
           event instanceof VFileMoveEvent) {
-        dirtyFilesAndDirs.add(file, false);
+        dirtyFilesAndDirs.add(file);
       } else if (event instanceof VFilePropertyChangeEvent) {
         final VFilePropertyChangeEvent pce = (VFilePropertyChangeEvent) event;
 
         if (pce.getPropertyName().equals(VirtualFile.PROP_NAME)) {
           // if a file was renamed, then the file is dirty and its parent directory is dirty too;
           // if a directory was renamed, all its children are recursively dirty, the parent dir is also dirty but not recursively.
-          dirtyFilesAndDirs.add(file, false);   // the file is dirty recursively
-          dirtyFilesAndDirs.addToFiles(file.getParent(), false); // directory is dirty alone. if parent is null - is checked in the method
+          dirtyFilesAndDirs.add(file);   // the file is dirty recursively
+          dirtyFilesAndDirs.addToFiles(file.getParent()); // directory is dirty alone. if parent is null - is checked in the method
         } else {
-          dirtyFilesAndDirs.addToFiles(file, false);
+          dirtyFilesAndDirs.addToFiles(file);
         }
       }
     }
@@ -181,11 +177,6 @@ public class VcsDirtyScopeVfsListener implements ApplicationComponent, BulkFileL
       myQueue.add(dirtyFilesAndDirs);
     }
     myZipperUpdater.request();
-  }
-
-  @Nullable
-  private static VirtualFile getFileForEvent(VFileEvent event) {
-    return VcsUtil.getVirtualFile(event.getPath());
   }
 
   /**
@@ -205,13 +196,10 @@ public class VcsDirtyScopeVfsListener implements ApplicationComponent, BulkFileL
      * @param file        file which path is to be added.
      * @param addToFiles  If true, then add to dirty files even if it is a directory. Otherwise add to the proper set.
      */
-    private void add(VirtualFile file, boolean addToFiles, final boolean forDelete) {
+    private void add(VirtualFile file, boolean addToFiles) {
       if (file == null) { return; }
       final boolean isDirectory = file.isDirectory();
-      // need to create FilePath explicitly without referring to VirtualFile because the path of VirtualFile may change
-      final FilePathImpl path = forDelete ? new FilePathImpl(new File(file.getPath()), isDirectory) :
-        new FilePathImpl(file);
-
+      FilePath path = VcsUtil.getFilePath(file.getPath(), isDirectory);
       final Collection<VcsDirtyScopeManager> managers = getManagers(file);
       for (VcsDirtyScopeManager manager : managers) {
         Couple<HashSet<FilePath>> filesAndDirs = map.get(manager);
@@ -231,16 +219,16 @@ public class VcsDirtyScopeVfsListener implements ApplicationComponent, BulkFileL
     /**
      * Adds files to the collection of files and directories - to the collection of directories (which are handled recursively).
      */
-    private void add(VirtualFile file, final boolean forDelete) {
-      add(file, false, forDelete);
+    private void add(VirtualFile file) {
+      add(file, false);
     }
 
     /**
      * Adds to the collection of files. A file (even if it is a directory) is marked dirty alone (not recursively).
      * Use this method, when you want directory not to be marked dirty recursively.
      */
-    private void addToFiles(VirtualFile file, final boolean forDelete) {
-      add(file, true, forDelete);
+    private void addToFiles(VirtualFile file) {
+      add(file, true);
     }
 
     private void markDirty(final Map<VcsDirtyScopeManager, Couple<HashSet<FilePath>>> outerMap) {

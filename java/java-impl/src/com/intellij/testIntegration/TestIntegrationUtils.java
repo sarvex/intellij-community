@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,7 +80,7 @@ public class TestIntegrationUtils {
         return null;
       }
     };
-    private String myDefaultName;
+    private final String myDefaultName;
 
     MethodKind(String defaultName) {
       myDefaultName = defaultName;
@@ -146,8 +146,20 @@ public class TestIntegrationUtils {
                                            final PsiMethod method,
                                            @Nullable String name,
                                            boolean automatic, Set<String> existingNames) {
+    runTestMethodTemplate(methodKind, framework, editor, targetClass, null, method, name, automatic, existingNames);
+  }
+
+  public static void runTestMethodTemplate(MethodKind methodKind,
+                                           TestFramework framework,
+                                           final Editor editor,
+                                           final PsiClass targetClass,
+                                           @Nullable PsiClass sourceClass,
+                                           final PsiMethod method,
+                                           @Nullable String name,
+    boolean automatic,
+    Set<String> existingNames) {
     runTestMethodTemplate(editor, targetClass, method, automatic,
-                          createTestMethodTemplate(methodKind, framework, targetClass, name, automatic, existingNames));
+                          createTestMethodTemplate(methodKind, framework, targetClass, sourceClass, name, automatic, existingNames));
   }
 
   public static void runTestMethodTemplate(final Editor editor,
@@ -197,6 +209,16 @@ public class TestIntegrationUtils {
                                                   @Nullable String name,
                                                   boolean automatic,
                                                   Set<String> existingNames) {
+    return createTestMethodTemplate(methodKind, descriptor, targetClass, null, name, automatic, existingNames);
+  }
+
+  public static Template createTestMethodTemplate(MethodKind methodKind,
+                                                  TestFramework descriptor,
+                                                  @NotNull PsiClass targetClass, 
+                                                  @Nullable PsiClass sourceClass,
+                                                  @Nullable String name,
+                                                  boolean automatic,
+                                                  Set<String> existingNames) {
     FileTemplateDescriptor templateDesc = methodKind.getFileTemplateDescriptor(descriptor);
     String templateName = templateDesc.getFileName();
     FileTemplate fileTemplate = FileTemplateManager.getInstance(targetClass.getProject()).getCodeTemplate(templateName);
@@ -204,7 +226,12 @@ public class TestIntegrationUtils {
 
     String templateText;
     try {
-      templateText = fileTemplate.getText(new Properties());
+      Properties properties = new Properties();
+      if (sourceClass != null && sourceClass.isValid()) {
+        properties.setProperty(FileTemplate.ATTRIBUTE_CLASS_NAME, sourceClass.getQualifiedName());
+      }
+
+      templateText = fileTemplate.getText(properties);
     }
     catch (IOException e) {
       LOG.warn(e);

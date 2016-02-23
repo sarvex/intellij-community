@@ -26,6 +26,7 @@ import com.intellij.util.containers.MultiMap;
 import com.jetbrains.NotNullPredicate;
 import com.jetbrains.python.PyNames;
 import com.jetbrains.python.codeInsight.imports.AddImportHelper;
+import com.jetbrains.python.codeInsight.imports.AddImportHelper.ImportPriority;
 import com.jetbrains.python.psi.*;
 import com.jetbrains.python.psi.impl.PyFunctionBuilder;
 import com.jetbrains.python.psi.types.PyType;
@@ -42,7 +43,6 @@ import java.util.*;
  * @author Ilya.Kazakevich
  */
 class MethodsManager extends MembersManager<PyFunction> {
-  private static final String ABC_META_CLASS = "ABCMeta";
 
   /**
    * Some decorators should be copied with methods if method is marked abstract. Here is list.
@@ -59,7 +59,7 @@ class MethodsManager extends MembersManager<PyFunction> {
 
   @Override
   public boolean hasConflict(@NotNull final PyFunction member, @NotNull final PyClass aClass) {
-    return NamePredicate.hasElementWithSameName(member, Arrays.asList(aClass.getMethods(false)));
+    return NamePredicate.hasElementWithSameName(member, Arrays.asList(aClass.getMethods()));
   }
 
   @NotNull
@@ -79,7 +79,7 @@ class MethodsManager extends MembersManager<PyFunction> {
   @NotNull
   @Override
   protected List<? extends PyElement> getMembersCouldBeMoved(@NotNull final PyClass pyClass) {
-    return FluentIterable.from(Arrays.asList(pyClass.getMethods(false))).filter(new NamelessFilter<PyFunction>()).filter(NO_PROPERTIES).toList();
+    return FluentIterable.from(Arrays.asList(pyClass.getMethods())).filter(new NamelessFilter<PyFunction>()).filter(NO_PROPERTIES).toList();
   }
 
   @Override
@@ -123,7 +123,7 @@ class MethodsManager extends MembersManager<PyFunction> {
     // Add imports for ABC if needed
     for (final PsiFile file : filesToCheckImport) {
       addImportFromAbc(file, PyNames.ABSTRACTMETHOD);
-      addImportFromAbc(file, ABC_META_CLASS);
+      addImportFromAbc(file, PyNames.ABC_META_CLASS);
       PyClassRefactoringUtil.optimizeImports(file); //To remove redundant imports
     }
   }
@@ -146,11 +146,11 @@ class MethodsManager extends MembersManager<PyFunction> {
       // Add (metaclass= for Py3K
       PyClassRefactoringUtil
         .addSuperClassExpressions(aClass.getProject(), aClass, null, Collections.singletonList(Pair.create(PyNames.METACLASS,
-                                                                                                           ABC_META_CLASS)));
+                                                                                                           PyNames.ABC_META_CLASS)));
     }
     else {
       // Add __metaclass__ for Py2
-      PyClassRefactoringUtil.addClassAttributeIfNotExist(aClass, PyNames.DUNDER_METACLASS, ABC_META_CLASS);
+      PyClassRefactoringUtil.addClassAttributeIfNotExist(aClass, PyNames.DUNDER_METACLASS, PyNames.ABC_META_CLASS);
     }
     return true;
   }
@@ -162,8 +162,7 @@ class MethodsManager extends MembersManager<PyFunction> {
    * @param nameToImport what to import
    */
   private static void addImportFromAbc(@NotNull final PsiFile file, @NotNull final String nameToImport) {
-    AddImportHelper.addFromImportStatement(file, ABC_META_PACKAGE, nameToImport, null,
-                                           AddImportHelper.ImportPriority.BUILTIN, null);
+    AddImportHelper.addOrUpdateFromImportStatement(file, ABC_META_PACKAGE, nameToImport, null, ImportPriority.BUILTIN, null);
   }
 
   /**
@@ -189,7 +188,6 @@ class MethodsManager extends MembersManager<PyFunction> {
     }
     deleteElements(methodsToMove);
 
-    PyClassRefactoringUtil.insertPassIfNeeded(from);
     return result;
   }
 
@@ -224,8 +222,8 @@ class MethodsManager extends MembersManager<PyFunction> {
   private static Boolean isOverrides(final PyFunction pyFunction) {
     final PyClass clazz = PyUtil.getContainingClassOrSelf(pyFunction);
     assert clazz != null : "Refactoring called on function, not method: " + pyFunction;
-    for (final PyClass parentClass : clazz.getSuperClasses()) {
-      final PyFunction parentMethod = parentClass.findMethodByName(pyFunction.getName(), true);
+    for (final PyClass parentClass : clazz.getSuperClasses(null)) {
+      final PyFunction parentMethod = parentClass.findMethodByName(pyFunction.getName(), true, null);
       if (parentMethod != null) {
         return true;
       }

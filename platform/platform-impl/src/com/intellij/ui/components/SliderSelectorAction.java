@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,13 +19,10 @@ import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.ui.popup.JBPopup;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
-import com.intellij.openapi.ui.popup.JBPopupListener;
-import com.intellij.openapi.ui.popup.LightweightWindowEvent;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.Ref;
 import com.intellij.ui.awt.RelativePoint;
 import com.intellij.util.Consumer;
-import com.intellij.util.ui.SwingHelper;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -68,14 +65,32 @@ public class SliderSelectorAction extends DumbAwareAction {
     JPanel wrapper = new JPanel(new BorderLayout());
     wrapper.add(label, BorderLayout.NORTH);
 
-    final JSlider slider = new JSlider(SwingConstants.HORIZONTAL, myConfiguration.getMin(), myConfiguration.getMax(), myConfiguration.getSelected());
+    final Dictionary dictionary = myConfiguration.getDictionary();
+    final Enumeration elements = dictionary.elements();
+    final JSlider slider = new JSlider(SwingConstants.HORIZONTAL, myConfiguration.getMin(), myConfiguration.getMax(), myConfiguration.getSelected()) {
+      Integer myWidth = null;
+      @Override
+      public Dimension getPreferredSize() {
+        final Dimension size = super.getPreferredSize();
+        if (myWidth == null) {
+          myWidth = 10;
+          final FontMetrics fm = getFontMetrics(getFont());
+          while (elements.hasMoreElements()) {
+            String text = ((JLabel)elements.nextElement()).getText();
+            myWidth += fm.stringWidth(text + "W");
+          }
+        }
+        return new Dimension(myWidth, size.height);
+      }
+    };
+
     slider.setMinorTickSpacing(1);
     slider.setPaintTicks(true);
     slider.setPaintTrack(true);
     slider.setSnapToTicks(true);
     UIUtil.setSliderIsFilled(slider, true);
     slider.setPaintLabels(true);
-    slider.setLabelTable(myConfiguration.getDictionary());
+    slider.setLabelTable(dictionary);
 
     if (! myConfiguration.isShowOk()) {
       result.add(wrapper, BorderLayout.WEST);

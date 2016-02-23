@@ -15,10 +15,10 @@
  */
 package com.jetbrains.commandInterface.command;
 
+import com.intellij.openapi.util.Pair;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -35,12 +35,13 @@ public final class Argument {
    * Argument help user-readable text
    */
   @NotNull
-  private final String myHelpText;
+  private final Help myHelpText;
   /**
    * List of values argument may have. Null if any value is possible.
+   * Second argument is True if values can <strong>only</strong> be one from these values, or false if any value actually supported
    */
   @Nullable
-  private final List<String> myAvailableValues;
+  private final Pair<List<String>, Boolean> myAvailableValues;
   @Nullable
   private final ArgumentType myType;
 
@@ -48,7 +49,7 @@ public final class Argument {
   /**
    * @param helpText Argument help user-readable text
    */
-  public Argument(@NotNull final String helpText) {
+  public Argument(@NotNull final Help helpText) {
     this(helpText, null, null);
   }
 
@@ -56,30 +57,32 @@ public final class Argument {
    * @param type Argument value type. Null if any type is possible.
    */
   public Argument(@NotNull final ArgumentType type) {
-    this("", type);
+    this(new Help(""), type);
   }
 
   /**
    * @param helpText Argument help user-readable text
    * @param type     Argument value type. Null if any type is possible.
    */
-  public Argument(@NotNull final String helpText,
+  public Argument(@NotNull final Help helpText,
                   @Nullable final ArgumentType type) {
     this(helpText, null, type);
   }
 
   /**
    * @param availableValues List of values argument may have. Null if any value is possible.
+   *                        Second argument is True if values can <strong>only</strong> be one from these values, or false if any value actually supported
    */
-  public Argument(@Nullable final List<String> availableValues) {
-    this("", availableValues, null);
+  public Argument(@Nullable final Pair<List<String>, Boolean> availableValues) {
+    this(new Help(""), availableValues, null);
   }
 
   /**
    * @param helpText        Argument help user-readable text
    * @param availableValues List of values argument may have. Null if any value is possible.
+   *                        Second argument is True if values can <strong>only</strong>be one from these values, or false if any value actually supported
    */
-  public Argument(@NotNull final String helpText, @Nullable final List<String> availableValues) {
+  public Argument(@NotNull final Help helpText, @NotNull final Pair<List<String>, Boolean> availableValues) {
     this(helpText, availableValues, null);
   }
 
@@ -87,13 +90,15 @@ public final class Argument {
   /**
    * @param helpText        Argument help user-readable text
    * @param availableValues List of values argument may have. Null if any value is possible.
+   *                        Second argument is True if values can <strong>only</strong> be one from these values, or false if any value actually supported
    * @param type            Argument value type. Null if any type is possible.
    */
-  public Argument(@NotNull final String helpText,
-                  @Nullable final List<String> availableValues,
+  public Argument(@NotNull final Help helpText,
+                  @Nullable final Pair<List<String>, Boolean> availableValues,
                   @Nullable final ArgumentType type) {
     myHelpText = helpText;
-    myAvailableValues = (availableValues == null ? null : new ArrayList<String>(availableValues));
+    myAvailableValues =
+      (availableValues == null ? null : Pair.create(Collections.unmodifiableList(availableValues.first), availableValues.second));
     myType = type;
   }
 
@@ -101,7 +106,7 @@ public final class Argument {
    * @return Argument help user-readable text
    */
   @NotNull
-  public String getHelpText() {
+  public Help getHelp() {
     return myHelpText;
   }
 
@@ -110,7 +115,7 @@ public final class Argument {
    */
   @Nullable
   public List<String> getAvailableValues() {
-    return (myAvailableValues == null ? null : Collections.unmodifiableList(myAvailableValues));
+    return (myAvailableValues == null ? null : Collections.unmodifiableList(myAvailableValues.first));
   }
 
 
@@ -125,10 +130,10 @@ public final class Argument {
       return false;
     }
 
-    if (myAvailableValues == null) {
+    if (myAvailableValues == null || !myAvailableValues.second) { // If no available values or any value is allowed
       return true;
     }
-    return myAvailableValues.contains(value);
+    return myAvailableValues.first.contains(value);
   }
 
   /**

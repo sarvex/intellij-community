@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,18 +36,20 @@ import com.intellij.openapi.fileTypes.FileTypeManager;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
+import com.intellij.openapi.progress.impl.BackgroundableProcessIndicator;
+import com.intellij.openapi.progress.impl.CoreProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Getter;
+import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.*;
 import com.intellij.openapi.vcs.actions.AnnotateToggleAction;
 import com.intellij.openapi.vcs.annotate.AnnotationProvider;
 import com.intellij.openapi.vcs.annotate.FileAnnotation;
-import com.intellij.openapi.vcs.changes.BackgroundFromStartOption;
 import com.intellij.openapi.vcs.changes.Change;
 import com.intellij.openapi.vcs.changes.CommitResultHandler;
 import com.intellij.openapi.vcs.changes.LocalChangeList;
@@ -60,7 +62,10 @@ import com.intellij.openapi.vcs.merge.MultipleFileMergeDialog;
 import com.intellij.openapi.vcs.versionBrowser.ChangeBrowserSettings;
 import com.intellij.openapi.vcs.versionBrowser.ChangesBrowserSettingsEditor;
 import com.intellij.openapi.vcs.versionBrowser.CommittedChangeList;
+import com.intellij.openapi.vcs.vfs.VcsFileSystem;
+import com.intellij.openapi.vcs.vfs.VcsVirtualFile;
 import com.intellij.openapi.vfs.LocalFileSystem;
+import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowId;
@@ -76,6 +81,8 @@ import com.intellij.util.Consumer;
 import com.intellij.util.ui.ConfirmationDialog;
 import com.intellij.util.ui.ErrorTreeView;
 import com.intellij.util.ui.MessageCategory;
+import com.intellij.vcs.history.VcsHistoryProviderEx;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -122,15 +129,28 @@ public class AbstractVcsHelperImpl extends AbstractVcsHelper {
     }, VcsBundle.message("command.name.open.error.message.view"), null);
   }
 
-  public void showFileHistory(final VcsHistoryProvider vcsHistoryProvider, final FilePath path, final AbstractVcs vcs,
-                              final String repositoryPath) {
-    showFileHistory(vcsHistoryProvider, null, path, repositoryPath, vcs);
+  public void showFileHistory(@NotNull VcsHistoryProvider historyProvider,
+                              @NotNull FilePath path,
+                              @NotNull AbstractVcs vcs,
+                              @Nullable String repositoryPath) {
+    showFileHistory(historyProvider, vcs.getAnnotationProvider(), path, repositoryPath, vcs);
   }
 
-  public void showFileHistory(final VcsHistoryProvider vcsHistoryProvider, final AnnotationProvider annotationProvider, final FilePath path,
-                              final String repositoryPath, final AbstractVcs vcs) {
-    final FileHistoryRefresherI refresherI = new FileHistoryRefresher(vcsHistoryProvider, annotationProvider, path, repositoryPath, vcs);
-    refresherI.run(false, true);
+  public void showFileHistory(@NotNull VcsHistoryProvider historyProvider,
+                              @Nullable AnnotationProvider annotationProvider,
+                              @NotNull FilePath path,
+                              @Nullable String repositoryPath,
+                              @NotNull AbstractVcs vcs) {
+    FileHistoryRefresherI refresher = FileHistoryRefresher.findOrCreate(historyProvider, path, vcs);
+    refresher.run(false, true);
+  }
+
+  public void showFileHistory(@NotNull VcsHistoryProviderEx historyProvider,
+                              @NotNull FilePath path,
+                              @NotNull AbstractVcs vcs,
+                              @Nullable VcsRevisionNumber startingRevisionNumber) {
+    FileHistoryRefresherI refresher = FileHistoryRefresher.findOrCreate(historyProvider, path, vcs, startingRevisionNumber);
+    refresher.run(false, true);
   }
 
   public void showRollbackChangesDialog(List<Change> changes) {
@@ -387,7 +407,7 @@ public class AbstractVcsHelperImpl extends AbstractVcsHelper {
       return;
     }
 
-    AnnotateToggleAction.doAnnotate(editor, myProject, file, annotation, vcs, false);
+    AnnotateToggleAction.doAnnotate(editor, myProject, file, annotation, vcs);
   }
 
   public void showDifferences(final VcsFileRevision version1, final VcsFileRevision version2, final File file) {
@@ -576,8 +596,11 @@ public class AbstractVcsHelperImpl extends AbstractVcsHelper {
 
   @Override
   @NotNull
-  public List<VirtualFile> showMergeDialog(List<VirtualFile> files, MergeProvider provider, @NotNull MergeDialogCustomizer mergeDialogCustomizer) {
+  public List<VirtualFile> showMergeDialog(@NotNull List<VirtualFile> files,
+                                           @NotNull MergeProvider provider,
+                                           @NotNull MergeDialogCustomizer mergeDialogCustomizer) {
     if (files.isEmpty()) return Collections.emptyList();
+    VfsUtil.markDirtyAndRefresh(false, false, false, ArrayUtil.toObjectArray(files, VirtualFile.class));
     final MultipleFileMergeDialog fileMergeDialog = new MultipleFileMergeDialog(myProject, files, provider, mergeDialogCustomizer);
     fileMergeDialog.show();
     return fileMergeDialog.getProcessedFiles();
@@ -599,8 +622,8 @@ public class AbstractVcsHelperImpl extends AbstractVcsHelper {
                                       final ChangeBrowserSettings settings,
                                       final int maxCount,
                                       String title) {
-    final RepositoryLocation location = CommittedChangesCache.getInstance(myProject).getLocationCache().getLocation(vcs, new FilePathImpl(root),
-                                                                                                                    false);
+    RepositoryLocationCache cache = CommittedChangesCache.getInstance(myProject).getLocationCache();
+    RepositoryLocation location = cache.getLocation(vcs, VcsUtil.getFilePath(root), false);
     openCommittedChangesTab(vcs.getCommittedChangesProvider(), location, settings, maxCount, title);
   }
 
@@ -634,6 +657,118 @@ public class AbstractVcsHelperImpl extends AbstractVcsHelper {
     }
   }
 
+  @Override
+  public void loadAndShowCommittedChangesDetails(@NotNull final Project project,
+                                                 @NotNull final VcsRevisionNumber revision,
+                                                 @NotNull final VirtualFile virtualFile,
+                                                 @NotNull VcsKey vcsKey,
+                                                 @Nullable final RepositoryLocation location,
+                                                 final boolean isNonLocal) {
+    final AbstractVcs vcs = ProjectLevelVcsManager.getInstance(project).findVcsByName(vcsKey.getName());
+    if (vcs == null) return;
+    final CommittedChangesProvider provider = vcs.getCommittedChangesProvider();
+    if (provider == null) return;
+    if (isNonLocal && provider.getForNonLocal(virtualFile) == null) return;
+
+    final String title = VcsBundle.message("paths.affected.in.revision",
+                                           revision instanceof ShortVcsRevisionNumber
+                                           ? ((ShortVcsRevisionNumber)revision).toShortString()
+                                           : revision.asString());
+    final CommittedChangeList[] list = new CommittedChangeList[1];
+    final FilePath[] targetPath = new FilePath[1];
+    final VcsException[] exc = new VcsException[1];
+
+    final BackgroundableActionLock lock = BackgroundableActionLock.getLock(project, VcsBackgroundableActions.COMMITTED_CHANGES_DETAILS,
+                                                                           revision, virtualFile.getPath());
+    if (lock.isLocked()) return;
+    lock.lock();
+
+    Task.Backgroundable task = new Task.Backgroundable(project, title, true) {
+      @Override
+      public void run(@NotNull ProgressIndicator indicator) {
+        try {
+          if (!isNonLocal) {
+            final Pair<CommittedChangeList, FilePath> pair = provider.getOneList(virtualFile, revision);
+            if (pair != null) {
+              list[0] = pair.getFirst();
+              targetPath[0] = pair.getSecond();
+            }
+          }
+          else {
+            if (location != null) {
+              final ChangeBrowserSettings settings = provider.createDefaultSettings();
+              settings.USE_CHANGE_BEFORE_FILTER = true;
+              settings.CHANGE_BEFORE = revision.asString();
+              final List<CommittedChangeList> changes = provider.getCommittedChanges(settings, location, 1);
+              if (changes != null && changes.size() == 1) {
+                list[0] = changes.get(0);
+              }
+            }
+            else {
+              list[0] = getRemoteList(vcs, revision, virtualFile);
+            }
+          }
+        }
+        catch (VcsException e) {
+          exc[0] = e;
+        }
+      }
+
+      @Override
+      public void onCancel() {
+        lock.unlock();
+      }
+
+      @Override
+      public void onSuccess() {
+        lock.unlock();
+        if (exc[0] != null) {
+          showError(exc[0], failedText(virtualFile, revision));
+        }
+        else if (list[0] == null) {
+          Messages.showErrorDialog(project, failedText(virtualFile, revision), getTitle());
+        }
+        else {
+          VirtualFile navigateToFile = targetPath[0] != null ?
+                                       new VcsVirtualFile(targetPath[0].getPath(), null, VcsFileSystem.getInstance()) :
+                                       virtualFile;
+          showChangesListBrowser(list[0], navigateToFile, title);
+        }
+      }
+    };
+
+    // we can's use runProcessWithProgressAsynchronously(task) because then ModalityState.NON_MODAL would be used
+    CoreProgressManager progressManager = (CoreProgressManager)ProgressManager.getInstance();
+    progressManager.runProcessWithProgressAsynchronously(task, new BackgroundableProcessIndicator(task), null, ModalityState.current());
+  }
+
+  @Nullable
+  public static CommittedChangeList getRemoteList(@NotNull AbstractVcs vcs,
+                                                  @NotNull VcsRevisionNumber revision,
+                                                  @NotNull VirtualFile nonLocal)
+    throws VcsException {
+    final CommittedChangesProvider provider = vcs.getCommittedChangesProvider();
+    final RepositoryLocation local = provider.getForNonLocal(nonLocal);
+    if (local != null) {
+      final String number = revision.asString();
+      final ChangeBrowserSettings settings = provider.createDefaultSettings();
+      final List<CommittedChangeList> changes = provider.getCommittedChanges(settings, local, provider.getUnlimitedCountValue());
+      if (changes != null) {
+        for (CommittedChangeList change : changes) {
+          if (number.equals(String.valueOf(change.getNumber()))) {
+            return change;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  @NotNull
+  private static String failedText(@NotNull VirtualFile virtualFile, @NotNull VcsRevisionNumber revision) {
+    return "Show all affected files for " + virtualFile.getPath() + " at " + revision.asString() + " failed";
+  }
+
   private static class AsynchronousListsLoader extends Task.Backgroundable {
     private final CommittedChangesProvider myProvider;
     private final RepositoryLocation myLocation;
@@ -645,7 +780,7 @@ public class AbstractVcsHelperImpl extends AbstractVcsHelper {
 
     private AsynchronousListsLoader(@Nullable Project project, final CommittedChangesProvider provider,
                                     final RepositoryLocation location, final ChangeBrowserSettings settings, final ChangesBrowserDialog dlg) {
-      super(project, VcsBundle.message("browse.changes.progress.title"), true, BackgroundFromStartOption.getInstance());
+      super(project, VcsBundle.message("browse.changes.progress.title"), true);
       myProvider = provider;
       myLocation = location;
       mySettings = settings;

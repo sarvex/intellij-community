@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import com.intellij.psi.PsiManager;
 import com.intellij.psi.impl.PsiManagerEx;
 import com.intellij.ui.CollectionComboBoxModel;
 import com.intellij.ui.DoubleClickListener;
-import com.intellij.ui.ListScrollingUtil;
+import com.intellij.ui.ScrollingUtil;
 import com.intellij.util.FunctionUtil;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
@@ -109,7 +109,7 @@ public class FileTypeChooser extends DialogWrapper {
       }
     );
 
-    ListScrollingUtil.selectItem(myList, FileTypes.PLAIN_TEXT);
+    ScrollingUtil.selectItem(myList, FileTypes.PLAIN_TEXT);
 
     return myPanel;
   }
@@ -144,7 +144,7 @@ public class FileTypeChooser extends DialogWrapper {
     }
     FileType type = file.getFileType();
     if (type == FileTypes.UNKNOWN) {
-        type = getKnownFileTypeOrAssociate(file.getName());
+      type = getKnownFileTypeOrAssociate(file.getName());
     }
     return type;
   }

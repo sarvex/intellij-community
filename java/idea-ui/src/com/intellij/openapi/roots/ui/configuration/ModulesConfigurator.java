@@ -32,6 +32,8 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.options.ShowSettingsUtil;
+import com.intellij.openapi.project.DumbModePermission;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectBundle;
 import com.intellij.openapi.projectRoots.Sdk;
@@ -45,14 +47,15 @@ import com.intellij.openapi.roots.ui.configuration.projectRoot.ProjectSdksModel;
 import com.intellij.openapi.roots.ui.configuration.projectRoot.StructureConfigurableContext;
 import com.intellij.openapi.roots.ui.configuration.projectRoot.daemon.ModuleProjectStructureElement;
 import com.intellij.openapi.ui.Messages;
-import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.ThrowableComputable;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.packaging.artifacts.Artifact;
 import com.intellij.packaging.artifacts.ModifiableArtifactModel;
 import com.intellij.projectImport.ProjectImportBuilder;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.HashMap;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -69,18 +72,20 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
   private static final Logger LOG = Logger.getInstance("#" + ModulesConfigurator.class.getName());
 
   private final Project myProject;
-  private final List<ModuleEditor> myModuleEditors = new ArrayList<ModuleEditor>();
-  private final Comparator<ModuleEditor> myModuleEditorComparator = new Comparator<ModuleEditor>() {
-    @Override
-    public int compare(ModuleEditor editor1, ModuleEditor editor2) {
-      return ModulesAlphaComparator.INSTANCE.compare(editor1.getModule(), editor2.getModule());
-    }
 
-    @SuppressWarnings({"EqualsWhichDoesntCheckParameterClass"})
-    public boolean equals(Object o) {
-      return false;
+  private final Map<Module, ModuleEditor> myModuleEditors = new TreeMap<Module, ModuleEditor>(new Comparator<Module>() {
+    @Override
+    public int compare(Module o1, Module o2) {
+      String n1 = o1.getName();
+      String n2 = o2.getName();
+      int result = n1.compareToIgnoreCase(n2);
+      if (result != 0) {
+        return result;
+      }
+      return n1.compareTo(n2);
     }
-  };
+  });
+
   private boolean myModified = false;
   private ModifiableModuleModel myModuleModel;
   private boolean myModuleModelCommitted = false;
@@ -107,7 +112,7 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
     ApplicationManager.getApplication().runWriteAction(new Runnable() {
       @Override
       public void run() {
-        for (final ModuleEditor moduleEditor : myModuleEditors) {
+        for (final ModuleEditor moduleEditor : myModuleEditors.values()) {
           Disposer.dispose(moduleEditor);
         }
         myModuleEditors.clear();
@@ -119,7 +124,6 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
         }
       }
     });
-
   }
 
   @Override
@@ -140,12 +144,7 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
 
   @Nullable
   public ModuleEditor getModuleEditor(Module module) {
-    for (final ModuleEditor moduleEditor : myModuleEditors) {
-      if (module.equals(moduleEditor.getModule())) {
-        return moduleEditor;
-      }
-    }
-    return null;
+    return myModuleEditors.get(module);
   }
 
   @Override
@@ -170,7 +169,7 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
       }
     };
 
-    myModuleEditors.add(moduleEditor);
+    myModuleEditors.put(moduleEditor.getModule(), moduleEditor);
 
     moduleEditor.addChangeListener(this);
     Disposer.register(moduleEditor, new Disposable() {
@@ -202,7 +201,6 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
           for (Module module : modules) {
             getOrCreateModuleEditor(module);
           }
-          Collections.sort(myModuleEditors, myModuleEditorComparator);
         }
       }
     });
@@ -226,15 +224,24 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
     // validate content and source roots 
     final Map<VirtualFile, String> contentRootToModuleNameMap = new HashMap<VirtualFile, String>();
     final Map<VirtualFile, VirtualFile> srcRootsToContentRootMap = new HashMap<VirtualFile, VirtualFile>();
-    for (final ModuleEditor moduleEditor : myModuleEditors) {
+    for (final ModuleEditor moduleEditor : myModuleEditors.values()) {
       final ModifiableRootModel rootModel = moduleEditor.getModifiableRootModel();
       final ContentEntry[] contents = rootModel.getContentEntries();
+      final String moduleName = moduleEditor.getName();
+      Set<VirtualFile> sourceRoots = new HashSet<>();
+      for (ContentEntry content : contents) {
+        for (VirtualFile root : content.getSourceFolderFiles()) {
+          if (!sourceRoots.add(root)) {
+            throw new ConfigurationException(ProjectBundle.message("module.paths.validation.duplicate.source.root.in.same.module.error", root.getPresentableUrl(), moduleName));
+          }
+        }
+      }
+
       for (ContentEntry contentEntry : contents) {
         final VirtualFile contentRoot = contentEntry.getFile();
         if (contentRoot == null) {
           continue;
         }
-        final String moduleName = moduleEditor.getName();
         final String previousName = contentRootToModuleNameMap.put(contentRoot, moduleName);
         if (previousName != null && !previousName.equals(moduleName)) {
           throw new ConfigurationException(
@@ -278,7 +285,7 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
     }
 
     final List<ModifiableRootModel> models = new ArrayList<ModifiableRootModel>(myModuleEditors.size());
-    for (ModuleEditor moduleEditor : myModuleEditors) {
+    for (ModuleEditor moduleEditor : myModuleEditors.values()) {
       moduleEditor.canApply();
     }
     
@@ -287,28 +294,35 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
     for (Map.Entry<Sdk, Sdk> entry : projectJdksModel.getProjectSdks().entrySet()) {
       modifiedToOriginalMap.put(entry.getValue(), entry.getKey());
     }
-    
-    for (final ModuleEditor moduleEditor : myModuleEditors) {
-      final ModifiableRootModel model = moduleEditor.apply();
-      if (model != null) {
-        if (!model.isSdkInherited()) {
-          // make sure the sdk is set to original SDK stored in the JDK Table
-          final Sdk modelSdk = model.getSdk();
-          if (modelSdk != null) {
-            final Sdk original = modifiedToOriginalMap.get(modelSdk);
-            if (original != null) {
-              model.setSdk(original);
-            }
-          }
-        }
-        models.add(model);
-      }
-    }
-    myFacetsConfigurator.applyEditors();
 
+    final Ref<ConfigurationException> exceptionRef = Ref.create();
     ApplicationManager.getApplication().runWriteAction(new Runnable() {
       @Override
       public void run() {
+        try {
+          for (final ModuleEditor moduleEditor : myModuleEditors.values()) {
+            final ModifiableRootModel model = moduleEditor.apply();
+            if (model != null) {
+              if (!model.isSdkInherited()) {
+                // make sure the sdk is set to original SDK stored in the JDK Table
+                final Sdk modelSdk = model.getSdk();
+                if (modelSdk != null) {
+                  final Sdk original = modifiedToOriginalMap.get(modelSdk);
+                  if (original != null) {
+                    model.setSdk(original);
+                  }
+                }
+              }
+              models.add(model);
+            }
+          }
+          myFacetsConfigurator.applyEditors();
+        }
+        catch (ConfigurationException e) {
+          exceptionRef.set(e);
+          return;
+        }
+
         try {
           final ModifiableRootModel[] rootModels = models.toArray(new ModifiableRootModel[models.size()]);
           ModifiableModelCommitter.multiCommit(rootModels, myModuleModel);
@@ -325,6 +339,10 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
         }
       }
     });
+
+    if (!exceptionRef.isNull()) {
+      throw exceptionRef.get();
+    }
 
     myModified = false;
   }
@@ -345,10 +363,20 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
     return myModuleModelCommitted;
   }
 
-  public boolean deleteModule(final Module module) {
-    ModuleEditor moduleEditor = getModuleEditor(module);
-    if (moduleEditor == null) return true;
-    return doRemoveModule(moduleEditor);
+  public List<Module> deleteModules(final Collection<Module> modules) {
+    List<Module> deleted = new ArrayList<Module>();
+    List<ModuleEditor> moduleEditors = new ArrayList<ModuleEditor>();
+    for (Module module : modules) {
+      ModuleEditor moduleEditor = getModuleEditor(module);
+      if (moduleEditor != null) {
+        deleted.add(module);
+        moduleEditors.add(moduleEditor);
+      }
+    }
+    if (doRemoveModules(moduleEditors)) {
+      return deleted;
+    }
+    return Collections.emptyList();
   }
 
 
@@ -358,26 +386,31 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
     final ProjectBuilder builder = runModuleWizard(parent, anImport);
     if (builder != null ) {
       final List<Module> modules = new ArrayList<Module>();
-      final List<Module> commitedModules;
-      if (builder instanceof ProjectImportBuilder<?>) {
-        final ModifiableArtifactModel artifactModel =
-            ProjectStructureConfigurable.getInstance(myProject).getArtifactsStructureConfigurable().getModifiableArtifactModel();
-        commitedModules = ((ProjectImportBuilder<?>)builder).commit(myProject, myModuleModel, this, artifactModel);
-      }
-      else {
-        commitedModules = builder.commit(myProject, myModuleModel, this);
-      }
-      if (commitedModules != null) {
-        modules.addAll(commitedModules);
-      }
-      ApplicationManager.getApplication().runWriteAction(new Runnable() {
-         @Override
-         public void run() {
-           for (Module module : modules) {
-             getOrCreateModuleEditor(module);
-           }
-         }
-       });
+      DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, new Runnable() {
+        @Override
+        public void run() {
+          final List<Module> committedModules;
+          if (builder instanceof ProjectImportBuilder<?>) {
+            final ModifiableArtifactModel artifactModel =
+              ProjectStructureConfigurable.getInstance(myProject).getArtifactsStructureConfigurable().getModifiableArtifactModel();
+            committedModules = ((ProjectImportBuilder<?>)builder).commit(myProject, myModuleModel, ModulesConfigurator.this, artifactModel);
+          }
+          else {
+            committedModules = builder.commit(myProject, myModuleModel, ModulesConfigurator.this);
+          }
+          if (committedModules != null) {
+            modules.addAll(committedModules);
+          }
+          ApplicationManager.getApplication().runWriteAction(new Runnable() {
+            @Override
+            public void run() {
+              for (Module module : modules) {
+                getOrCreateModuleEditor(module);
+              }
+            }
+          });
+        }
+      });
       return modules;
     }
     return null;
@@ -407,7 +440,6 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
         @Override
         public void run() {
           getOrCreateModuleEditor(module);
-          Collections.sort(myModuleEditors, myModuleEditorComparator);
         }
       });
       processModuleCountChanged();
@@ -421,7 +453,11 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
     if (anImport) {
       wizard = ImportModuleAction.selectFileAndCreateWizard(myProject, dialogParent);
       if (wizard == null) return null;
-      if (wizard.getStepCount() == 0) return wizard.getProjectBuilder();
+      if (wizard.getStepCount() == 0) {
+        ProjectBuilder builder = wizard.getProjectBuilder();
+        Disposer.dispose(wizard.getDisposable());
+        return builder;
+      }
     }
     else {
       wizard = new NewProjectWizard(myProject, dialogParent, this);
@@ -447,49 +483,49 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
   }
 
 
-  private boolean doRemoveModule(@NotNull ModuleEditor selectedEditor) {
+  private boolean doRemoveModules(@NotNull List<ModuleEditor> selectedEditors) {
+    if (selectedEditors.isEmpty()) return true;
 
     String question;
-    if (myModuleEditors.size() == 1) {
-      question = ProjectBundle.message("module.remove.last.confirmation");
+    if (myModuleEditors.size() == selectedEditors.size()) {
+      question = ProjectBundle.message("module.remove.last.confirmation", selectedEditors.size());
     }
     else {
-      question = ProjectBundle.message("module.remove.confirmation", selectedEditor.getModule().getName());
+      question = ProjectBundle.message("module.remove.confirmation", selectedEditors.get(0).getModule().getName(), selectedEditors.size());
     }
     int result =
-      Messages.showYesNoDialog(myProject, question, ProjectBundle.message("module.remove.confirmation.title"), Messages.getQuestionIcon());
+      Messages.showYesNoDialog(myProject, question, ProjectBundle.message("module.remove.confirmation.title", selectedEditors.size()), Messages.getQuestionIcon());
     if (result != Messages.YES) {
       return false;
     }
-    // do remove
-    myModuleEditors.remove(selectedEditor);
+    for (ModuleEditor editor : selectedEditors) {
+      myModuleEditors.remove(editor.getModule());
 
-    // destroyProcess removed module
-    final Module moduleToRemove = selectedEditor.getModule();
-    // remove all dependencies on the module that is about to be removed
-    List<ModifiableRootModel> modifiableRootModels = new ArrayList<ModifiableRootModel>();
-    for (final ModuleEditor moduleEditor : myModuleEditors) {
-      final ModifiableRootModel modifiableRootModel = moduleEditor.getModifiableRootModelProxy();
-      modifiableRootModels.add(modifiableRootModel);
+      final Module moduleToRemove = editor.getModule();
+      // remove all dependencies on the module which is about to be removed
+      List<ModifiableRootModel> modifiableRootModels = new ArrayList<ModifiableRootModel>();
+      for (final ModuleEditor moduleEditor : myModuleEditors.values()) {
+        final ModifiableRootModel modifiableRootModel = moduleEditor.getModifiableRootModelProxy();
+        ContainerUtil.addIfNotNull(modifiableRootModels, modifiableRootModel);
+      }
+
+      ModuleDeleteProvider.removeModule(moduleToRemove, null, modifiableRootModels, myModuleModel);
+      Disposer.dispose(editor);
     }
-
-    // destroyProcess editor
-    ModuleDeleteProvider.removeModule(moduleToRemove, null, modifiableRootModels, myModuleModel);
     processModuleCountChanged();
-    Disposer.dispose(selectedEditor);
-    
+
     return true;
   }
 
 
   private void processModuleCountChanged() {
-    for (ModuleEditor moduleEditor : myModuleEditors) {
+    for (ModuleEditor moduleEditor : myModuleEditors.values()) {
       moduleEditor.moduleCountChanged();
     }
   }
 
   public void processModuleCompilerOutputChanged(String baseUrl) {
-    for (ModuleEditor moduleEditor : myModuleEditors) {
+    for (ModuleEditor moduleEditor : myModuleEditors.values()) {
       moduleEditor.updateCompilerOutputPathChanged(baseUrl, moduleEditor.getName());
     }
   }
@@ -498,7 +534,7 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
     if (myModuleModel.isChanged()) {
       return true;
     }
-    for (ModuleEditor moduleEditor : myModuleEditors) {
+    for (ModuleEditor moduleEditor : myModuleEditors.values()) {
       if (moduleEditor.isModified()) {
         return true;
       }
@@ -548,13 +584,12 @@ public class ModulesConfigurator implements ModulesProvider, ModuleEditor.Change
   }
 
   public void moduleRenamed(Module module, final String oldName, final String name) {
-    for (ModuleEditor moduleEditor : myModuleEditors) {
-      if (module == moduleEditor.getModule() && Comparing.strEqual(moduleEditor.getName(), oldName)) {
-        moduleEditor.setModuleName(name);
-        moduleEditor.updateCompilerOutputPathChanged(ProjectStructureConfigurable.getInstance(myProject).getProjectConfig().getCompilerOutputUrl(), name);
-        myContext.getDaemonAnalyzer().queueUpdate(new ModuleProjectStructureElement(myContext, module));
-        return;
-      }
+    ModuleEditor moduleEditor = myModuleEditors.get(module);
+    if (moduleEditor != null) {
+      moduleEditor.setModuleName(name);
+      moduleEditor.updateCompilerOutputPathChanged(
+        ProjectStructureConfigurable.getInstance(myProject).getProjectConfig().getCompilerOutputUrl(), name);
+      myContext.getDaemonAnalyzer().queueUpdate(new ModuleProjectStructureElement(myContext, module));
     }
   }
 

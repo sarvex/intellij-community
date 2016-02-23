@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package com.intellij.util.io;
 
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.TimeoutUtil;
 import org.jetbrains.annotations.NotNull;
 
@@ -29,27 +30,46 @@ import java.util.concurrent.Future;
 public abstract class BaseDataReader {
   private static final Logger LOG = Logger.getInstance(BaseDataReader.class);
 
-  protected volatile boolean isStopped = false;
+  protected final SleepingPolicy mySleepingPolicy;
+  protected volatile boolean isStopped;
 
-  private Future<?> myFinishedFuture = null;
-  @NotNull protected final SleepingPolicy mySleepingPolicy;
+  private Future<?> myFinishedFuture;
 
   public BaseDataReader(SleepingPolicy sleepingPolicy) {
     mySleepingPolicy = sleepingPolicy != null ? sleepingPolicy: SleepingPolicy.SIMPLE;
   }
 
+  /** @deprecated use {@link #start(String)} instead (to be removed in IDEA 17) */
+  @Deprecated
   protected void start() {
+    start("");
+  }
+
+  protected void start(@NotNull final String presentableName) {
+    if (StringUtil.isEmptyOrSpaces(presentableName)) {
+      LOG.warn(new Throwable("Must provide not-empty presentable name"));
+    }
     if (myFinishedFuture == null) {
       myFinishedFuture = executeOnPooledThread(new Runnable() {
         @Override
         public void run() {
-          doRun();
+          String oldThreadName = Thread.currentThread().getName();
+          if (!StringUtil.isEmptyOrSpaces(presentableName)) {
+            Thread.currentThread().setName(StringUtil.first("BaseDataReader: " + presentableName, 120, true));
+          }
+          try {
+            doRun();
+          }
+          finally {
+            Thread.currentThread().setName(oldThreadName);
+          }
         }
       });
     }
   }
 
-  protected abstract Future<?> executeOnPooledThread(Runnable runnable);
+  @NotNull
+  protected abstract Future<?> executeOnPooledThread(@NotNull Runnable runnable);
 
   public interface SleepingPolicy {
     int sleepTimeWhenWasActive = 1;

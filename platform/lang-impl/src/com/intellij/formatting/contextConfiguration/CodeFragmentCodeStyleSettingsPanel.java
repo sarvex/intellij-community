@@ -21,6 +21,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.psi.codeStyle.CodeStyleSettings;
 import com.intellij.psi.codeStyle.CodeStyleSettingsCodeFragmentFilter;
+import com.intellij.psi.codeStyle.LanguageCodeStyleSettingsProvider;
 import com.intellij.ui.components.JBScrollPane;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
@@ -39,6 +40,9 @@ class CodeFragmentCodeStyleSettingsPanel extends TabbedLanguageCodeStylePanel {
 
   private final CodeStyleSettingsCodeFragmentFilter.CodeStyleSettingsToShow mySettingsToShow;
   private final SelectedTextFormatter mySelectedTextFormatter;
+  private SpacesPanelWithoutPreview mySpacesPanel;
+
+  private Runnable mySomethingChangedCallback;
 
   public CodeFragmentCodeStyleSettingsPanel(@NotNull CodeStyleSettings settings,
                                             @NotNull CodeStyleSettingsCodeFragmentFilter.CodeStyleSettingsToShow settingsToShow,
@@ -52,6 +56,15 @@ class CodeFragmentCodeStyleSettingsPanel extends TabbedLanguageCodeStylePanel {
     ensureTabs();
   }
 
+  public void setOnSomethingChangedCallback(Runnable runnable) {
+    mySomethingChangedCallback = runnable;
+  }
+
+  @Override
+  protected void somethingChanged() {
+    mySomethingChangedCallback.run();
+  }
+
   @Override
   protected String getPreviewText() {
     return null;
@@ -63,13 +76,28 @@ class CodeFragmentCodeStyleSettingsPanel extends TabbedLanguageCodeStylePanel {
 
   @Override
   protected void initTabs(CodeStyleSettings settings) {
-    addTab(new SpacesPanelWithoutPreview(settings));
+    mySpacesPanel = new SpacesPanelWithoutPreview(settings);
+    addTab(mySpacesPanel);
     addTab(new WrappingAndBracesPanelWithoutPreview(settings));
     reset(getSettings());
   }
 
+  public JComponent getPreferredFocusedComponent() {
+    return mySpacesPanel.getPreferredFocusedComponent();
+  }
+
   public static CodeStyleSettingsCodeFragmentFilter.CodeStyleSettingsToShow calcSettingNamesToShow(CodeStyleSettingsCodeFragmentFilter filter) {
     return filter.getFieldNamesAffectingCodeFragment(SPACING_SETTINGS, WRAPPING_AND_BRACES_SETTINGS);
+  }
+
+  public static boolean hasOptionsToShow(LanguageCodeStyleSettingsProvider provider) {
+    LanguageCodeStyleSettingsProvider.SettingsType[] types = { SPACING_SETTINGS, WRAPPING_AND_BRACES_SETTINGS };
+    for (LanguageCodeStyleSettingsProvider.SettingsType type : types) {
+      if (!provider.getSupportedFields(type).isEmpty()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private void reformatSelectedTextWithNewSettings() {
@@ -95,6 +123,7 @@ class CodeFragmentCodeStyleSettingsPanel extends TabbedLanguageCodeStylePanel {
     protected void somethingChanged() {
       mySelectedTextFormatter.restoreSelectedText();
       reformatSelectedTextWithNewSettings();
+      CodeFragmentCodeStyleSettingsPanel.this.somethingChanged();
     }
 
     @Override
@@ -128,6 +157,10 @@ class CodeFragmentCodeStyleSettingsPanel extends TabbedLanguageCodeStylePanel {
     @Override
     protected String getPreviewText() {
       return null;
+    }
+
+    public JComponent getPreferredFocusedComponent() {
+      return myOptionsTree;
     }
   }
 
@@ -189,6 +222,7 @@ class CodeFragmentCodeStyleSettingsPanel extends TabbedLanguageCodeStylePanel {
     protected void somethingChanged() {
       mySelectedTextFormatter.restoreSelectedText();
       reformatSelectedTextWithNewSettings();
+      CodeFragmentCodeStyleSettingsPanel.this.somethingChanged();
     }
     
     @Override

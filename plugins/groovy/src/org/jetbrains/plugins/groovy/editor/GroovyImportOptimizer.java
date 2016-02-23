@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package org.jetbrains.plugins.groovy.editor;
 import com.intellij.lang.ImportOptimizer;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.EmptyRunnable;
+import com.intellij.openapi.util.NotNullComputable;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
@@ -64,7 +66,7 @@ public class GroovyImportOptimizer implements ImportOptimizer {
   @Override
   @NotNull
   public Runnable processFile(PsiFile file) {
-    return new MyProcessor(file, false);
+    return new MyProcessor(file).compute();
   }
 
   @Override
@@ -72,79 +74,67 @@ public class GroovyImportOptimizer implements ImportOptimizer {
     return file instanceof GroovyFile;
   }
 
-  private class MyProcessor implements Runnable {
+  private static class MyProcessor implements NotNullComputable<Runnable> {
     private final PsiFile myFile;
-    private final boolean myRemoveUnusedOnly;
 
-    private MyProcessor(PsiFile file, boolean removeUnusedOnly) {
+    private MyProcessor(PsiFile file) {
       myFile = file;
-      myRemoveUnusedOnly = removeUnusedOnly;
     }
 
+    @NotNull
     @Override
-    public void run() {
-      if (!(myFile instanceof GroovyFile)) return;
-
-      GroovyFile file = ((GroovyFile)myFile);
-      final PsiDocumentManager documentManager = PsiDocumentManager.getInstance(file.getProject());
-      final Document document = documentManager.getDocument(file);
-      if (document != null) {
-        documentManager.commitDocument(document);
-      }
-      final Set<String> simplyImportedClasses = new LinkedHashSet<String>();
-      final Set<String> staticallyImportedMembers = new LinkedHashSet<String>();
-      final Set<GrImportStatement> usedImports = new HashSet<GrImportStatement>();
-      final Set<GrImportStatement> unresolvedOnDemandImports = new HashSet<GrImportStatement>();
-      final Set<String> implicitlyImportedClasses = new LinkedHashSet<String>();
-      final Set<String> innerClasses = new HashSet<String>();
-      Map<String, String> aliasImported = ContainerUtil.newHashMap();
-      Map<String, String> annotatedImports = ContainerUtil.newHashMap();
-
-      GroovyImportUtil.processFile(myFile, simplyImportedClasses, staticallyImportedMembers, usedImports, unresolvedOnDemandImports,
-                                   implicitlyImportedClasses, innerClasses,
-                                   aliasImported, annotatedImports);
-      final List<GrImportStatement> oldImports = PsiUtil.getValidImportStatements(file);
-      if (myRemoveUnusedOnly) {
-        for (GrImportStatement oldImport : oldImports) {
-          if (!usedImports.contains(oldImport)) {
-            file.removeImport(oldImport);
-          }
+    public Runnable compute() {
+      if (!(myFile instanceof GroovyFile)) return EmptyRunnable.getInstance();
+      return () -> {
+        final GroovyFile file = ((GroovyFile)myFile);
+        final PsiDocumentManager documentManager = PsiDocumentManager.getInstance(file.getProject());
+        final Document document = documentManager.getDocument(file);
+        if (document != null) {
+          documentManager.commitDocument(document);
         }
-        return;
-      }
+        final Set<String> simplyImportedClasses = new LinkedHashSet<String>();
+        final Set<String> staticallyImportedMembers = new LinkedHashSet<String>();
+        final Set<GrImportStatement> usedImports = new HashSet<GrImportStatement>();
+        final Set<GrImportStatement> unresolvedOnDemandImports = new HashSet<GrImportStatement>();
+        final Set<String> implicitlyImportedClasses = new LinkedHashSet<String>();
+        final Set<String> innerClasses = new HashSet<String>();
+        Map<String, String> aliasImported = ContainerUtil.newHashMap();
+        Map<String, String> annotatedImports = ContainerUtil.newHashMap();
 
-      // Add new import statements
-      GrImportStatement[] newImports =
-        prepare(usedImports, simplyImportedClasses, staticallyImportedMembers, implicitlyImportedClasses, innerClasses, aliasImported,
-                annotatedImports, unresolvedOnDemandImports);
-      if (oldImports.isEmpty() && newImports.length == 0 && aliasImported.isEmpty()) {
-        return;
-      }
+        GroovyImportUtil.processFile(myFile, simplyImportedClasses, staticallyImportedMembers, usedImports, unresolvedOnDemandImports,
+                                     implicitlyImportedClasses, innerClasses,
+                                     aliasImported, annotatedImports);
+        final List<GrImportStatement> oldImports = PsiUtil.getValidImportStatements(file);
 
-      GroovyPsiElementFactory factory = GroovyPsiElementFactory.getInstance(file.getProject());
+        // Add new import statements
+        GrImportStatement[] newImports =
+          prepare(usedImports, simplyImportedClasses, staticallyImportedMembers, implicitlyImportedClasses, innerClasses, aliasImported,
+                  annotatedImports, unresolvedOnDemandImports);
+        if (oldImports.isEmpty() && newImports.length == 0 && aliasImported.isEmpty()) return;
 
-      GroovyFile tempFile = factory.createGroovyFile("", false, null);
+        GroovyPsiElementFactory factory = GroovyPsiElementFactory.getInstance(file.getProject());
 
-      for (GrImportStatement newImport : newImports) {
-        tempFile.addImport(newImport);
-      }
+        final GroovyFile tempFile = factory.createGroovyFile("", false, null);
 
-      if (!oldImports.isEmpty()) {
-        final int startOffset = oldImports.get(0).getTextRange().getStartOffset();
-        final int endOffset = oldImports.get(oldImports.size() - 1).getTextRange().getEndOffset();
-        String oldText = oldImports.isEmpty() ? "" : myFile.getText().substring(startOffset, endOffset);
-        if (tempFile.getText().trim().equals(oldText)) {
-          return;
+        for (GrImportStatement newImport : newImports) {
+          tempFile.addImport(newImport);
         }
-      }
 
-      for (GrImportStatement statement : tempFile.getImportStatements()) {
-        file.addImport(statement);
-      }
+        if (!oldImports.isEmpty()) {
+          final int startOffset = oldImports.get(0).getTextRange().getStartOffset();
+          final int endOffset = oldImports.get(oldImports.size() - 1).getTextRange().getEndOffset();
+          String oldText = oldImports.isEmpty() ? "" : myFile.getText().substring(startOffset, endOffset);
+          if (tempFile.getText().trim().equals(oldText)) return;
+        }
 
-      for (GrImportStatement importStatement : oldImports) {
-        file.removeImport(importStatement);
-      }
+        for (GrImportStatement statement : tempFile.getImportStatements()) {
+          file.addImport(statement);
+        }
+
+        for (GrImportStatement importStatement : oldImports) {
+          file.removeImport(importStatement);
+        }
+      };
     }
 
     private GrImportStatement[] prepare(final Set<GrImportStatement> usedImports,

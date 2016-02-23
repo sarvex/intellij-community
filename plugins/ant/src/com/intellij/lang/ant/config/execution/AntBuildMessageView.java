@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,7 @@ import com.intellij.openapi.util.Clock;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
@@ -53,6 +54,7 @@ import com.intellij.problems.WolfTheProblemSolver;
 import com.intellij.ui.content.*;
 import com.intellij.util.Alarm;
 import com.intellij.util.text.DateFormatUtil;
+import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -151,12 +153,11 @@ public final class AntBuildMessageView extends JPanel implements DataProvider, O
     myPlainTextView = new PlainTextView(project);
     myTreeView = new TreeView(project, buildFile);
 
-    myMessagePanel = new JPanel(new BorderLayout());
     myCardLayout = new CardLayout();
     myContentPanel = new JPanel(myCardLayout);
     myContentPanel.add(myTreeView.getComponent(), myTreeView.getId());
     myContentPanel.add(myPlainTextView.getComponent(), myPlainTextView.getId());
-    myMessagePanel.add(myContentPanel, BorderLayout.CENTER);
+    myMessagePanel = JBUI.Panels.simplePanel(myContentPanel);
 
     setVerboseMode(AntBuildFileImpl.VERBOSE.value(buildFile.getAllOptions()));
 
@@ -468,9 +469,7 @@ public final class AntBuildMessageView extends JPanel implements DataProvider, O
   }
 
   private static AntMessage createErrorMessage(int priority, String text) {
-    if (text.startsWith(FILE_PREFIX)) {
-      text = text.substring(FILE_PREFIX.length());
-    }
+    text = StringUtil.trimStart(text, FILE_PREFIX);
 
     int afterLineNumberIndex = text.indexOf(": "); // end of file_name_and_line_number sequence
     if (afterLineNumberIndex != -1) {
@@ -841,10 +840,17 @@ public final class AntBuildMessageView extends JPanel implements DataProvider, O
       }
     });
     //noinspection SSBasedInspection
-    DumbService.getInstance(myProject).runWhenSmart(new Runnable() {
+    SwingUtilities.invokeLater(new Runnable() {
       public void run() {
-        if (!myIsOutputPaused) {
-          new OutputFlusher().doFlush();
+        if (!myProject.isDisposed()) {
+          DumbService.getInstance(myProject).runWhenSmart(new Runnable() {
+            @Override
+            public void run() {
+              if (!myIsOutputPaused) {
+                new OutputFlusher().doFlush();
+              }
+            }
+          });
         }
       }
     });

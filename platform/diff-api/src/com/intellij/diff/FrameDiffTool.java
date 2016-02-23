@@ -26,6 +26,9 @@ import javax.swing.*;
 import java.util.List;
 
 public interface FrameDiffTool extends DiffTool {
+  /**
+   * Creates viewer for the given request. Clients should call {@link #canShow(DiffContext, DiffRequest)} first.
+   */
   @CalledInAwt
   @NotNull
   DiffViewer createComponent(@NotNull DiffContext context, @NotNull DiffRequest request);
@@ -37,9 +40,16 @@ public interface FrameDiffTool extends DiffTool {
     @Nullable
     JComponent getPreferredFocusedComponent();
 
+    /**
+     * Should be called after adding {@link #getComponent()} to the components hierarchy.
+     */
     @NotNull
     @CalledInAwt
     ToolbarComponents init();
+
+    @Override
+    @CalledInAwt
+    void dispose();
   }
 
   class ToolbarComponents {

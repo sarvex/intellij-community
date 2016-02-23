@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,6 +52,7 @@ import com.intellij.util.indexing.*;
 import com.intellij.util.io.DataExternalizer;
 import com.intellij.util.io.DataInputOutputUtil;
 import gnu.trove.THashMap;
+import gnu.trove.TIntArrayList;
 import gnu.trove.TObjectIntHashMap;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -63,7 +64,7 @@ import java.util.concurrent.locks.Lock;
 
 @State(
   name = "FileBasedIndex",
-  storages = {@Storage(file = StoragePathMacros.APP_CONFIG + "/stubIndex.xml", roamingType = RoamingType.DISABLED)}
+  storages = {@Storage(value = "stubIndex.xml", roamingType = RoamingType.DISABLED)}
 )
 public class StubIndexImpl extends StubIndex implements ApplicationComponent, PersistentStateComponent<StubIndexState> {
   private static final AtomicReference<Boolean> ourForcedClean = new AtomicReference<Boolean>(null);
@@ -72,37 +73,11 @@ public class StubIndexImpl extends StubIndex implements ApplicationComponent, Pe
   private final TObjectIntHashMap<ID<?, ?>> myIndexIdToVersionMap = new TObjectIntHashMap<ID<?, ?>>();
 
   private final StubProcessingHelper myStubProcessingHelper;
+  private final IndexAccessValidator myAccessValidator = new IndexAccessValidator();
 
   private StubIndexState myPreviouslyRegistered;
 
   public StubIndexImpl(FileBasedIndex fileBasedIndex /* need this to ensure initialization order*/ ) throws IOException {
-    final boolean forceClean = Boolean.TRUE == ourForcedClean.getAndSet(Boolean.FALSE);
-
-    final StubIndexExtension<?, ?>[] extensions = Extensions.getExtensions(StubIndexExtension.EP_NAME);
-    boolean needRebuild = false;
-    for (StubIndexExtension extension : extensions) {
-      //noinspection unchecked
-      needRebuild |= registerIndexer(extension, forceClean);
-    }
-    if (needRebuild) {
-      if (ApplicationManager.getApplication().isUnitTestMode()) {
-        requestRebuild();
-      }
-      else {
-        final Throwable e = new Throwable();
-        // avoid direct forceRebuild as it produces dependency cycle (IDEA-105485)
-        ApplicationManager.getApplication().invokeLater(
-          new Runnable() {
-          @Override
-          public void run() {
-            forceRebuild(e);
-          }
-        }, ModalityState.NON_MODAL
-        );
-      }
-    }
-    dropUnregisteredIndices();
-
     myStubProcessingHelper = new StubProcessingHelper(fileBasedIndex);
   }
 
@@ -246,37 +221,44 @@ public class StubIndexImpl extends StubIndex implements ApplicationComponent, Pe
                                                        @Nullable IdFilter idFilter,
                                                        @NotNull final Class<Psi> requiredClass,
                                                        @NotNull final Processor<? super Psi> processor) {
+    return doProcessStubs(indexKey, key, project, scope, new StubIdListContainerAction(idFilter, project) {
+      final PersistentFS fs = (PersistentFS)ManagingFS.getInstance();
+      @Override
+      protected boolean process(int id, StubIdList value) {
+        final VirtualFile file = IndexInfrastructure.findFileByIdIfCached(fs, id);
+        if (file == null || scope != null && !scope.contains(file)) {
+          return true;
+        }
+        return myStubProcessingHelper.processStubsInFile(project, file, value, processor, requiredClass);
+      }
+    });
+  }
+
+  private <Key> boolean doProcessStubs(@NotNull final StubIndexKey<Key, ?> indexKey,
+                                       @NotNull final Key key,
+                                       @NotNull final Project project,
+                                       @Nullable final GlobalSearchScope scope,
+                                       @NotNull StubIdListContainerAction action) {
     final FileBasedIndexImpl fileBasedIndex = (FileBasedIndexImpl)FileBasedIndex.getInstance();
     fileBasedIndex.ensureUpToDate(StubUpdatingIndex.INDEX_ID, project, scope);
-
-    final PersistentFS fs = (PersistentFS)ManagingFS.getInstance();
 
     final MyIndex<Key> index = (MyIndex<Key>)myIndices.get(indexKey);
 
     try {
+      myAccessValidator.checkAccessingIndexDuringOtherIndexProcessing(indexKey);
+
       try {
         // disable up-to-date check to avoid locks on attempt to acquire index write lock while holding at the same time the readLock for this index
         FileBasedIndexImpl.disableUpToDateCheckForCurrentThread();
+
         index.getReadLock().lock();
-        final ValueContainer<StubIdList> container = index.getData(key);
 
-        final IdFilter finalIdFilter = idFilter != null ? idFilter : fileBasedIndex.projectIndexableFiles(project);
+        myAccessValidator.startedProcessingActivityForIndex(indexKey);
 
-        return container.forEach(new ValueContainer.ContainerAction<StubIdList>() {
-          @Override
-          public boolean perform(final int id, @NotNull final StubIdList value) {
-            ProgressManager.checkCanceled();
-            if (finalIdFilter != null && !finalIdFilter.containsFileId(id)) return true;
-            final VirtualFile file = IndexInfrastructure.findFileByIdIfCached(fs, id);
-            if (file == null || scope != null && !scope.contains(file)) {
-              return true;
-            }
-            return myStubProcessingHelper.processStubsInFile(project, file, value, processor, requiredClass);
-          }
-
-        });
+        return index.getData(key).forEach(action);
       }
       finally {
+        myAccessValidator.stoppedProcessingActivityForIndex(indexKey);
         index.getReadLock().unlock();
         FileBasedIndexImpl.enableUpToDateCheckForCurrentThread();
       }
@@ -342,6 +324,39 @@ public class StubIndexImpl extends StubIndex implements ApplicationComponent, Pe
     return true;
   }
 
+  @NotNull
+  @Override
+  public <Key> IdIterator getContainingIds(@NotNull StubIndexKey<Key, ?> indexKey,
+                                           @NotNull Key dataKey,
+                                           @NotNull final Project project,
+                                           @NotNull final GlobalSearchScope scope) {
+    final TIntArrayList result = new TIntArrayList();
+    doProcessStubs(indexKey, dataKey, project, scope, new StubIdListContainerAction(null, project) {
+      @Override
+      protected boolean process(int id, StubIdList value) {
+        result.add(id);
+        return true;
+      }
+    });
+    return new IdIterator() {
+      int cursor = 0;
+      @Override
+      public boolean hasNext() {
+        return cursor < result.size();
+      }
+
+      @Override
+      public int next() {
+        return result.get(cursor++);
+      }
+
+      @Override
+      public int size() {
+        return result.size();
+      }
+    };
+  }
+
   @Override
   @NotNull
   public String getComponentName() {
@@ -350,6 +365,31 @@ public class StubIndexImpl extends StubIndex implements ApplicationComponent, Pe
 
   @Override
   public void initComponent() {
+    try {
+      final boolean forceClean = Boolean.TRUE == ourForcedClean.getAndSet(Boolean.FALSE);
+
+      StubIndexExtension<?, ?>[] extensions = Extensions.getExtensions(StubIndexExtension.EP_NAME);
+      StringBuilder updated = new StringBuilder();
+      for (StubIndexExtension extension : extensions) {
+        @SuppressWarnings("unchecked") boolean rebuildRequested = registerIndexer(extension, forceClean);
+        if (rebuildRequested) {
+          updated.append(extension).append(' ');
+        }
+      }
+      if (updated.length() > 0) {
+        final Throwable e = new Throwable(updated.toString());
+        // avoid direct forceRebuild as it produces dependency cycle (IDEA-105485)
+        ApplicationManager.getApplication().invokeLater(new Runnable() {
+          @Override
+          public void run() {
+            forceRebuild(e);
+          }
+        }, ModalityState.NON_MODAL);
+      }
+      dropUnregisteredIndices();
+    } catch (IOException ex) {
+      throw new RuntimeException(ex);
+    }
   }
 
   @Override
@@ -532,5 +572,23 @@ public class StubIndexImpl extends StubIndex implements ApplicationComponent, Pe
 
     out.printf("\nindexing info: " + StubUpdatingIndex.getIndexingStampInfo(file));
     LOG.error(writer.toString());
+  }
+
+  private abstract class StubIdListContainerAction implements ValueContainer.ContainerAction<StubIdList> {
+    private final IdFilter myIdFilter;
+
+    StubIdListContainerAction(@Nullable IdFilter idFilter, @NotNull Project project) {
+      myIdFilter = idFilter != null ? idFilter : ((FileBasedIndexImpl)FileBasedIndex.getInstance()).projectIndexableFiles(project);
+    }
+
+    @Override
+    public boolean perform(final int id, @NotNull final StubIdList value) {
+      ProgressManager.checkCanceled();
+      if (myIdFilter != null && !myIdFilter.containsFileId(id)) return true;
+
+      return process(id, value);
+    }
+
+    protected abstract boolean process(int id, StubIdList value);
   }
 }

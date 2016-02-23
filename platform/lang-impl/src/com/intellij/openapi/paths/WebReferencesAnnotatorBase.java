@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,10 +27,7 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiReference;
 import com.intellij.util.containers.HashMap;
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.HttpStatus;
-import org.apache.commons.httpclient.cookie.CookiePolicy;
-import org.apache.commons.httpclient.methods.GetMethod;
+import com.intellij.util.io.HttpRequests;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -118,7 +115,7 @@ public abstract class WebReferencesAnnotatorBase extends ExternalAnnotator<WebRe
 
   @Override
   public void apply(@NotNull PsiFile file, MyInfo[] infos, @NotNull AnnotationHolder holder) {
-    if (infos.length == 0) {
+    if (infos == null || infos.length == 0) {
       return;
     }
 
@@ -183,32 +180,29 @@ public abstract class WebReferencesAnnotatorBase extends ExternalAnnotator<WebRe
     }
   }
 
-  private static MyFetchResult doCheckUrl(String url) {
-    final HttpClient client = new HttpClient();
-    client.setTimeout(3000);
-    client.setConnectionTimeout(3000);
-    // see http://hc.apache.org/httpclient-3.x/cookies.html
-    client.getParams().setCookiePolicy(CookiePolicy.BROWSER_COMPATIBILITY);
-    try {
-      final GetMethod method = new GetMethod(url);
-      final int code = client.executeMethod(method);
+  private static MyFetchResult doCheckUrl(@NotNull String url) {
+    if (url.startsWith("mailto")) {
+      return MyFetchResult.OK;
+    }
 
-      return code == HttpStatus.SC_OK || code == HttpStatus.SC_REQUEST_TIMEOUT
-             ? MyFetchResult.OK 
-             : MyFetchResult.NONEXISTENCE;
+    try {
+      HttpRequests.request(url).connectTimeout(3000).readTimeout(3000).tryConnect();
     }
     catch (UnknownHostException e) {
       LOG.info(e);
       return MyFetchResult.UNKNOWN_HOST;
     }
+    catch (HttpRequests.HttpStatusException e) {
+      LOG.info(e);
+      return MyFetchResult.NONEXISTENCE;
+    }
     catch (IOException e) {
       LOG.info(e);
-      return MyFetchResult.OK;
     }
     catch (IllegalArgumentException e) {
       LOG.debug(e);
-      return MyFetchResult.OK;
     }
+    return MyFetchResult.OK;
   }
 
   private static class MyFetchCacheEntry {

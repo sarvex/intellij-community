@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,18 +26,13 @@ import com.intellij.openapi.components.*;
 import com.intellij.openapi.project.Project;
 import com.intellij.ui.AutoScrollToSourceHandler;
 import com.intellij.util.xmlb.XmlSerializerUtil;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * User: anna
  * Date: 28-Feb-2006
  */
-@State(
-  name = "AnalysisUIOptions",
-  storages = {
-    @Storage(
-      file = StoragePathMacros.WORKSPACE_FILE
-    )}
-)
+@State(name = "AnalysisUIOptions", storages = @Storage(StoragePathMacros.WORKSPACE_FILE))
 public class AnalysisUIOptions implements PersistentStateComponent<AnalysisUIOptions> {
   public static AnalysisUIOptions getInstance(Project project) {
     return ServiceManager.getService(project, AnalysisUIOptions.class);
@@ -55,7 +50,7 @@ public class AnalysisUIOptions implements PersistentStateComponent<AnalysisUIOpt
   public boolean SHOW_ONLY_DIFF = false;
   public boolean SHOW_STRUCTURE = false;
 
-  public boolean ANALYSIS_IN_BACKGROUND = false;
+  public boolean ANALYSIS_IN_BACKGROUND = true;
 
   public AnalysisUIOptions() {
     myAutoScrollToSourceHandler = new AutoScrollToSourceHandler() {
@@ -72,6 +67,7 @@ public class AnalysisUIOptions implements PersistentStateComponent<AnalysisUIOpt
 
   }
 
+  @NotNull
   public AnalysisUIOptions copy() {
     final AnalysisUIOptions result = new AnalysisUIOptions();
     XmlSerializerUtil.copyBean(this, result);

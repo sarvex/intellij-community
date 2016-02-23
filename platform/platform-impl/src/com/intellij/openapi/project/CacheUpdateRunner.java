@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,6 @@
  */
 package com.intellij.openapi.project;
 
-import com.intellij.ide.IdeBundle;
-import com.intellij.ide.caches.CacheUpdater;
 import com.intellij.ide.caches.FileContent;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationAdapter;
@@ -36,75 +34,32 @@ import com.intellij.util.Consumer;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class CacheUpdateRunner extends DumbModeTask {
+public class CacheUpdateRunner {
   private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.project.CacheUpdateRunner");
   private static final Key<Boolean> FAILED_TO_INDEX = Key.create("FAILED_TO_INDEX");
   private static final int PROC_COUNT = Runtime.getRuntime().availableProcessors();
-  private final Project myProject;
-  private final Collection<CacheUpdater> myUpdaters;
-  private CacheUpdateSession mySession;
 
-  CacheUpdateRunner(@NotNull Project project, @NotNull Collection<CacheUpdater> updaters) {
-    myProject = project;
-    myUpdaters = updaters;
-  }
-
-  @Override
-  public String toString() {
-    return new ArrayList<CacheUpdater>(myUpdaters).toString();
-  }
-
-  private int queryNeededFiles(@NotNull ProgressIndicator indicator) {
-    // can be queried twice in DumbService
-    return getSession(indicator).getFilesToUpdate().size();
-  }
-
-  @NotNull
-  private CacheUpdateSession getSession(@NotNull ProgressIndicator indicator) {
-    CacheUpdateSession session = mySession;
-    if (session == null) {
-      mySession = session = new CacheUpdateSession(myUpdaters, indicator);
-    }
-    return session;
-  }
-
-  private void processFiles(@NotNull final ProgressIndicator indicator, boolean processInReadAction) {
-    try {
-      Collection<VirtualFile> files = mySession.getFilesToUpdate();
-
-      processFiles(indicator, processInReadAction, files, myProject, new Consumer<FileContent>() {
-        @Override
-        public void consume(FileContent content) {
-          mySession.processFile(content);
-        }
-      });
-    }
-    catch (ProcessCanceledException e) {
-      mySession.canceled();
-      throw e;
-    }
-  }
+  private static final int FILE_SIZE_TO_SHOW_THRESHOLD = 500 * 1024;
 
   public static void processFiles(final ProgressIndicator indicator,
                                   boolean processInReadAction,
                                   Collection<VirtualFile> files,
                                   Project project, Consumer<FileContent> processor) {
     indicator.checkCanceled();
-    final FileContentQueue queue = new FileContentQueue();
+    final FileContentQueue queue = new FileContentQueue(files, indicator);
     final double total = files.size();
-    queue.queue(files, indicator);
+    queue.startLoading();
 
     Consumer<VirtualFile> progressUpdater = new Consumer<VirtualFile>() {
-      // need set here to handle queue.pushbacks after checkCancelled() in order
+      // need set here to handle queue push-backs after checkCancelled() in order
       // not to count the same file several times
       final Set<VirtualFile> processed = new THashSet<VirtualFile>();
-      private boolean fileNameWasShownAfterRestart;
+      private boolean fileNameWasShown;
 
       @Override
       public void consume(VirtualFile virtualFile) {
@@ -112,12 +67,12 @@ public class CacheUpdateRunner extends DumbModeTask {
         synchronized (processed) {
           boolean added = processed.add(virtualFile);
           indicator.setFraction(processed.size() / total);
-          if (!added) {
+          if (!added || (virtualFile.isValid() && virtualFile.getLength() > FILE_SIZE_TO_SHOW_THRESHOLD)) {
             indicator.setText2(virtualFile.getPresentableUrl());
-            fileNameWasShownAfterRestart = true;
-          } else if (fileNameWasShownAfterRestart) {
+            fileNameWasShown = true;
+          } else if (fileNameWasShown) {
             indicator.setText2("");
-            fileNameWasShownAfterRestart = false;
+            fileNameWasShown = false;
           }
         }
       }
@@ -134,16 +89,6 @@ public class CacheUpdateRunner extends DumbModeTask {
     if (project.isDisposed()) {
       indicator.cancel();
       indicator.checkCanceled();
-    }
-  }
-
-  private void updatingDone() {
-    try {
-      mySession.updatingDone();
-    }
-    catch (ProcessCanceledException e) {
-      mySession.canceled();
-      throw e;
     }
   }
 
@@ -174,10 +119,7 @@ public class CacheUpdateRunner extends DumbModeTask {
 
     final AtomicBoolean isFinished = new AtomicBoolean();
     try {
-      int threadsCount = Registry.intValue("caches.indexerThreadsCount");
-      if (threadsCount <= 0) {
-        threadsCount = Math.max(1, Math.min(PROC_COUNT - 1, 4));
-      }
+      int threadsCount = indexingThreadCount();
       if (threadsCount == 1 || application.isWriteAccessAllowed()) {
         Runnable process = new MyRunnable(innerIndicator, queue, isFinished, progressUpdater, processInReadAction, project, fileProcessor);
         ProgressManager.getInstance().runProcess(process, innerIndicator);
@@ -189,7 +131,7 @@ public class CacheUpdateRunner extends DumbModeTask {
           AtomicBoolean ref = new AtomicBoolean();
           finishedRefs[i] = ref;
           Runnable process = new MyRunnable(innerIndicator, queue, ref, progressUpdater, processInReadAction, project, fileProcessor);
-          futures[i] = ApplicationManager.getApplication().executeOnPooledThread(process);
+          futures[i] = application.executeOnPooledThread(process);
         }
         isFinished.set(waitForAll(finishedRefs, futures));
       }
@@ -199,6 +141,15 @@ public class CacheUpdateRunner extends DumbModeTask {
     }
 
     return isFinished.get();
+  }
+
+  public static int indexingThreadCount() {
+    int threadsCount = Registry.intValue("caches.indexerThreadsCount");
+    if (threadsCount <= 0) {
+      int coresToLeaveForOtherActivity = ApplicationManager.getApplication().isUnitTestMode() ? 0 : 1;
+      threadsCount = Math.max(1, Math.min(PROC_COUNT - coresToLeaveForOtherActivity, 4));
+    }
+    return threadsCount;
   }
 
   private static boolean waitForAll(@NotNull AtomicBoolean[] finishedRefs, @NotNull Future<?>[] futures) {
@@ -223,21 +174,6 @@ public class CacheUpdateRunner extends DumbModeTask {
       LOG.error(throwable);
     }
     return false;
-  }
-
-  @Override
-  public void performInDumbMode(@NotNull ProgressIndicator indicator) {
-    indicator.checkCanceled();
-    indicator.setIndeterminate(true);
-    indicator.setText(IdeBundle.message("progress.indexing.scanning"));
-    int count = queryNeededFiles(indicator);
-
-    indicator.setIndeterminate(false);
-    indicator.setText(IdeBundle.message("progress.indexing.updating"));
-    if (count > 0) {
-      processFiles(indicator, true);
-    }
-    updatingDone();
   }
 
   private static class MyRunnable implements Runnable {
@@ -286,7 +222,7 @@ public class CacheUpdateRunner extends DumbModeTask {
                 final VirtualFile file = fileContent.getVirtualFile();
                 try {
                   myProgressUpdater.consume(file);
-                  if (file.isValid() && !file.isDirectory() && !Boolean.TRUE.equals(file.getUserData(FAILED_TO_INDEX))) {
+                  if (!file.isDirectory() && !Boolean.TRUE.equals(file.getUserData(FAILED_TO_INDEX))) {
                     myProcessor.consume(fileContent);
                   }
                 }
@@ -320,7 +256,7 @@ public class CacheUpdateRunner extends DumbModeTask {
             );
           }
           catch (ProcessCanceledException e) {
-            myQueue.pushback(fileContent);
+            myQueue.pushBack(fileContent);
             return;
           }
           finally {

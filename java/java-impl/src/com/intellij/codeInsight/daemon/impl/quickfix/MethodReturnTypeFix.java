@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2009 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -145,15 +145,15 @@ public class MethodReturnTypeFix extends LocalQuickFixAndIntentionActionOnPsiEle
 
   // to clearly separate data
   private static class ReturnStatementAdder {
-    private final PsiElementFactory factory;
-    private final PsiType myTargetType;
+    @NotNull private final PsiElementFactory factory;
+    @NotNull private final PsiType myTargetType;
 
     private ReturnStatementAdder(@NotNull final PsiElementFactory factory, @NotNull final PsiType targetType) {
       this.factory = factory;
       myTargetType = targetType;
     }
 
-    public PsiReturnStatement addReturnForMethod(final PsiFile file, final PsiMethod method) {
+    private PsiReturnStatement addReturnForMethod(final PsiFile file, final PsiMethod method) {
       final PsiModifierList modifiers = method.getModifierList();
       if (modifiers.hasModifierProperty(PsiModifier.ABSTRACT) || method.getBody() == null) {
         return null;
@@ -170,7 +170,7 @@ public class MethodReturnTypeFix extends LocalQuickFixAndIntentionActionOnPsiEle
           return null; //must be an error
         }
         PsiReturnStatement returnStatement;
-        if (controlFlow != null && ControlFlowUtil.processReturns(controlFlow, visitor)) {
+        if (ControlFlowUtil.processReturns(controlFlow, visitor)) {
           // extra return statement not needed
           // get latest modified return statement and select...
           returnStatement = visitor.getLatestReturn();
@@ -234,7 +234,7 @@ public class MethodReturnTypeFix extends LocalQuickFixAndIntentionActionOnPsiEle
                                                                         false, null,
                                                                         myName,
                                                                         returnType,
-                                                                        RemoveUnusedParameterFix.getNewParametersInfo(method, null),
+                                                                        RemoveUnusedParameterFix.getNewParametersInfo(targetMethod, null),
                                                                         methodSignatureChangeVisitor);
       processor.run();
     }
@@ -299,7 +299,7 @@ public class MethodReturnTypeFix extends LocalQuickFixAndIntentionActionOnPsiEle
     }
 
     @Override
-    protected void performRefactoring(final UsageInfo[] usages) {
+    protected void performRefactoring(@NotNull final UsageInfo[] usages) {
       super.performRefactoring(usages);
 
       for (UsageInfo usage : usages) {
@@ -349,12 +349,12 @@ public class MethodReturnTypeFix extends LocalQuickFixAndIntentionActionOnPsiEle
                                                                            new PsiType[]{returnType},
                                                                            PsiUtil.getLanguageLevel(superClass));
 
-    final TypeMigrationRules rules = new TypeMigrationRules(TypeMigrationLabeler.getElementType(derivedClass));
+    final TypeMigrationRules rules = new TypeMigrationRules();
     final PsiSubstitutor compoundSubstitutor =
       TypeConversionUtil.getSuperClassSubstitutor(superClass, derivedClass, PsiSubstitutor.EMPTY).putAll(psiSubstitutor);
-    rules.setMigrationRootType(JavaPsiFacade.getElementFactory(project).createType(baseClass, compoundSubstitutor));
     rules.setBoundScope(new LocalSearchScope(derivedClass));
-    TypeMigrationProcessor.runHighlightingTypeMigration(project, editor, rules, referenceParameterList);
+    TypeMigrationProcessor.runHighlightingTypeMigration(project, editor, rules, referenceParameterList,
+                                                        JavaPsiFacade.getElementFactory(project).createType(baseClass, compoundSubstitutor));
 
     return false;
   }

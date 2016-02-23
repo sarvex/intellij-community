@@ -24,6 +24,7 @@ import com.intellij.lang.properties.ResourceBundle;
 import com.intellij.lang.properties.psi.PropertiesFile;
 import com.intellij.openapi.actionSystem.PlatformDataKeys;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
@@ -32,12 +33,11 @@ import com.intellij.util.SmartList;
 import gnu.trove.THashMap;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class ResourceBundleGrouper implements TreeStructureProvider, DumbAware {
+  private final static Logger LOG = Logger.getInstance(ResourceBundleGrouper.class);
+
   private final Project myProject;
 
   public ResourceBundleGrouper(Project project) {
@@ -57,13 +57,24 @@ public class ResourceBundleGrouper implements TreeStructureProvider, DumbAware {
           if (f instanceof PsiFile) {
             PropertiesFile propertiesFile = PropertiesImplUtil.getPropertiesFile((PsiFile)f);
             if (propertiesFile != null) {
-              ResourceBundle bundle = propertiesFile.getResourceBundle();
+              boolean isProcessed = false;
+              for (Collection<PropertiesFile> files : childBundles.values()) {
+                if (files.contains(propertiesFile)) {
+                  isProcessed = true;
+                  break;
+                }
+              }
+              if (isProcessed) continue;
+              PropertiesImplUtil.ResourceBundleWithCachedFiles resourceBundleWithCachedFiles =
+                PropertiesImplUtil.getResourceBundleWithCachedFiles(propertiesFile);
+              final ResourceBundle bundle = resourceBundleWithCachedFiles.getBundle();
               Collection<PropertiesFile> files = childBundles.get(bundle);
               if (files == null) {
-                files = new SmartList<PropertiesFile>();
+                files = new LinkedHashSet<PropertiesFile>();
                 childBundles.put(bundle, files);
               }
               files.add(propertiesFile);
+              files.addAll(resourceBundleWithCachedFiles.getFiles());
             }
           }
         }
@@ -76,15 +87,24 @@ public class ResourceBundleGrouper implements TreeStructureProvider, DumbAware {
             result.add(new ResourceBundleNode(myProject, resourceBundle, settings));
           }
         }
+
         for (AbstractTreeNode child : children) {
           Object f = child.getValue();
           if (f instanceof PsiFile) {
             PropertiesFile propertiesFile = PropertiesImplUtil.getPropertiesFile((PsiFile)f);
             if (propertiesFile != null) {
-              ResourceBundle bundle = propertiesFile.getResourceBundle();
+              ResourceBundle bundle = null;
+              for (Map.Entry<ResourceBundle, Collection<PropertiesFile>> e : childBundles.entrySet()) {
+                if (e.getValue().contains(propertiesFile)) {
+                  bundle = e.getKey();
+                  break;
+                }
+              }
+              LOG.assertTrue(bundle != null);
               if (childBundles.get(bundle).size() != 1) {
                 continue;
-              } else if (bundle instanceof CustomResourceBundle) {
+              }
+              else if (bundle instanceof CustomResourceBundle) {
                 final CustomResourceBundlePropertiesFileNode node =
                   new CustomResourceBundlePropertiesFileNode(myProject, (PsiFile)f, settings);
                 result.add(node);
@@ -101,15 +121,14 @@ public class ResourceBundleGrouper implements TreeStructureProvider, DumbAware {
 
   public Object getData(Collection<AbstractTreeNode> selected, String dataName) {
     if (selected == null) return null;
-    for (AbstractTreeNode selectedElement : selected) {
-      Object element = selectedElement.getValue();
-      if (PlatformDataKeys.DELETE_ELEMENT_PROVIDER.is(dataName)) {
+    if (PlatformDataKeys.DELETE_ELEMENT_PROVIDER.is(dataName)) {
+      for (AbstractTreeNode selectedElement : selected) {
+        Object element = selectedElement.getValue();
         if (element instanceof ResourceBundle) {
-          return new ResourceBundleDeleteProvider((ResourceBundle)element);
+          return new ResourceBundleDeleteProvider();
         }
       }
-    }
-    if (ResourceBundle.ARRAY_DATA_KEY.is(dataName)) {
+    } else if (ResourceBundle.ARRAY_DATA_KEY.is(dataName)) {
       final List<ResourceBundle> selectedElements = new ArrayList<ResourceBundle>();
       for (AbstractTreeNode node : selected) {
         final Object value = node.getValue();

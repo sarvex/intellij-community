@@ -437,6 +437,10 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
       }
 
       boolean mustBeFinal = false;
+      if (myExpr != null) {
+        final PsiElement parent = myExpr.getUserData(ElementToWorkOn.PARENT);
+        mustBeFinal = parent != null && PsiTreeUtil.getParentOfType(parent, PsiClass.class, PsiMethod.class) != method;
+      }
       for (PsiExpression occurrence : occurences) {
         if (PsiTreeUtil.getParentOfType(occurrence, PsiClass.class, PsiMethod.class) != method) {
           mustBeFinal = true;
@@ -554,7 +558,9 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
                                         ? new PsiElement[] {exprInRange}
                                         : CodeInsightUtil.findStatementsInRange(copy, elements[0].getTextRange().getStartOffset(),
                                                                                 elements[elements.length - 1].getTextRange().getEndOffset());
-      final MyExtractMethodProcessor processor = new MyExtractMethodProcessor(project, editor, elementsCopy);
+      final List<PsiMethod> enclosingMethodsInCopy = getEnclosingMethods(Util.getContainingMethod(elementsCopy[0]));
+      final MyExtractMethodProcessor processor = new MyExtractMethodProcessor(project, editor, elementsCopy, 
+                                                                              enclosingMethodsInCopy.get(enclosingMethodsInCopy.size() - 1));
       try {
         if (!processor.prepare()) return false;
         processor.showDialog();
@@ -696,13 +702,21 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
   }
 
   private static class MyExtractMethodProcessor extends ExtractMethodProcessor {
-    public MyExtractMethodProcessor(Project project, Editor editor, PsiElement[] elements) {
+    private final PsiMethod myTopEnclosingMethod;
+
+    public MyExtractMethodProcessor(Project project, Editor editor, PsiElement[] elements, PsiMethod topEnclosing) {
       super(project, editor, elements, null, REFACTORING_NAME, null, null);
+      myTopEnclosingMethod = topEnclosing;
     }
 
     @Override
     protected AbstractExtractDialog createExtractMethodDialog(boolean direct) {
       return new MyAbstractExtractDialog();
+    }
+
+    @Override
+    protected boolean isNeedToChangeCallContext() {
+      return false;
     }
 
     public void setMethodName(String methodName) {
@@ -746,7 +760,8 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
         final InputVariables inputVariables = getInputVariables();
         List<VariableData> datas = new ArrayList<VariableData>();
         for (VariableData data : inputVariables.getInputVariables()) {
-          if (data.variable instanceof PsiParameter) {
+          final PsiVariable variable = data.variable;
+          if (variable instanceof PsiParameter && myTopEnclosingMethod.equals(((PsiParameter)variable).getDeclarationScope())) {
             continue;
           }
           datas.add(data);

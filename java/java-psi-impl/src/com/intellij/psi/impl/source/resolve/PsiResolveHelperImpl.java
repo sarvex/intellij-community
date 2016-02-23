@@ -16,8 +16,10 @@
 package com.intellij.psi.impl.source.resolve;
 
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
+import com.intellij.psi.impl.JavaPsiImplementationHelper;
 import com.intellij.psi.impl.source.resolve.graphInference.PsiGraphInferenceHelper;
 import com.intellij.psi.infos.CandidateInfo;
 import com.intellij.psi.scope.MethodProcessorSetupFailedException;
@@ -25,7 +27,6 @@ import com.intellij.psi.scope.processor.MethodCandidatesProcessor;
 import com.intellij.psi.scope.processor.MethodResolverProcessor;
 import com.intellij.psi.scope.util.PsiScopesUtil;
 import com.intellij.psi.util.PsiUtil;
-import com.intellij.psi.util.TypeConversionUtil;
 import com.intellij.util.IncorrectOperationException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -40,7 +41,7 @@ public class PsiResolveHelperImpl implements PsiResolveHelper {
 
   @Override
   @NotNull
-  public JavaResolveResult resolveConstructor(PsiClassType classType, PsiExpressionList argumentList, PsiElement place) {
+  public JavaResolveResult resolveConstructor(PsiClassType classType, @NotNull PsiExpressionList argumentList, PsiElement place) {
     JavaResolveResult[] result = multiResolveConstructor(classType, argumentList, place);
     return result.length == 1 ? result[0] : JavaResolveResult.EMPTY;
   }
@@ -60,7 +61,6 @@ public class PsiResolveHelperImpl implements PsiResolveHelper {
       processor = new MethodResolverProcessor(anonymous, argumentList, place, place.getContainingFile());
       aClass = anonymous.getBaseClassType().resolve();
       if (aClass == null) return JavaResolveResult.EMPTY_ARRAY;
-      substitutor = substitutor.putAll(TypeConversionUtil.getSuperClassSubstitutor(aClass, anonymous, substitutor));
     }
     else {
       processor = new MethodResolverProcessor(aClass, argumentList, place, place.getContainingFile());
@@ -208,6 +208,12 @@ public class PsiResolveHelperImpl implements PsiResolveHelper {
                                                  LanguageLevel languageLevel) {
     return getInferenceHelper(languageLevel)
       .getSubstitutionForTypeParameter(typeParam, param, arg, isContraVariantPosition, languageLevel);
+  }
+
+  @NotNull
+  @Override
+  public LanguageLevel getEffectiveLanguageLevel(@Nullable VirtualFile virtualFile) {
+    return JavaPsiImplementationHelper.getInstance(myManager.getProject()).getEffectiveLanguageLevel(virtualFile);
   }
 
   @NotNull

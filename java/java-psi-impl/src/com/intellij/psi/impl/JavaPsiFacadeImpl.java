@@ -16,6 +16,7 @@
 package com.intellij.psi.impl;
 
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressIndicatorProvider;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
@@ -32,14 +33,13 @@ import com.intellij.psi.impl.source.JavaDummyHolderFactory;
 import com.intellij.psi.impl.source.resolve.FileContextUtil;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PsiModificationTracker;
-import com.intellij.reference.SoftReference;
 import com.intellij.util.ConcurrencyUtil;
 import com.intellij.util.Processor;
-import com.intellij.util.SmartList;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.MessageBus;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.*;
@@ -49,9 +49,12 @@ import java.util.concurrent.ConcurrentMap;
  * @author max
  */
 public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
+  private static final Logger LOG = Logger.getInstance(JavaPsiFacadeImpl.class);
+
   private volatile PsiElementFinder[] myElementFinders;
   private final PsiConstantEvaluationHelper myConstantEvaluationHelper;
-  private volatile SoftReference<ConcurrentMap<String, PsiPackage>> myPackageCache;
+  private final ConcurrentMap<String, PsiPackage> myPackageCache = ContainerUtil.createConcurrentSoftValueMap();
+  private final ConcurrentMap<GlobalSearchScope, Map<String, PsiClass>> myClassCache = ContainerUtil.createConcurrentWeakKeySoftValueMap();
   private final Project myProject;
   private final JavaFileManager myFileManager;
 
@@ -71,10 +74,11 @@ public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
 
         @Override
         public void modificationCountChanged() {
+          myClassCache.clear();
           final long now = modificationTracker.getJavaStructureModificationCount();
           if (lastTimeSeen != now) {
             lastTimeSeen = now;
-            myPackageCache = null;
+            myPackageCache.clear();
           }
         }
       });
@@ -87,6 +91,24 @@ public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
   public PsiClass findClass(@NotNull final String qualifiedName, @NotNull GlobalSearchScope scope) {
     ProgressIndicatorProvider.checkCanceled(); // We hope this method is being called often enough to cancel daemon processes smoothly
 
+    Map<String, PsiClass> map = myClassCache.get(scope);
+    if (map == null) {
+      map = ContainerUtil.createConcurrentWeakValueMap();
+      map = ConcurrencyUtil.cacheOrGet(myClassCache, scope, map);
+    }
+    PsiClass result = map.get(qualifiedName);
+    if (result == null) {
+      result = doFindClass(qualifiedName, scope);
+      if (result != null) {
+        map.put(qualifiedName, result);
+      }
+    }
+
+    return result;
+  }
+
+  @Nullable
+  private PsiClass doFindClass(@NotNull String qualifiedName, @NotNull GlobalSearchScope scope) {
     if (shouldUseSlowResolve()) {
       PsiClass[] classes = findClassesInDumbMode(qualifiedName, scope);
       if (classes.length != 0) {
@@ -95,9 +117,14 @@ public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
       return null;
     }
 
-    for (PsiElementFinder finder : finders()) {
+    PsiElementFinder[] finders = finders();
+    Condition<PsiClass> classesFilter = getFilterFromFinders(scope, finders);
+
+    for (PsiElementFinder finder : finders) {
       PsiClass aClass = finder.findClass(qualifiedName, scope);
-      if (aClass != null) return aClass;
+      if (aClass != null && (classesFilter == null || classesFilter.value(aClass))) {
+        return aClass;
+      }
     }
 
     return null;
@@ -117,7 +144,7 @@ public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
       return PsiClass.EMPTY_ARRAY;
     }
 
-    if (pkg == null || !pkg.containsClassNamed(className)) {
+    if (pkg == null) {
       return PsiClass.EMPTY_ARRAY;
     }
 
@@ -131,13 +158,30 @@ public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
       return findClassesInDumbMode(qualifiedName, scope);
     }
 
-    List<PsiClass> classes = new SmartList<PsiClass>();
-    for (PsiElementFinder finder : finders()) {
+    PsiElementFinder[] finders = finders();
+    Condition<PsiClass> classesFilter = getFilterFromFinders(scope, finders);
+
+    List<PsiClass> result = null;
+    for (PsiElementFinder finder : finders) {
       PsiClass[] finderClasses = finder.findClasses(qualifiedName, scope);
-      ContainerUtil.addAll(classes, finderClasses);
+      if (finderClasses.length != 0) {
+        if (result == null) result = new ArrayList<PsiClass>(finderClasses.length);
+        filterClassesAndAppend(finder, classesFilter, finderClasses, result);
+      }
     }
 
-    return classes.toArray(new PsiClass[classes.size()]);
+    return result == null || result.isEmpty() ? PsiClass.EMPTY_ARRAY : result.toArray(new PsiClass[result.size()]);
+  }
+
+  private static Condition<PsiClass> getFilterFromFinders(@NotNull GlobalSearchScope scope, @NotNull PsiElementFinder[] finders) {
+    Condition<PsiClass> filter = null;
+    for (PsiElementFinder finder : finders) {
+      Condition<PsiClass> finderFilter = finder.getClassesFilter(scope);
+      if (finderFilter != null) {
+        filter = filter == null ? finderFilter : Conditions.and(filter, finderFilter);
+      }
+    }
+    return filter;
   }
 
   private boolean shouldUseSlowResolve() {
@@ -171,12 +215,7 @@ public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
 
   @Override
   public PsiPackage findPackage(@NotNull String qualifiedName) {
-    ConcurrentMap<String, PsiPackage> cache = SoftReference.dereference(myPackageCache);
-    if (cache == null) {
-      myPackageCache = new SoftReference<ConcurrentMap<String, PsiPackage>>(cache = ContainerUtil.newConcurrentMap());
-    }
-
-    PsiPackage aPackage = cache.get(qualifiedName);
+    PsiPackage aPackage = myPackageCache.get(qualifiedName);
     if (aPackage != null) {
       return aPackage;
     }
@@ -184,7 +223,7 @@ public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
     for (PsiElementFinder finder : filteredFinders()) {
       aPackage = finder.findPackage(qualifiedName);
       if (aPackage != null) {
-        return ConcurrencyUtil.cacheOrGet(cache, qualifiedName, aPackage);
+        return ConcurrencyUtil.cacheOrGet(myPackageCache, qualifiedName, aPackage);
       }
     }
 
@@ -231,15 +270,33 @@ public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
 
   @NotNull
   public PsiClass[] getClasses(@NotNull PsiPackage psiPackage, @NotNull GlobalSearchScope scope) {
+    PsiElementFinder[] finders = filteredFinders();
+    Condition<PsiClass> classesFilter = getFilterFromFinders(scope, finders);
+
     List<PsiClass> result = null;
-    for (PsiElementFinder finder : filteredFinders()) {
+    for (PsiElementFinder finder : finders) {
       PsiClass[] classes = finder.getClasses(psiPackage, scope);
       if (classes.length == 0) continue;
-      if (result == null) result = new ArrayList<PsiClass>();
-      ContainerUtil.addAll(result, classes);
+      if (result == null) result = new ArrayList<PsiClass>(classes.length);
+      filterClassesAndAppend(finder, classesFilter, classes, result);
     }
 
     return result == null ? PsiClass.EMPTY_ARRAY : result.toArray(new PsiClass[result.size()]);
+  }
+
+  private static void filterClassesAndAppend(PsiElementFinder finder,
+                                             @Nullable Condition<PsiClass> classesFilter,
+                                             @NotNull PsiClass[] classes,
+                                             @NotNull List<PsiClass> result) {
+    for (PsiClass psiClass : classes) {
+      if (psiClass == null) {
+        LOG.error("Finder " + finder + " returned null PsiClass");
+        continue;
+      }
+      if (classesFilter == null || classesFilter.value(psiClass)) {
+        result.add(psiClass);
+      }
+    }
   }
 
   @NotNull
@@ -359,5 +416,10 @@ public class JavaPsiFacadeImpl extends JavaPsiFacadeEx {
   @Override
   public void setAssertOnFileLoadingFilter(@NotNull final VirtualFileFilter filter, Disposable parentDisposable) {
     ((PsiManagerImpl)PsiManager.getInstance(myProject)).setAssertOnFileLoadingFilter(filter, parentDisposable);
+  }
+
+  @TestOnly
+  public void clearFindersCache() {
+    myElementFinders = null;
   }
 }

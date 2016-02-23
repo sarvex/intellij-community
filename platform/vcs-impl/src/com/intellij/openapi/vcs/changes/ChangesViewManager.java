@@ -14,15 +14,10 @@
  * limitations under the License.
  */
 
-/*
- * Created by IntelliJ IDEA.
- * User: yole
- * Date: 11.07.2006
- * Time: 15:29:25
- */
 package com.intellij.openapi.vcs.changes;
 
-import com.intellij.diff.util.DiffUserDataKeysEx;
+import com.intellij.diff.util.DiffPlaces;
+import com.intellij.diff.util.DiffUtil;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.CommonActionsManager;
 import com.intellij.ide.TreeExpander;
@@ -40,9 +35,6 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.SimpleToolWindowPanel;
 import com.intellij.openapi.ui.Splitter;
 import com.intellij.openapi.util.*;
-import com.intellij.diff.util.DiffPlaces;
-import com.intellij.diff.util.DiffUserDataKeys;
-import com.intellij.diff.util.DiffUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.ProjectLevelVcsManager;
 import com.intellij.openapi.vcs.VcsBundle;
@@ -53,6 +45,7 @@ import com.intellij.openapi.vcs.changes.ui.ChangesViewContentManager;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.impl.DebugUtil;
 import com.intellij.ui.IdeBorderFactory;
+import com.intellij.ui.JBColor;
 import com.intellij.ui.ScrollPaneFactory;
 import com.intellij.ui.SideBorder;
 import com.intellij.ui.content.Content;
@@ -82,7 +75,7 @@ import java.util.Collections;
 import java.util.List;
 
 public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, ProjectComponent {
-  public static final int UNVERSIONED_MAX_SIZE = 50;
+  private static final int UNVERSIONED_MAX_SIZE = 50;
   private boolean SHOW_FLATTEN_MODE = true;
   private boolean SHOW_IGNORED_MODE = false;
 
@@ -123,12 +116,17 @@ public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, Pro
     Disposer.register(project, myView);
     myRepaintAlarm = new Alarm(Alarm.ThreadToUse.SWING_THREAD, project);
     myDiffDetails = new MyChangeProcessor(myProject);
-    myDiffDetails.init();
     myTsl = new TreeSelectionListener() {
       @Override
       public void valueChanged(TreeSelectionEvent e) {
         if (LOG.isDebugEnabled()) {
-          LOG.debug("selection changed. selected:  " + toStringPaths(myView.getSelectionPaths()) + " from: " + DebugUtil.currentStackTrace());
+          String message = "selection changed. selected:  " + toStringPaths(myView.getSelectionPaths());
+          if (LOG.isTraceEnabled()) {
+            LOG.trace(message + " from: " + DebugUtil.currentStackTrace());
+          }
+          else {
+            LOG.debug(message);
+          }
         }
         SwingUtilities.invokeLater(new Runnable() {
           @Override
@@ -202,19 +200,13 @@ public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, Pro
 
     DefaultActionGroup group = (DefaultActionGroup) ActionManager.getInstance().getAction("ChangesViewToolbar");
 
-    ActionManager.getInstance().getAction("ChangesView.Refresh").registerCustomShortcutSet(CommonShortcuts.getRerun(), panel);
-    ActionManager.getInstance().getAction("ChangesView.NewChangeList").registerCustomShortcutSet(CommonShortcuts.getNew(), panel);
-    ActionManager.getInstance().getAction("ChangesView.RemoveChangeList").registerCustomShortcutSet(CommonShortcuts.getDelete(), panel);
-    AnAction moveToChangeList = ActionManager.getInstance().getAction(IdeActions.MOVE_TO_ANOTHER_CHANGE_LIST);
-    moveToChangeList.registerCustomShortcutSet(new CompositeShortcutSet(moveToChangeList.getShortcutSet(),
-                                                                        CommonShortcuts.getMove()), panel);
-    ActionManager.getInstance().getAction("ChangesView.Rename").registerCustomShortcutSet(CommonShortcuts.getRename(), panel);
-    ActionManager.getInstance().getAction("ChangesView.SetDefault").registerCustomShortcutSet(
-      new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_U, KeyEvent.ALT_DOWN_MASK | ctrlMask())), panel);
-
-    final CustomShortcutSet diffShortcut =
-      new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_D, ctrlMask()));
-    ActionManager.getInstance().getAction("ChangesView.Diff").registerCustomShortcutSet(diffShortcut, panel);
+    EmptyAction.registerWithShortcutSet("ChangesView.Refresh", CommonShortcuts.getRerun(), panel);
+    EmptyAction.registerWithShortcutSet("ChangesView.NewChangeList", CommonShortcuts.getNew(), panel);
+    EmptyAction.registerWithShortcutSet("ChangesView.RemoveChangeList", CommonShortcuts.getDelete(), panel);
+    EmptyAction.registerWithShortcutSet(IdeActions.MOVE_TO_ANOTHER_CHANGE_LIST, CommonShortcuts.getMove(), panel);
+    EmptyAction.registerWithShortcutSet("ChangesView.Rename",CommonShortcuts.getRename() , panel);
+    EmptyAction.registerWithShortcutSet("ChangesView.SetDefault", new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_U, InputEvent.ALT_DOWN_MASK | ctrlMask())), panel);
+    EmptyAction.registerWithShortcutSet("ChangesView.Diff", CommonShortcuts.getDiff(), panel);
 
     JPanel toolbarPanel = new JPanel(new BorderLayout());
     ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar(ActionPlaces.CHANGES_VIEW_TOOLBAR, group, false);
@@ -228,9 +220,7 @@ public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, Pro
     visualActionsGroup.add(CommonActionsManager.getInstance().createCollapseAllAction(expander, panel));
 
     ToggleShowFlattenAction showFlattenAction = new ToggleShowFlattenAction();
-    showFlattenAction.registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_P,
-                                                                                             ctrlMask())),
-                                                panel);
+    showFlattenAction.registerCustomShortcutSet(new CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_P, ctrlMask())), panel);
     visualActionsGroup.add(showFlattenAction);
     visualActionsGroup.add(ActionManager.getInstance().getAction(IdeActions.ACTION_COPY));
     visualActionsGroup.add(new ToggleShowIgnoredAction());
@@ -305,7 +295,7 @@ public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, Pro
     return SystemInfo.isMac ? InputEvent.META_DOWN_MASK : InputEvent.CTRL_DOWN_MASK;
   }
 
-  public void updateProgressComponent(final Factory<JComponent> progress) {
+  private void updateProgressComponent(final Factory<JComponent> progress) {
     //noinspection SSBasedInspection
     SwingUtilities.invokeLater(new Runnable() {
       public void run() {
@@ -336,7 +326,7 @@ public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, Pro
       @Override
       public JComponent create() {
         JLabel label = new JLabel(text);
-        label.setForeground(isError ? Color.red : UIUtil.getLabelForeground());
+        label.setForeground(isError ? JBColor.RED : UIUtil.getLabelForeground());
         return label;
       }
     };
@@ -359,7 +349,7 @@ public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, Pro
     }
   }
 
-  void refreshView() {
+  private void refreshView() {
     if (myDisposed || ! myProject.isInitialized() || ApplicationManager.getApplication().isUnitTestMode()) return;
     if (! ProjectLevelVcsManager.getInstance(myProject).hasActiveVcss()) return;
 
@@ -501,7 +491,7 @@ public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, Pro
     }
   }
 
-  public class ToggleShowFlattenAction extends ToggleAction implements DumbAware {
+  private class ToggleShowFlattenAction extends ToggleAction implements DumbAware {
     public ToggleShowFlattenAction() {
       super(VcsBundle.message("changes.action.show.directories.text"),
             VcsBundle.message("changes.action.show.directories.description"),
@@ -517,7 +507,7 @@ public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, Pro
     }
   }
 
-  public class ToggleShowIgnoredAction extends ToggleAction implements DumbAware {
+  private class ToggleShowIgnoredAction extends ToggleAction implements DumbAware {
     public ToggleShowIgnoredAction() {
       super(VcsBundle.message("changes.action.show.ignored.text"),
             VcsBundle.message("changes.action.show.ignored.description"),
@@ -563,8 +553,7 @@ public class ChangesViewManager implements ChangesViewI, JDOMExternalizable, Pro
 
   private class MyChangeProcessor extends CacheChangeProcessor {
     public MyChangeProcessor(@NotNull Project project) {
-      super(project);
-      putContextUserData(DiffUserDataKeysEx.PLACE, DiffPlaces.CHANGES_VIEW);
+      super(project, DiffPlaces.CHANGES_VIEW);
     }
 
     @Override

@@ -15,14 +15,20 @@
  */
 package org.jetbrains.concurrency;
 
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.util.ActionCallback;
 import com.intellij.openapi.util.AsyncResult;
 import com.intellij.util.Consumer;
 import com.intellij.util.Function;
+import com.intellij.util.ThreeState;
+import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
+import java.util.List;
 
 public abstract class Promise<T> {
   public static final Promise<Void> DONE = new DonePromise<Void>(null);
@@ -65,8 +71,13 @@ public abstract class Promise<T> {
   }
 
   @NotNull
-  public static Promise<Void> all(@NotNull Collection<Promise<?>> promises) {
-    return all(promises, null);
+  public static Promise<?> all(@NotNull Collection<Promise<?>> promises) {
+    if (promises.size() == 1) {
+      return promises instanceof List ? ((List<Promise<?>>)promises).get(0) : promises.iterator().next();
+    }
+    else {
+      return all(promises, null);
+    }
   }
 
   @NotNull
@@ -81,14 +92,46 @@ public abstract class Promise<T> {
     Consumer<Throwable> rejected = new Consumer<Throwable>() {
       @Override
       public void consume(Throwable error) {
-        if (totalPromise.state == AsyncPromise.State.PENDING) {
-          totalPromise.setError(error);
-        }
+        totalPromise.setError(error);
       }
     };
 
     for (Promise<?> promise : promises) {
       //noinspection unchecked
+      promise.done(done);
+      promise.rejected(rejected);
+    }
+    return totalPromise;
+  }
+
+  public static <T> Promise<T> any(@NotNull final Collection<Promise<T>> promises, @NotNull final String totalError) {
+    if (promises.isEmpty()) {
+      //noinspection unchecked
+      return (Promise<T>)DONE;
+    }
+    else if (promises.size() == 1) {
+      return ContainerUtil.getFirstItem(promises);
+    }
+
+    final AsyncPromise<T> totalPromise = new AsyncPromise<T>();
+    Consumer<T> done = new Consumer<T>() {
+      @Override
+      public void consume(T result) {
+        totalPromise.setResult(result);
+      }
+    };
+    Consumer<Throwable> rejected = new Consumer<Throwable>() {
+      private volatile int toConsume = promises.size();
+
+      @Override
+      public void consume(Throwable throwable) {
+        if (--toConsume <= 0) {
+          totalPromise.setError(totalError);
+        }
+      }
+    };
+
+    for (Promise<? extends T> promise : promises) {
       promise.done(done);
       promise.rejected(rejected);
     }
@@ -106,7 +149,7 @@ public abstract class Promise<T> {
     }).doWhenRejected(new Consumer<String>() {
       @Override
       public void consume(String error) {
-        promise.setError(createError(error));
+        promise.setError(createError(error == null ? "Internal error" : error));
       }
     });
     return promise;
@@ -123,36 +166,46 @@ public abstract class Promise<T> {
     }).doWhenRejected(new Consumer<String>() {
       @Override
       public void consume(String error) {
-        promise.setError(createError(error));
+        promise.setError(error);
       }
     });
     return promise;
   }
 
   @NotNull
-  public abstract Promise<T> done(@NotNull Consumer<T> done);
+  public abstract Promise<T> done(@NotNull Consumer<? super T> done);
 
   @NotNull
-  public abstract Promise<T> processed(@NotNull AsyncPromise<T> fulfilled);
+  public abstract Promise<T> processed(@NotNull AsyncPromise<? super T> fulfilled);
 
   @NotNull
   public abstract Promise<T> rejected(@NotNull Consumer<Throwable> rejected);
 
-  public abstract Promise<T> processed(@NotNull Consumer<T> processed);
+  public abstract Promise<T> processed(@NotNull Consumer<? super T> processed);
 
   @NotNull
-  public abstract <SUB_RESULT> Promise<SUB_RESULT> then(@NotNull Function<T, SUB_RESULT> done);
+  public abstract <SUB_RESULT> Promise<SUB_RESULT> then(@NotNull Function<? super T, ? extends SUB_RESULT> done);
 
   @NotNull
-  public abstract <SUB_RESULT> Promise<SUB_RESULT> then(@NotNull AsyncFunction<T, SUB_RESULT> done);
+  public abstract <SUB_RESULT> Promise<SUB_RESULT> thenAsync(@NotNull AsyncFunction<? super T, SUB_RESULT> done);
 
   @NotNull
   public abstract State getState();
 
   @SuppressWarnings("ExceptionClassNameDoesntEndWithException")
   public static class MessageError extends RuntimeException {
+    private final ThreeState log;
+
     public MessageError(@NotNull String error) {
       super(error);
+
+      log = ThreeState.UNSURE;
+    }
+
+    public MessageError(@NotNull String error, boolean log) {
+      super(error);
+
+      this.log = ThreeState.fromBoolean(log);
     }
 
     @NotNull
@@ -162,5 +215,20 @@ public abstract class Promise<T> {
     }
   }
 
-  abstract void notify(@NotNull AsyncPromise<T> child);
+  /**
+   * Log error if not message error
+   */
+  public static void logError(@NotNull Logger logger, @NotNull Throwable e) {
+    if (e instanceof MessageError) {
+      ThreeState log = ((MessageError)e).log;
+      if (log == ThreeState.YES || (log == ThreeState.UNSURE && ApplicationManager.getApplication().isUnitTestMode())) {
+        logger.error(e);
+      }
+    }
+    else if (!(e instanceof ProcessCanceledException)) {
+      logger.error(e);
+    }
+  }
+
+  public abstract void notify(@NotNull AsyncPromise<? super T> child);
 }

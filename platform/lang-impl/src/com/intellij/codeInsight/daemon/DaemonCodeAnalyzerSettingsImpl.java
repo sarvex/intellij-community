@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,17 +20,15 @@ import com.intellij.codeInspection.ex.InspectionProfileManagerImpl;
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
-import com.intellij.openapi.components.StoragePathMacros;
 import com.intellij.openapi.util.JDOMUtil;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.profile.codeInspection.InspectionProfileManager;
 import com.intellij.util.xmlb.SkipDefaultsSerializationFilter;
 import com.intellij.util.xmlb.XmlSerializer;
 import org.jdom.Element;
 
 @State(
   name = "DaemonCodeAnalyzerSettings",
-  storages = @Storage(file = StoragePathMacros.APP_CONFIG + "/editor.codeinsight.xml")
+  storages = @Storage("editor.codeinsight.xml")
 )
 public class DaemonCodeAnalyzerSettingsImpl extends DaemonCodeAnalyzerSettings implements PersistentStateComponent<Element>, Cloneable {
   @Override
@@ -52,8 +50,8 @@ public class DaemonCodeAnalyzerSettingsImpl extends DaemonCodeAnalyzerSettings i
   @Override
   public Element getState() {
     Element element = XmlSerializer.serialize(this, new SkipDefaultsSerializationFilter());
-    String profile = InspectionProfileManager.getInstance().getRootProfile().getName();
-    if (!"Default".equals(profile)) {
+    String profile = InspectionProfileManagerImpl.getInstanceImpl().getRootProfileName();
+    if (!InspectionProfileImpl.DEFAULT_PROFILE_NAME.equals(profile)) {
       element.setAttribute("profile", profile);
     }
     return element;

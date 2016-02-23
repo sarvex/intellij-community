@@ -15,7 +15,6 @@
  */
 package com.jetbrains.python.refactoring.classes.pullUp;
 
-import com.intellij.util.ArrayUtil;
 import com.jetbrains.python.psi.LanguageLevel;
 import com.jetbrains.python.psi.PyClass;
 import com.jetbrains.python.psi.PyElement;
@@ -112,6 +111,20 @@ public class PyPullUpTest extends PyClassRefactoringTest {
     checkMultiFile(modules);
   }
 
+  // PY-16747
+  public void testAbstractMethodDocStringIndentationPreserved() {
+    myFixture.configureByFile(getMultiFileBaseName() + ".py");
+    doPullUp("B", "A", true, ".m");
+    myFixture.checkResultByFile(getMultiFileBaseName() + ".after.py");
+  }
+
+  // PY-16770
+  public void testAbstractMethodDocStringPrefixPreserved() {
+    myFixture.configureByFile(getMultiFileBaseName() + ".py");
+    doPullUp("B", "A", true, ".m");
+    myFixture.checkResultByFile(getMultiFileBaseName() + ".after.py");
+  }
+
   private void doMultiFileTest() {
     final String[] modules = {"Class", "SuperClass"};
     configureMultiFile(modules);
@@ -147,7 +160,7 @@ public class PyPullUpTest extends PyClassRefactoringTest {
    */
   private void checkAbstract(@NotNull final String... methodNames) {
     final String[] modules = {"Class", "SuperClass"};
-    configureMultiFile(ArrayUtil.mergeArrays(modules, "abc"));
+    configureMultiFile(modules);
     doPullUp("Child", "Parent", true, methodNames);
     checkMultiFile(modules);
   }

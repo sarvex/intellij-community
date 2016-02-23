@@ -1,10 +1,25 @@
+/*
+ * Copyright 2000-2015 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.util.net.ssl;
 
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.util.Ref;
-import com.intellij.testFramework.PlatformTestCase;
+import com.intellij.testFramework.LightPlatformTestCase;
 import com.intellij.testFramework.PlatformTestUtil;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -25,7 +40,7 @@ import static com.intellij.util.net.ssl.ConfirmingTrustManager.MutableTrustManag
 /**
  * @author Mikhail Golubev
  */
-public class CertificateTest extends PlatformTestCase {
+public class CertificateTest extends LightPlatformTestCase {
   @NonNls private static final String AUTHORITY_CN = "certificates-tests.labs.intellij.net";
 
   @NonNls private static final String TRUSTED_CERT_CN = "trusted.certificates-tests.labs.intellij.net";
@@ -112,6 +127,7 @@ public class CertificateTest extends PlatformTestCase {
 
     final long interruptionTimeout = CertificateManager.DIALOG_VISIBILITY_TIMEOUT + 1000;
     // Will be interrupted after at most interruptionTimeout (6 seconds originally)
+    Thread[] t = {null};
     ApplicationManager.getApplication().invokeAndWait(new Runnable() {
       @Override
       public void run() {
@@ -147,11 +163,13 @@ public class CertificateTest extends PlatformTestCase {
             fail("Deadlock was not detected in time");
           }
         }
+        t[0] = thread;
       }
     }, ModalityState.any());
     if (!throwableRef.isNull()) {
       throw new AssertionError(throwableRef.get());
     }
+    t[0].join();
   }
 
   @Override
@@ -177,9 +195,13 @@ public class CertificateTest extends PlatformTestCase {
       assertEmpty(myTrustManager.getCertificates());
     }
     finally {
-      myClient.close();
+      try {
+        myClient.close();
+      }
+      finally {
+        super.tearDown();
+      }
     }
-    super.tearDown();
   }
 
   private static String getTestDataPath() {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,14 +75,7 @@ public class Patches {
    * https://bugs.openjdk.java.net/browse/JDK-8020443
    */
   public static final boolean SUN_BUG_ID_8020443 =
-    SystemInfo.isXWindow && SystemInfo.isJavaVersionAtLeast("1.7") && !SystemInfo.isJavaVersionAtLeast("1.9");
-
-  /**
-   * XToolkit.getScreenInsets() may be very slow.
-   * See https://bugs.openjdk.java.net/browse/JDK-8004103.
-   */
-  public static final boolean JDK_BUG_ID_8004103 =
-    SystemInfo.isXWindow && !GraphicsEnvironment.isHeadless() && SystemInfo.isJavaVersionAtLeast("1.7");
+    SystemInfo.isXWindow && SystemInfo.isJavaVersionAtLeast("1.7") && !SystemInfo.isJavaVersionAtLeast("1.8.0_60");
 
   /**
    * On some WMs modal dialogs may show behind full screen window.
@@ -98,14 +91,61 @@ public class Patches {
   public static final boolean SUN_BUG_ID_7179799 = SystemInfo.isWindows && !SystemInfo.isJavaVersionAtLeast("1.8");
 
   /**
+   * Frame size reverts meaning of maximized attribute if frame size close to display.
+   * See http://bugs.openjdk.java.net/browse/JDK-8007219
+   * Fixed in JDK 8.
+   */
+  public static final boolean JDK_BUG_ID_8007219 = SystemInfo.isMac
+                                                   && SystemInfo.isJavaVersionAtLeast("1.7")
+                                                   && !SystemInfo.isJavaVersionAtLeast("1.8");
+
+  /**
    * Marker field to find all usages of the reflective access to JDK 7-specific methods
    * which need to be changed when migrated to JDK 7
    */
-  public static final boolean USE_REFLECTION_TO_ACCESS_JDK7 = true;
+  public static final boolean USE_REFLECTION_TO_ACCESS_JDK7 = Boolean.valueOf(true);
+
+  /**
+   * Marker field to find all usages of the reflective access to JDK 7-specific methods
+   * which need to be changed when migrated to JDK 8
+   */
+  public static final boolean USE_REFLECTION_TO_ACCESS_JDK8 = Boolean.valueOf(true);
 
   /**
    * AtomicIntegerFieldUpdater does not work when SecurityManager is installed
    * fixed in JDK8
    */
   public static final boolean JDK_BUG_ID_7103570 = true;
+
+  /**
+   * Support default methods in JDI
+   * See <a href="https://bugs.openjdk.java.net/browse/JDK-8042123">JDK-8042123</a>
+   */
+  public static final boolean JDK_BUG_ID_8042123 = !SystemInfo.isJavaVersionAtLeast("1.8.0_40");
+
+  /**
+   * JDK on Mac detects font style for system fonts based only on their name (PostScript name).
+   * This doesn't work for some fonts which don't use recognizable style suffixes in their names.
+   * Corresponding JDK request for enhancement - <a href="https://bugs.openjdk.java.net/browse/JDK-8139151">JDK-8139151</a>.
+   */
+  public static final boolean JDK_MAC_FONT_STYLE_DETECTION_WORKAROUND = SystemInfo.isMac;
+
+  /**
+   * Older JDK versions could mistakenly use derived italics font, when genuine italics font was available in the system.
+   * The issue was fixed in JDK 1.8.0_60 as part of <a href="https://bugs.openjdk.java.net/browse/JDK-8064833">JDK-8064833</a>.
+   */
+  public static final boolean JDK_MAC_FONT_STYLE_BUG = SystemInfo.isMac && !SystemInfo.isJavaVersionAtLeast("1.8.0_60");
+
+  /**
+   * On Mac OS font ligatures are not supported for natively loaded fonts, font needs to be loaded explicitly by JDK. 
+   */
+  public static final boolean JDK_BUG_ID_7162125 = SystemInfo.isMac && !SystemInfo.isJavaVersionAtLeast("1.9");
+
+  /**
+   * XToolkit.getScreenInsets() may be very slow.
+   * See https://bugs.openjdk.java.net/browse/JDK-8004103.
+   */
+  public static boolean isJdkBugId8004103() {
+    return SystemInfo.isXWindow && !GraphicsEnvironment.isHeadless() && SystemInfo.isJavaVersionAtLeast("1.7");
+  }
 }

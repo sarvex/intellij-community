@@ -135,8 +135,9 @@ public class EditorHyperlinkSupport {
           @Override
           public void run() {
             if (hyperlinkInfo instanceof HyperlinkInfoBase) {
-              RelativePoint point = new RelativePoint(myEditor.getContentComponent(), myEditor.logicalPositionToXY(logical));
-              ((HyperlinkInfoBase)hyperlinkInfo).navigate(myProject, point);
+              final Point point = myEditor.logicalPositionToXY(logical);
+              final MouseEvent event = new MouseEvent(myEditor.getContentComponent(), 0, 0, 0, point.x, point.y, 1, false);
+              ((HyperlinkInfoBase)hyperlinkInfo).navigate(myProject, new RelativePoint(event));
             }
             else {
               hyperlinkInfo.navigate(myProject);
@@ -183,8 +184,7 @@ public class EditorHyperlinkSupport {
                                                         new FilteringProcessor<RangeHighlighterEx>(new Condition<RangeHighlighterEx>() {
                                                           @Override
                                                           public boolean value(RangeHighlighterEx rangeHighlighterEx) {
-                                                            return rangeHighlighterEx.getEditorFilter().avaliableIn(editor) &&
-                                                                   HYPERLINK_LAYER == rangeHighlighterEx.getLayer() &&
+                                                            return HYPERLINK_LAYER == rangeHighlighterEx.getLayer() &&
                                                                    rangeHighlighterEx.isValid() &&
                                                                    getHyperlinkInfo(rangeHighlighterEx) != null;
                                                           }

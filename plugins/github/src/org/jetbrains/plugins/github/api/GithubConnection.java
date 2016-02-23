@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import com.google.gson.JsonParser;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.vfs.CharsetToolkit;
-import com.intellij.util.net.HttpConfigurable;
+import com.intellij.util.net.IdeHttpClientHelpers;
 import com.intellij.util.net.ssl.CertificateManager;
 import org.apache.http.*;
 import org.apache.http.auth.AuthScope;
@@ -50,7 +50,6 @@ import org.jetbrains.plugins.github.util.GithubAuthData;
 import org.jetbrains.plugins.github.util.GithubSettings;
 import org.jetbrains.plugins.github.util.GithubUrlUtil;
 import org.jetbrains.plugins.github.util.GithubUtil;
-import sun.security.validator.ValidatorException;
 
 import javax.net.ssl.SSLHandshakeException;
 import java.awt.*;
@@ -58,6 +57,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.security.cert.CertificateException;
 import java.util.*;
 import java.util.List;
 
@@ -123,6 +123,11 @@ public class GithubConnection {
     return request(path, null, Arrays.asList(headers), HttpVerb.HEAD).getHeaders();
   }
 
+  @NotNull
+  public String getHost() {
+    return myHost;
+  }
+
   public void abort() {
     if (myAborted) return;
     myAborted = true;
@@ -160,7 +165,7 @@ public class GithubConnection {
       .setSocketTimeout(timeout);
 
     if (auth.isUseProxy()) {
-      HttpConfigurable.getInstance().setProxy(builder);
+      IdeHttpClientHelpers.ApacheHttpClient4.setProxyForUrlIfEnabled(builder, auth.getHost());
     }
 
     return builder.build();
@@ -184,7 +189,7 @@ public class GithubConnection {
     }
 
     if (auth.isUseProxy()) {
-      HttpConfigurable.getInstance().setProxyCredentials(provider);
+      IdeHttpClientHelpers.ApacheHttpClient4.setProxyCredentialsForUrlIfEnabled(provider, auth.getHost());
     }
 
     return provider;
@@ -205,10 +210,23 @@ public class GithubConnection {
   }
 
   @NotNull
+  private static String getRequestUrl(@NotNull String host, @NotNull String path) {
+    return GithubUrlUtil.getApiUrl(host) + path;
+  }
+
+  @NotNull
   private ResponsePage request(@NotNull String path,
                                @Nullable String requestBody,
                                @NotNull Collection<Header> headers,
                                @NotNull HttpVerb verb) throws IOException {
+    return doRequest(getRequestUrl(myHost, path), requestBody, headers, verb);
+  }
+
+  @NotNull
+  private ResponsePage doRequest(@NotNull String uri,
+                                 @Nullable String requestBody,
+                                 @NotNull Collection<Header> headers,
+                                 @NotNull HttpVerb verb) throws IOException {
     if (myAborted) throw new GithubOperationCanceledException();
 
     if (EventQueue.isDispatchThread() && !ApplicationManager.getApplication().isUnitTestMode()) {
@@ -217,7 +235,6 @@ public class GithubConnection {
 
     CloseableHttpResponse response = null;
     try {
-      String uri = GithubUrlUtil.getApiUrl(myHost) + path;
       response = doREST(uri, requestBody, headers, verb);
 
       if (myAborted) throw new GithubOperationCanceledException();
@@ -234,7 +251,7 @@ public class GithubConnection {
         return createResponse(response);
       }
 
-      String newPath = null;
+      String nextPage = null;
       Header pageHeader = response.getFirstHeader("Link");
       if (pageHeader != null) {
         for (HeaderElement element : pageHeader.getElements()) {
@@ -248,19 +265,16 @@ public class GithubConnection {
               break;
             }
 
-            String url = urlString.substring(begin + 1, end);
-            String newUrl = GithubUrlUtil.removeProtocolPrefix(url);
-            int index = newUrl.indexOf('/');
-            newPath = newUrl.substring(index);
+            nextPage = urlString.substring(begin + 1, end);
             break;
           }
         }
       }
 
-      return createResponse(ret, newPath, response);
+      return createResponse(ret, nextPage, response);
     }
     catch (SSLHandshakeException e) { // User canceled operation from CertificateManager
-      if (e.getCause() instanceof ValidatorException) {
+      if (e.getCause() instanceof CertificateException) {
         LOG.info("Host SSL certificate is not trusted", e);
         throw new GithubOperationCanceledException("Host SSL certificate is not trusted", e);
       }
@@ -390,17 +404,19 @@ public class GithubConnection {
   }
 
   public static class PagedRequest<T> {
-    @Nullable private String myNextPage;
+    @NotNull private String myPath;
     @NotNull private final Collection<Header> myHeaders;
     @NotNull private final Class<T> myResult;
     @NotNull private final Class<? extends DataConstructor[]> myRawArray;
 
-    @SuppressWarnings("NullableProblems")
+    private boolean myFirstRequest = true;
+    @Nullable private String myNextPage;
+
     public PagedRequest(@NotNull String path,
                         @NotNull Class<T> result,
                         @NotNull Class<? extends DataConstructor[]> rawArray,
                         @NotNull Header... headers) {
-      myNextPage = path;
+      myPath = path;
       myResult = result;
       myRawArray = rawArray;
       myHeaders = Arrays.asList(headers);
@@ -408,14 +424,18 @@ public class GithubConnection {
 
     @NotNull
     public List<T> next(@NotNull GithubConnection connection) throws IOException {
-      if (myNextPage == null) {
-        throw new NoSuchElementException();
+      String url;
+      if (myFirstRequest) {
+        url = getRequestUrl(connection.getHost(), myPath);
+        myFirstRequest = false;
+      }
+      else {
+        if (myNextPage == null) throw new NoSuchElementException();
+        url = myNextPage;
+        myNextPage = null;
       }
 
-      String page = myNextPage;
-      myNextPage = null;
-
-      ResponsePage response = connection.request(page, null, myHeaders, HttpVerb.GET);
+      ResponsePage response = connection.doRequest(url, null, myHeaders, HttpVerb.GET);
 
       if (response.getJsonElement() == null) {
         throw new GithubConfusingException("Empty response");
@@ -435,7 +455,7 @@ public class GithubConnection {
     }
 
     public boolean hasNext() {
-      return myNextPage != null;
+      return myFirstRequest || myNextPage != null;
     }
 
     @NotNull

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,27 +48,29 @@ import com.intellij.psi.jsp.JspFile;
 import com.intellij.psi.search.EverythingGlobalScope;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.util.Function;
 import com.intellij.util.Processor;
 import com.intellij.util.StringBuilderSpinAllocator;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.xdebugger.XDebuggerUtil;
 import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.breakpoints.XBreakpoint;
+import com.intellij.xdebugger.breakpoints.XBreakpointType;
 import com.sun.jdi.*;
 import com.sun.jdi.event.LocatableEvent;
 import com.sun.jdi.request.BreakpointRequest;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.java.debugger.breakpoints.properties.JavaBreakpointProperties;
 import org.jetbrains.jps.model.java.JavaModuleSourceRootTypes;
 
 import javax.swing.*;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.regex.Pattern;
 
-public class LineBreakpoint extends BreakpointWithHighlighter {
+public class LineBreakpoint<P extends JavaBreakpointProperties> extends BreakpointWithHighlighter<P> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.debugger.ui.breakpoints.LineBreakpoint");
 
   public static final @NonNls Key<LineBreakpoint> CATEGORY = BreakpointCategory.lookup("line_breakpoints");
@@ -179,17 +181,44 @@ public class LineBreakpoint extends BreakpointWithHighlighter {
       }
       debugProcess.getRequestsManager().setInvalid(this, DebuggerBundle.message("error.invalid.breakpoint.bad.line.number"));
     }
-    catch (InternalException ex) {
-      LOG.info(ex);
-    }
     catch(Exception ex) {
       LOG.info(ex);
     }
     updateUI();
   }
 
-  protected boolean acceptLocation(DebugProcessImpl debugProcess, ReferenceType classType, Location loc) {
-    return true;
+  private static final Pattern ourAnonymousPattern = Pattern.compile(".*\\$\\d*$");
+  private static boolean isAnonymousClass(ReferenceType classType) {
+    if (classType instanceof ClassType) {
+      return ourAnonymousPattern.matcher(classType.name()).matches();
+    }
+    return false;
+  }
+
+  protected boolean acceptLocation(final DebugProcessImpl debugProcess, ReferenceType classType, final Location loc) {
+    Method method = loc.method();
+    // Some frameworks may create synthetic methods with lines mapped to user code, see IDEA-143852
+    // if (DebuggerUtils.isSynthetic(method)) { return false; }
+    if (isAnonymousClass(classType)) {
+      if ((method.isConstructor() && loc.codeIndex() == 0) || method.isBridge()) return false;
+    }
+    return ApplicationManager.getApplication().runReadAction((Computable<Boolean>)() -> {
+      SourcePosition position = debugProcess.getPositionManager().getSourcePosition(loc);
+      if (position == null) return false;
+      JavaLineBreakpointType type = getXBreakpointType();
+      if (type == null) return true;
+      return type.matchesPosition(this, position);
+    });
+  }
+
+  @Nullable
+  protected JavaLineBreakpointType getXBreakpointType() {
+    XBreakpointType<?, P> type = myXBreakpoint.getType();
+    // Nashorn breakpoints do not contain JavaLineBreakpointType
+    if (type instanceof JavaLineBreakpointType) {
+      return (JavaLineBreakpointType)type;
+    }
+    return null;
   }
 
   private boolean isInScopeOf(DebugProcessImpl debugProcess, String className) {
@@ -224,20 +253,12 @@ public class LineBreakpoint extends BreakpointWithHighlighter {
           final GlobalSearchScope scope = debugProcess.getSearchScope();
           final boolean contains = scope.contains(breakpointFile);
           final Project project = getProject();
-          final List<VirtualFile> files = ContainerUtil.map(
-            JavaFullClassNameIndex.getInstance().get(className.hashCode(), project, scope), new Function<PsiClass, VirtualFile>() {
-            @Override
-            public VirtualFile fun(PsiClass aClass) {
-              return aClass.getContainingFile().getVirtualFile();
-            }
-          });
-          final List<VirtualFile> allFiles = ContainerUtil.map(
-            JavaFullClassNameIndex.getInstance().get(className.hashCode(), project, new EverythingGlobalScope(project)), new Function<PsiClass, VirtualFile>() {
-            @Override
-            public VirtualFile fun(PsiClass aClass) {
-              return aClass.getContainingFile().getVirtualFile();
-            }
-          });
+          List<VirtualFile> files = ContainerUtil.map(
+            JavaFullClassNameIndex.getInstance().get(className.hashCode(), project, scope),
+            aClass -> aClass.getContainingFile().getVirtualFile());
+          List<VirtualFile> allFiles = ContainerUtil.map(
+            JavaFullClassNameIndex.getInstance().get(className.hashCode(), project, new EverythingGlobalScope(project)),
+            aClass -> aClass.getContainingFile().getVirtualFile());
           final VirtualFile contentRoot = fileIndex.getContentRootForFile(breakpointFile);
           final Module module = fileIndex.getModuleForFile(breakpointFile);
 
@@ -272,7 +293,7 @@ public class LineBreakpoint extends BreakpointWithHighlighter {
         if (classes.length == 0) {
           return null;
         }
-        final List<VirtualFile> list = new ArrayList<VirtualFile>(classes.length);
+        final List<VirtualFile> list = new ArrayList<>(classes.length);
         for (PsiClass aClass : classes) {
           final PsiFile psiFile = aClass.getContainingFile();
           
@@ -391,12 +412,9 @@ public class LineBreakpoint extends BreakpointWithHighlighter {
       return null;
     }
     if (file instanceof PsiClassOwner) {
-      return ApplicationManager.getApplication().runReadAction(new Computable<String>() {
-        @Override
-        public String compute() {
-          final PsiMethod method = DebuggerUtilsEx.findPsiMethod(file, offset);
-          return method != null? method.getName() : null;
-        }
+      return ApplicationManager.getApplication().runReadAction((Computable<String>)() -> {
+        PsiMethod method = DebuggerUtilsEx.findPsiMethod(file, offset);
+        return method != null? method.getName() : null;
       });
     }
     return null;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.intellij.openapi.wm.impl.status;
 
+import com.intellij.openapi.util.SystemInfo;
 import com.intellij.ui.Gray;
 import com.intellij.util.ui.UIUtil;
 
@@ -31,11 +32,6 @@ public class StatusBarUI extends ComponentUI {
   private static final Dimension MIN_SIZE = new Dimension(100, 23);
 
   private static final Border BACKGROUND_PAINTER = new BackgroundPainter();
-
-  @SuppressWarnings({"MethodOverridesStaticMethodOfSuperclass"})
-  public static ComponentUI createUI(JComponent x) {
-      return new StatusBarUI();
-  }
 
   @Override
   public void paint(final Graphics g, final JComponent c) {
@@ -58,8 +54,6 @@ public class StatusBarUI extends ComponentUI {
     private static final Color BORDER2_TOP_COLOR = Gray._255;
     private static final Color BORDER_BOTTOM_COLOR = Gray._255;
 
-    private static final Color BG_COLOR = Gray._238;
-
     private static final Insets INSETS = new Insets(0, 0, 0, 0);
 
     public void paintBorder(final Component c, final Graphics g, final int x, final int y, final int width, final int height) {
@@ -70,16 +64,17 @@ public class StatusBarUI extends ComponentUI {
       g2d.setColor(background);
       g2d.fillRect(0, 0, width, height);
 
-      g2d.setColor(UIUtil.isUnderDarcula() ? BORDER_TOP_COLOR.darker().darker() : BORDER_TOP_COLOR);
+      Color topColor = UIUtil.isUnderDarcula() ? BORDER_TOP_COLOR.darker().darker() : BORDER_TOP_COLOR;
+      if (SystemInfo.isMac && UIUtil.isUnderIntelliJLaF()) {
+        topColor = Gray.xC9;
+      }
+      g2d.setColor(topColor);
       g2d.drawLine(0, 0, width, 0);
 
       if (!UIUtil.isUnderDarcula()) {
-        g2d.setColor(BORDER2_TOP_COLOR);
-        g2d.drawLine(0, 1, width, 1);
+        g2d.setColor(BORDER_BOTTOM_COLOR);
+        g2d.drawLine(0, height, width, height);
       }
-
-      g2d.setColor(UIUtil.isUnderDarcula() ? BORDER_BOTTOM_COLOR.darker().darker() : BORDER_BOTTOM_COLOR);
-      g2d.drawLine(0, height, width, height);
 
       g2d.dispose();
     }

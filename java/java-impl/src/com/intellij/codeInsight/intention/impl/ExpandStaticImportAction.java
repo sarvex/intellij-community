@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.intellij.codeInsight.intention.PsiElementBaseIntentionAction;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.Result;
 import com.intellij.openapi.command.WriteCommandAction;
-import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
@@ -36,8 +35,7 @@ import java.util.List;
 import static com.intellij.psi.util.ImportsUtil.*;
 
 public class ExpandStaticImportAction extends PsiElementBaseIntentionAction {
-  private static final Logger LOG = Logger.getInstance("#" + ExpandStaticImportAction.class.getName());
-  private static final String REPLACE_THIS_OCCURRENCE = "Replace this occurrence and keep the method";
+  private static final String REPLACE_THIS_OCCURRENCE = "Replace this occurrence and keep the import";
   private static final String REPLACE_ALL_AND_DELETE_IMPORT = "Replace all and delete the import";
 
   @Override
@@ -81,13 +79,12 @@ public class ExpandStaticImportAction extends PsiElementBaseIntentionAction {
       }
       else {
         final BaseListPopupStep<String> step =
-          new BaseListPopupStep<String>("Multiple Similar Calls Found",
-                                        new String[]{REPLACE_THIS_OCCURRENCE, REPLACE_ALL_AND_DELETE_IMPORT}) {
+          new BaseListPopupStep<String>("Multiple Usages of the Static Import Found", REPLACE_THIS_OCCURRENCE, REPLACE_ALL_AND_DELETE_IMPORT) {
             @Override
             public PopupStep onChosen(final String selectedValue, boolean finalChoice) {
               new WriteCommandAction(project, ExpandStaticImportAction.this.getText()) {
                 @Override
-                protected void run(Result result) throws Throwable {
+                protected void run(@NotNull Result result) throws Throwable {
                   if (selectedValue == REPLACE_THIS_OCCURRENCE) {
                     expand(refExpr, staticImport);
                   }

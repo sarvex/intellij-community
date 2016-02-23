@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 package com.intellij.codeInsight.daemon.impl;
 
 import com.intellij.codeHighlighting.TextEditorHighlightingPass;
-import com.intellij.codeInsight.TargetElementUtilBase;
+import com.intellij.codeInsight.TargetElementUtil;
 import com.intellij.codeInsight.highlighting.HighlightHandlerBase;
 import com.intellij.codeInsight.highlighting.HighlightUsagesHandler;
 import com.intellij.codeInsight.highlighting.HighlightUsagesHandlerBase;
@@ -82,13 +82,13 @@ public class IdentifierHighlighterPass extends TextEditorHighlightingPass {
         LOG.assertTrue(writeUsage != null, "null text range from " + handler);
       }
       myWriteAccessRanges.addAll(writeUsages);
-      return;
+      if (!handler.highlightReferences()) return;
     }
 
-    int flags = TargetElementUtilBase.ELEMENT_NAME_ACCEPTED | TargetElementUtilBase.REFERENCED_ELEMENT_ACCEPTED;
+    int flags = TargetElementUtil.ELEMENT_NAME_ACCEPTED | TargetElementUtil.REFERENCED_ELEMENT_ACCEPTED;
     PsiElement myTarget;
     try {
-      myTarget = TargetElementUtilBase.getInstance().findTargetElement(myEditor, flags, myCaretOffset);
+      myTarget = TargetElementUtil.getInstance().findTargetElement(myEditor, flags, myCaretOffset);
     }
     catch (IndexNotReadyException e) {
       return;
@@ -98,14 +98,14 @@ public class IdentifierHighlighterPass extends TextEditorHighlightingPass {
       if (!PsiDocumentManager.getInstance(myProject).isUncommited(myEditor.getDocument())) {
         // when document is committed, try to check injected stuff - it's fast
         Editor injectedEditor = InjectedLanguageUtil.getEditorForInjectedLanguageNoCommit(myEditor, myFile, myCaretOffset);
-        myTarget = TargetElementUtilBase.getInstance().findTargetElement(injectedEditor, flags, injectedEditor.getCaretModel().getOffset());
+        myTarget = TargetElementUtil.getInstance().findTargetElement(injectedEditor, flags, injectedEditor.getCaretModel().getOffset());
       }
     }
     
     if (myTarget != null) {
       highlightTargetUsages(myTarget);
     } else {
-      PsiReference ref = TargetElementUtilBase.findReference(myEditor);
+      PsiReference ref = TargetElementUtil.findReference(myEditor);
       if (ref instanceof PsiPolyVariantReference) {
         ResolveResult[] results = ((PsiPolyVariantReference)ref).multiResolve(false);
         if (results.length > 0) {
@@ -128,10 +128,27 @@ public class IdentifierHighlighterPass extends TextEditorHighlightingPass {
    * @param psiElement psi element to search in
    * @return a pair where first element is read usages and second is write usages
    */
+  @NotNull
   public static Couple<Collection<TextRange>> getHighlightUsages(@NotNull PsiElement target, PsiElement psiElement, boolean withDeclarations) {
-    Collection<TextRange> readRanges = new ArrayList<TextRange>();
-    Collection<TextRange> writeRanges = new ArrayList<TextRange>();
-    final ReadWriteAccessDetector detector = ReadWriteAccessDetector.findDetector(target);
+    return getUsages(target, psiElement, withDeclarations, true);
+  }
+
+  /**
+   * Returns usages of psi element inside a single element
+   *
+   * @param target target psi element
+   * @param psiElement psi element to search in
+   */
+  @NotNull
+  public static Collection<TextRange> getUsages(@NotNull PsiElement target, PsiElement psiElement, boolean withDeclarations) {
+    return getUsages(target, psiElement, withDeclarations, false).first;
+  }
+
+  @NotNull
+  private static Couple<Collection<TextRange>> getUsages(@NotNull PsiElement target, PsiElement psiElement, boolean withDeclarations, boolean detectAccess) {
+    List<TextRange> readRanges = new ArrayList<TextRange>();
+    List<TextRange> writeRanges = new ArrayList<TextRange>();
+    final ReadWriteAccessDetector detector = detectAccess ? ReadWriteAccessDetector.findDetector(target) : null;
     final FindUsagesManager findUsagesManager = ((FindManagerImpl)FindManager.getInstance(target.getProject())).getFindUsagesManager();
     final FindUsagesHandler findUsagesHandler = findUsagesManager.getFindUsagesHandler(target, true);
     final LocalSearchScope scope = new LocalSearchScope(psiElement);
@@ -139,13 +156,18 @@ public class IdentifierHighlighterPass extends TextEditorHighlightingPass {
                               ? findUsagesHandler.findReferencesToHighlight(target, scope)
                               : ReferencesSearch.search(target, scope).findAll();
     for (PsiReference psiReference : refs) {
-      final List<TextRange> textRanges = HighlightUsagesHandler.getRangesToHighlight(psiReference);
+      if (psiReference == null) {
+        LOG.error("Null reference returned, findUsagesHandler=" + findUsagesHandler + "; target=" + target + " of " + target.getClass());
+        continue;
+      }
+      List<TextRange> destination;
       if (detector == null || detector.getReferenceAccess(target, psiReference) == ReadWriteAccessDetector.Access.Read) {
-        readRanges.addAll(textRanges);
+        destination = readRanges;
       }
       else {
-        writeRanges.addAll(textRanges);
+        destination = writeRanges;
       }
+      HighlightUsagesHandler.collectRangesToHighlight(psiReference, destination);
     }
 
     if (withDeclarations) {
@@ -160,7 +182,7 @@ public class IdentifierHighlighterPass extends TextEditorHighlightingPass {
       }
     }
 
-    return Couple.of(readRanges, writeRanges);
+    return Couple.<Collection<TextRange>>of(readRanges, writeRanges);
   }
 
   private void highlightTargetUsages(@NotNull PsiElement target) {
@@ -171,7 +193,7 @@ public class IdentifierHighlighterPass extends TextEditorHighlightingPass {
 
   @Override
   public void doApplyInformationToEditor() {
-    final boolean virtSpace = TargetElementUtilBase.inVirtualSpace(myEditor, myEditor.getCaretModel().getOffset());
+    final boolean virtSpace = TargetElementUtil.inVirtualSpace(myEditor, myEditor.getCaretModel().getOffset());
     final List<HighlightInfo> infos = virtSpace ? Collections.<HighlightInfo>emptyList() : getHighlights();
     UpdateHighlightersUtil.setHighlightersToEditor(myProject, myDocument, 0, myFile.getTextLength(), infos, getColorsScheme(), getId());
   }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.PathUtil;
 import com.intellij.util.io.HttpRequests;
 import com.intellij.util.io.ZipUtil;
+import com.intellij.util.text.VersionComparatorUtil;
 import org.apache.http.client.utils.URIBuilder;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -42,6 +43,8 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.net.*;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -133,11 +136,11 @@ public class PluginDownloader {
       //store old plugins file
       descriptor = PluginManager.getPlugin(PluginId.getId(myPluginId));
       LOG.assertTrue(descriptor != null);
-      if (myPluginVersion != null && compareVersionsSkipBroken(descriptor, myPluginVersion) <= 0) {
+      if (myPluginVersion != null && compareVersionsSkipBrokenAndIncompatible(descriptor, myPluginVersion) <= 0) {
         LOG.info("Plugin " + myPluginId + ": current version (max) " + myPluginVersion);
         return false;
       }
-      myOldFile = descriptor.getPath();
+      myOldFile = descriptor.isBundled() ? null : descriptor.getPath();
     }
 
     // download plugin
@@ -172,7 +175,7 @@ public class PluginDownloader {
       }
 
       myPluginVersion = actualDescriptor.getVersion();
-      if (descriptor != null && compareVersionsSkipBroken(descriptor, myPluginVersion) <= 0) {
+      if (descriptor != null && compareVersionsSkipBrokenAndIncompatible(descriptor, myPluginVersion) <= 0) {
         LOG.info("Plugin " + myPluginId + ": current version (max) " + myPluginVersion);
         return false; //was not updated
       }
@@ -188,17 +191,21 @@ public class PluginDownloader {
     return true;
   }
 
-  public static int compareVersionsSkipBroken(IdeaPluginDescriptor descriptor, String newPluginVersion) {
-    int state = StringUtil.compareVersionNumbers(newPluginVersion, descriptor.getVersion());
-    if (PluginManagerCore.isBrokenPlugin(descriptor) && state < 0) {
+  public static int compareVersionsSkipBrokenAndIncompatible(@NotNull IdeaPluginDescriptor existingPlugin, String newPluginVersion) {
+    int state = comparePluginVersions(newPluginVersion, existingPlugin.getVersion());
+    if (state < 0 && (PluginManagerCore.isBrokenPlugin(existingPlugin) || PluginManagerCore.isIncompatible(existingPlugin))) {
       state = 1;
     }
     return state;
   }
 
+  public static int comparePluginVersions(String newPluginVersion, String oldPluginVersion) {
+    return VersionComparatorUtil.compare(newPluginVersion, oldPluginVersion);
+  }
+
   @Nullable
   public static IdeaPluginDescriptorImpl loadDescriptionFromJar(final File file) throws IOException {
-    IdeaPluginDescriptorImpl descriptor = PluginManagerCore.loadDescriptorFromJar(file);
+    IdeaPluginDescriptorImpl descriptor = PluginManagerCore.loadDescriptor(file, PluginManagerCore.PLUGIN_XML);
     if (descriptor == null) {
       if (file.getName().endsWith(".zip")) {
         final File outputDir = FileUtil.createTempDirectory("plugin", "");
@@ -220,7 +227,6 @@ public class PluginDownloader {
   public void install() throws IOException {
     LOG.assertTrue(myFile != null);
     if (myOldFile != null) {
-      // add command to delete the 'action script' file
       StartupActionScriptManager.ActionCommand deleteOld = new StartupActionScriptManager.DeleteCommand(myOldFile);
       StartupActionScriptManager.addActionCommand(deleteOld);
     }
@@ -305,7 +311,14 @@ public class PluginDownloader {
       PluginDownloader downloader = new PluginDownloader(id, url, descriptor.getName(), descriptor.getVersion(), buildNumber);
       downloader.setDescriptor(descriptor);
       downloader.setDescription(descriptor.getDescription());
-      downloader.setDepends(((PluginNode)descriptor).getDepends());
+      List<PluginId> depends;
+      if (descriptor instanceof PluginNode) {
+        depends = ((PluginNode)descriptor).getDepends();
+      }
+      else {
+        depends = new ArrayList<PluginId>(Arrays.asList(descriptor.getDependentPluginIds()));
+      }
+      downloader.setDepends(depends);
       return downloader;
     }
     catch (URISyntaxException e) {
@@ -336,7 +349,7 @@ public class PluginDownloader {
       uriBuilder.addParameter("id", descriptor.getPluginId().getIdString());
       uriBuilder.addParameter("build", buildNumberAsString);
       uriBuilder.addParameter("uuid", uuid);
-      return uriBuilder.toString();
+      return uriBuilder.build().toString();
     }
   }
 

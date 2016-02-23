@@ -21,13 +21,10 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileTypes.FileTypeEvent;
 import com.intellij.openapi.fileTypes.FileTypeListener;
 import com.intellij.openapi.fileTypes.FileTypeManager;
-import com.intellij.openapi.module.Module;
-import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ModuleRootAdapter;
 import com.intellij.openapi.roots.ModuleRootEvent;
-import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.roots.OrderEntry;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -52,14 +49,13 @@ public class DirectoryIndexImpl extends DirectoryIndex {
   private final Project myProject;
   private final MessageBusConnection myConnection;
 
-  private volatile boolean myDisposed = false;
-  private volatile RootIndex myRootIndex = null;
+  private volatile boolean myDisposed;
+  private volatile RootIndex myRootIndex;
 
   public DirectoryIndexImpl(@NotNull Project project) {
     myProject = project;
     myConnection = project.getMessageBus().connect(project);
     subscribeToFileChanges();
-    markContentRootsForRefresh();
     Disposer.register(project, new Disposable() {
       @Override
       public void dispose() {
@@ -84,11 +80,7 @@ public class DirectoryIndexImpl extends DirectoryIndex {
       }
     });
 
-    myConnection.subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener() {
-      @Override
-      public void before(@NotNull List<? extends VFileEvent> events) {
-      }
-
+    myConnection.subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener.Adapter() {
       @Override
       public void after(@NotNull List<? extends VFileEvent> events) {
         RootIndex rootIndex = myRootIndex;
@@ -97,18 +89,6 @@ public class DirectoryIndexImpl extends DirectoryIndex {
         }
       }
     });
-  }
-
-  protected void markContentRootsForRefresh() {
-    Module[] modules = ModuleManager.getInstance(myProject).getModules();
-    for (Module module : modules) {
-      VirtualFile[] contentRoots = ModuleRootManager.getInstance(module).getContentRoots();
-      for (VirtualFile contentRoot : contentRoots) {
-        if (contentRoot instanceof NewVirtualFile) {
-          ((NewVirtualFile)contentRoot).markDirtyRecursively();
-        }
-      }
-    }
   }
 
   protected void dispatchPendingEvents() {
@@ -144,11 +124,6 @@ public class DirectoryIndexImpl extends DirectoryIndex {
         return myInfoCache.get(((NewVirtualFile)dir).getId());
       }
     };
-  }
-
-  @TestOnly
-  public void checkConsistency() {
-    getRootIndex().checkConsistency();
   }
 
   @Override
@@ -187,16 +162,16 @@ public class DirectoryIndexImpl extends DirectoryIndex {
 
   @NotNull
   @Override
-  public OrderEntry[] getOrderEntries(@NotNull DirectoryInfo info) {
+  public List<OrderEntry> getOrderEntries(@NotNull DirectoryInfo info) {
     checkAvailability();
     return getRootIndex().getOrderEntries(info);
   }
 
   @TestOnly
   void assertConsistency(DirectoryInfo info) {
-    OrderEntry[] entries = getOrderEntries(info);
-    for (int i = 1; i < entries.length; i++) {
-      assert RootIndex.BY_OWNER_MODULE.compare(entries[i - 1], entries[i]) <= 0;
+    List<OrderEntry> entries = getOrderEntries(info);
+    for (int i = 1; i < entries.size(); i++) {
+      assert RootIndex.BY_OWNER_MODULE.compare(entries.get(i - 1), entries.get(i)) <= 0;
     }
   }
 

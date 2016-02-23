@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -166,13 +166,24 @@ public abstract class PsiNameHelper {
 
   private static final Pattern WHITESPACE_PATTERN = Pattern.compile("(?:\\s)|(?:/\\*.*\\*/)|(?://[^\\n]*)");
   private static String removeWhitespace(@NotNull String referenceText) {
+    boolean needsChange = false;
+    for (int i = 0; i < referenceText.length(); i++) {
+      char c = referenceText.charAt(i);
+      if (c == '/' || Character.isWhitespace(c)) {
+        needsChange = true;
+        break;
+      }
+    }
+    if (!needsChange) return referenceText;
+
     return WHITESPACE_PATTERN.matcher(referenceText).replaceAll("");
   }
 
   /**
    * Obtains text of all type parameter values in a reference.
-   * They go in left-to-right order: <code>A&lt;List&lt;String&gt&gt;.B&lt;Integer&gt;</code> yields
-   * <code>["List&lt;String&gt","Integer"]</code>
+   * They go in left-to-right order: <code>A&lt;List&lt;String&gt, B&lt;Integer&gt;&gt;</code> yields
+   * <code>["List&lt;String&gt", "B&lt;Integer&gt;"]</code>. Parameters of the outer reference are ignored:
+   * <code>A&lt;List&lt;String&gt&gt;.B&lt;Integer&gt;</code> yields <code>["Integer"]</code>
    *
    * @param referenceText the text of the reference to calculate type parameters for.
    * @return the calculated array of type parameters.
@@ -180,7 +191,6 @@ public abstract class PsiNameHelper {
   @NotNull
   public static String[] getClassParametersText(@NotNull String referenceText) {
     if (referenceText.indexOf('<') < 0) return ArrayUtil.EMPTY_STRING_ARRAY;
-    referenceText = removeWhitespace(referenceText);
     final char[] chars = referenceText.toCharArray();
     int afterLastDotIndex = 0;
 

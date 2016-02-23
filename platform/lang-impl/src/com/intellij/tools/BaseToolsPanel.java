@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,14 @@ package com.intellij.tools;
 
 import com.intellij.CommonBundle;
 import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.options.CompoundScheme;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.ui.*;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.PlatformIcons;
 import com.intellij.util.ui.tree.TreeUtil;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -31,7 +33,6 @@ import javax.swing.event.TreeSelectionEvent;
 import javax.swing.event.TreeSelectionListener;
 import javax.swing.tree.*;
 import java.awt.*;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -74,6 +75,8 @@ public abstract class BaseToolsPanel<T extends Tool> extends JPanel {
   private final AnActionButton myMoveDownButton;
   private final AnActionButton myRemoveButton;
   private boolean myIsModified = false;
+
+  private final CompoundScheme.MutatorHelper<ToolsGroup<T>, T> mutatorHelper = new CompoundScheme.MutatorHelper<ToolsGroup<T>, T>();
 
   protected BaseToolsPanel() {
     myTree = new CheckboxTree(
@@ -198,10 +201,9 @@ public abstract class BaseToolsPanel<T extends Tool> extends JPanel {
   }
 
   public void reset() {
-    List<ToolsGroup<T>> groups = getToolsGroups();
-
-    for (ToolsGroup group : groups) {
-      insertNewGroup((ToolsGroup)group.copy());
+    mutatorHelper.clear();
+    for (ToolsGroup<T> group : getToolManager().getGroups()) {
+      insertNewGroup(mutatorHelper.copy(group));
     }
 
     if ((getTreeRoot()).getChildCount() > 0) {
@@ -219,25 +221,19 @@ public abstract class BaseToolsPanel<T extends Tool> extends JPanel {
     update();
   }
 
-
   protected abstract BaseToolManager<T> getToolManager();
 
-  protected List<ToolsGroup<T>> getToolsGroups() {
-    return getToolManager().getGroups();
-  }
-
-  private CheckedTreeNode insertNewGroup(final ToolsGroup<Tool> groupCopy) {
-    CheckedTreeNode root = getTreeRoot();
+  @NotNull
+  private CheckedTreeNode insertNewGroup(@NotNull ToolsGroup<T> groupCopy) {
     CheckedTreeNode groupNode = new CheckedTreeNode(groupCopy);
-    root.add(groupNode);
-    for (Tool tool : groupCopy.getElements()) {
+    getTreeRoot().add(groupNode);
+    for (T tool : groupCopy.getElements()) {
       insertNewTool(groupNode, tool);
     }
-
     return groupNode;
   }
 
-  private CheckedTreeNode insertNewTool(final CheckedTreeNode groupNode, final Tool toolCopy) {
+  private CheckedTreeNode insertNewTool(@NotNull CheckedTreeNode groupNode, @NotNull Tool toolCopy) {
     CheckedTreeNode toolNode = new CheckedTreeNode(toolCopy);
     toolNode.setChecked(toolCopy.isEnabled());
     ((ToolsGroup)groupNode.getUserObject()).addElement(toolCopy);
@@ -250,17 +246,15 @@ public abstract class BaseToolsPanel<T extends Tool> extends JPanel {
     return (CheckedTreeNode)myTree.getModel().getRoot();
   }
 
-  public void apply() throws IOException {
-    // unregister removed tools
-    BaseToolManager<T> toolManager = getToolManager();
-
-    toolManager.setTools(getGroupList());
+  public void apply() {
+    getToolManager().setTools(mutatorHelper.apply(getGroupList()));
     myIsModified = false;
   }
 
-  private ToolsGroup[] getGroupList() {
-    ArrayList<ToolsGroup> result = new ArrayList<ToolsGroup>();
+  @NotNull
+  private List<ToolsGroup<T>> getGroupList() {
     MutableTreeNode root = (MutableTreeNode)myTree.getModel().getRoot();
+    List<ToolsGroup<T>> result = new ArrayList<ToolsGroup<T>>(root.getChildCount());
     for (int i = 0; i < root.getChildCount(); i++) {
       final CheckedTreeNode node = (CheckedTreeNode)root.getChildAt(i);
       for (int j = 0; j < node.getChildCount(); j++) {
@@ -268,10 +262,10 @@ public abstract class BaseToolsPanel<T extends Tool> extends JPanel {
         ((Tool)toolNode.getUserObject()).setEnabled(toolNode.isChecked());
       }
 
+      //noinspection unchecked
       result.add((ToolsGroup)node.getUserObject());
     }
-
-    return result.toArray(new ToolsGroup[result.size()]);
+    return result;
   }
 
   public boolean isModified() {
@@ -296,7 +290,7 @@ public abstract class BaseToolsPanel<T extends Tool> extends JPanel {
     }
   }
 
-  private void moveElementInsideGroup(final Tool tool, final ToolsGroup group, Direction dir) {
+  private static void moveElementInsideGroup(final Tool tool, final ToolsGroup group, Direction dir) {
     if (dir == Direction.UP) {
       group.moveElementUp(tool);
     }
@@ -314,13 +308,13 @@ public abstract class BaseToolsPanel<T extends Tool> extends JPanel {
     getModel().nodesWereInserted(parentNode, new int[]{newIndex});
   }
 
-  private boolean isMovingAvailable(final CheckedTreeNode toolNode, Direction dir) {
+  private static boolean isMovingAvailable(final CheckedTreeNode toolNode, Direction dir) {
     TreeNode parent = toolNode.getParent();
     int index = parent.getIndex(toolNode);
     return dir.isAvailable(index, parent.getChildCount());
   }
 
-  private void insertNewTool(final Tool newTool, boolean setSelection) {
+  private void insertNewTool(@NotNull Tool newTool, boolean setSelection) {
     CheckedTreeNode groupNode = findGroupNode(newTool.getGroup());
     if (groupNode == null) {
       groupNode = insertNewGroup(new ToolsGroup(newTool.getGroup()));
@@ -493,9 +487,8 @@ public abstract class BaseToolsPanel<T extends Tool> extends JPanel {
   }
 
   private String[] getGroups() {
-    ArrayList<String> result = new ArrayList<String>();
-    ToolsGroup[] groups = getGroupList();
-    for (ToolsGroup group : groups) {
+    List<String> result = new ArrayList<String>();
+    for (ToolsGroup group : getGroupList()) {
       result.add(group.getName());
     }
     return ArrayUtil.toStringArray(result);

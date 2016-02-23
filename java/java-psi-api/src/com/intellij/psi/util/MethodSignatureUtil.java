@@ -23,10 +23,7 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 
 public class MethodSignatureUtil {
@@ -58,6 +55,20 @@ public class MethodSignatureUtil {
       }
     };
 
+  /**
+   * def: (8.4.2 Method Signature) Two method signatures m1 and m2 are override-equivalent iff either m1 is a subsignature of m2 or m2 is a subsignature of m1.
+   *
+   * erasure (erasure) = erasure, so we would check if erasures are equal and then check if the number of type parameters agree: 
+   *      if signature(m1)=signature(m2), then m1.typeParams=m2.typeParams
+   *      if (erasure(signature(m1))=signature(m2), then m2.typeParams.length=0 and vise versa
+   */
+  public static boolean areOverrideEquivalent(PsiMethod method1, PsiMethod method2) {
+    final int typeParamsLength1 = method1.getTypeParameters().length;
+    final int typeParamsLength2 = method2.getTypeParameters().length;
+    return (typeParamsLength1 == typeParamsLength2 || typeParamsLength1 == 0 || typeParamsLength2 == 0) &&
+           areErasedParametersEqual(method1.getSignature(PsiSubstitutor.EMPTY), method2.getSignature(PsiSubstitutor.EMPTY));
+  }
+  
   public static boolean areErasedParametersEqual(@NotNull MethodSignature method1, @NotNull MethodSignature method2) {
     PsiType[] erased1 = method1 instanceof MethodSignatureBase
                         ? ((MethodSignatureBase)method1).getErasedParameterTypes() : calcErasedParameterTypes(method1);
@@ -284,55 +295,45 @@ public class MethodSignatureUtil {
   }
 
   /**
+   * * 8.4.4 Generic Methods :: same type parameters condition
+   * Two methods or constructors M and N have the same type parameters if both of the following are true:
+   * • M and N have same number of type parameters (possibly zero).
+   * • Where A1, ..., An are the type parameters of M and B1, ..., Bn are the type parameters of N, let θ=[B1:=A1, ..., Bn:=An]. 
+   *   Then, for all i (1 ≤ i ≤ n), the bound of Ai is the same type as θ applied to the bound of Bi.
+   * 
    * @param methodSignature method signature
    * @param superMethodSignature super method signature
    * @return null if signatures do not match
    */
   @Nullable
   public static PsiSubstitutor getSuperMethodSignatureSubstitutor(@NotNull MethodSignature methodSignature, @NotNull MethodSignature superMethodSignature) {
-    PsiSubstitutor result = getSuperMethodSignatureSubstitutorImpl(methodSignature, superMethodSignature);
-    if (result == null) return null;
-
     PsiTypeParameter[] methodTypeParameters = methodSignature.getTypeParameters();
     PsiTypeParameter[] superTypeParameters = superMethodSignature.getTypeParameters();
-    PsiSubstitutor methodSubstitutor = methodSignature.getSubstitutor();
+
+    // both methods are parameterized and number of parameters mismatch
+    if (methodTypeParameters.length != superTypeParameters.length) return null;
+
+    PsiSubstitutor result = superMethodSignature.getSubstitutor();
+    for (int i = 0; i < methodTypeParameters.length; i++) {
+      PsiTypeParameter methodTypeParameter = methodTypeParameters[i];
+      PsiElementFactory factory = JavaPsiFacade.getInstance(methodTypeParameter.getProject()).getElementFactory();
+      result = result.put(superTypeParameters[i], factory.createType(methodTypeParameter));
+    }
 
     //check bounds
     for (int i = 0; i < methodTypeParameters.length; i++) {
       PsiTypeParameter methodTypeParameter = methodTypeParameters[i];
       PsiTypeParameter superTypeParameter = superTypeParameters[i];
       final Set<PsiType> methodSupers = new HashSet<PsiType>();
-      for (PsiClassType methodSuper : methodTypeParameter.getSuperTypes()) {
-        methodSupers.add(methodSubstitutor.substitute(methodSuper));
-      }
+      Collections.addAll(methodSupers, methodTypeParameter.getSuperTypes());
 
       final Set<PsiType> superSupers = new HashSet<PsiType>();
       for (PsiClassType superSuper : superTypeParameter.getSuperTypes()) {
-        superSupers.add(methodSubstitutor.substitute(PsiUtil.captureToplevelWildcards(result.substitute(superSuper), methodTypeParameter)));
+        superSupers.add(result.substitute(superSuper));
       }
       methodSupers.remove(PsiType.getJavaLangObject(methodTypeParameter.getManager(), methodTypeParameter.getResolveScope()));
       superSupers.remove(PsiType.getJavaLangObject(superTypeParameter.getManager(), superTypeParameter.getResolveScope()));
       if (!methodSupers.equals(superSupers)) return null;
-    }
-
-    return result;
-  }
-
-  @Nullable
-  private static PsiSubstitutor getSuperMethodSignatureSubstitutorImpl(@NotNull MethodSignature methodSignature, @NotNull MethodSignature superSignature) {
-    // normalize generic method declarations: correlate type parameters
-    // todo: correlate type params by name?
-    PsiTypeParameter[] methodTypeParameters = methodSignature.getTypeParameters();
-    PsiTypeParameter[] superTypeParameters = superSignature.getTypeParameters();
-
-    // both methods are parameterized and number of parameters mismatch
-    if (methodTypeParameters.length != superTypeParameters.length) return null;
-
-    PsiSubstitutor result = superSignature.getSubstitutor();
-    for (int i = 0; i < methodTypeParameters.length; i++) {
-      PsiTypeParameter methodTypeParameter = methodTypeParameters[i];
-      PsiElementFactory factory = JavaPsiFacade.getInstance(methodTypeParameter.getProject()).getElementFactory();
-      result = result.put(superTypeParameters[i], factory.createType(methodTypeParameter));
     }
 
     return result;
@@ -383,5 +384,37 @@ public class MethodSignatureUtil {
       if (!Comparing.equal(type1, type2)) return false;
     }
     return true;
+  }
+
+
+  /**
+   * 8.4.5 Method Result :: return type substitutable
+   */
+  public static boolean isReturnTypeSubstitutable(MethodSignature d1, MethodSignature d2, PsiType r1, PsiType r2) {
+    //If R1 is void then R2 is void.
+    if (PsiType.VOID.equals(r1)) {
+      return PsiType.VOID.equals(r2);
+    }
+
+    //If R1 is a primitive type then R2 is identical to R1.
+    if (r1 instanceof PsiPrimitiveType) {
+      return r1.equals(r2);
+    }
+
+    if (r1 instanceof PsiClassType && r2 != null) {
+
+      //R1, adapted to the type parameters of d2 (§8.4.4), is a subtype of R2.
+      final PsiSubstitutor adaptingSubstitutor = getSuperMethodSignatureSubstitutor(d1, d2);
+      if (adaptingSubstitutor != null && r2.isAssignableFrom(adaptingSubstitutor.substitute(r1))) {
+        return true;
+      }
+
+      //d1 does not have the same signature as d2 (§8.4.2), and R1 = |R2|.
+      if (!areSignaturesEqual(d1, d2)) {
+        return r1.equals(TypeConversionUtil.erasure(r2));
+      }
+    }
+
+    return Comparing.equal(r1, r2);
   }
 }

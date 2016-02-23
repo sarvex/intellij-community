@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package org.jetbrains.plugins.groovy.lang.resolve
 
 import com.intellij.psi.PsiMethod
 import org.jetbrains.plugins.groovy.LightGroovyTestCase
+import org.jetbrains.plugins.groovy.lang.psi.api.statements.expressions.GrReferenceExpression
 
 /**
  * @author Max Medvedev
@@ -303,7 +304,6 @@ public @interface DelegatesTo {
   }
 
   void testNamedArgs() {
-    addLinkedHashMap()
     assertScript '''
 def with(@DelegatesTo.Target Object target, @DelegatesTo(strategy = Closure.DELEGATE_FIRST) Closure arg) {
     for (Closure a : arg) {
@@ -321,12 +321,10 @@ def test() {
 }
 
 test()
-''', 'HashMap'
+''', 'LinkedHashMap'
   }
 
   void testEllipsisArgs() {
-    addLinkedHashMap()
-
     assertScript '''
 def with(@DelegatesTo.Target Object target, @DelegatesTo(strategy = Closure.DELEGATE_FIRST) Closure... arg) {
     for (Closure a : arg) {
@@ -347,7 +345,7 @@ def test() {
 
 test()
 
-''', 'HashMap'
+''', 'LinkedHashMap'
   }
   void testShouldChooseMethodFromOwnerInJava() {
     myFixture.configureByText("Abc.java", '''\
@@ -567,7 +565,6 @@ class Abc {
 }
 ''')
 
-    addLinkedHashMap()
     assertScript '''
 @CompileStatic
 def test() {
@@ -577,7 +574,7 @@ def test() {
 }
 
 test()
-''', 'HashMap'
+''', 'LinkedHashMap'
   }
 
   void testEllipsisArgsInJava() {
@@ -596,8 +593,6 @@ class Abc {
 }
 ''')
 
-    addLinkedHashMap()
-
     assertScript '''
 @CompileStatic
 def test() {
@@ -610,7 +605,7 @@ def test() {
 
 test()
 
-''', 'HashMap'
+''', 'LinkedHashMap'
   }
 
   void testTarget() {
@@ -634,7 +629,6 @@ foo(4) {
   }
 
   void testGenericTypeIndex() {
-    addLinkedHashMap()
     assertScript('''\
 public <K, V> void foo(@DelegatesTo.Target Map<K, V> map, @DelegatesTo(genericTypeIndex = 1) Closure c) {}
 
@@ -645,7 +639,6 @@ foo([1:'ab', 2:'cde']) {
   }
 
   void testGenericTypeIndex1() {
-    addLinkedHashMap()
     assertScript('''\
 public <K, V> void foo(@DelegatesTo.Target Map<K, V> map, @DelegatesTo(genericTypeIndex = 0) Closure c) {}
 
@@ -702,12 +695,45 @@ class Person {
 ''', 'Person')
   }
 
+  void 'test access via delegate'() {
+    assertScript '''\
+class X {
+    void method() {}
+}
+
+void doX(@DelegatesTo(X) Closure c) {
+    new X().with(c)
+}
+
+doX {
+    delegate.me<caret>thod()
+}
+''', 'X'
+  }
+
+  void 'test delegate type'() {
+    def reference = myFixture.configureByText('_a.groovy', '''\
+class X {
+    void method() {}
+}
+
+void doX(@DelegatesTo(X) Closure c) {
+    new X().with(c)
+}
+
+doX {
+    deleg<caret>ate
+}
+''').findReferenceAt(myFixture.editor.caretModel.offset)
+    assert reference instanceof GrReferenceExpression
+    assert reference.type.equalsToText('X')
+  }
+
   void assertScript(String text, String resolvedClass) {
     myFixture.configureByText('_a.groovy', text)
 
     final ref = myFixture.file.findReferenceAt(myFixture.editor.caretModel.offset)
-    final resolved = ref.resolve()
-    assertInstanceOf(resolved, PsiMethod)
+    final resolved = assertInstanceOf(ref.resolve(), PsiMethod)
     final containingClass = resolved.containingClass.name
     assertEquals(resolvedClass, containingClass)
   }

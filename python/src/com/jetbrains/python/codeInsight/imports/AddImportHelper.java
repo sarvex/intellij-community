@@ -26,17 +26,23 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.QualifiedName;
+import com.intellij.util.ArrayUtil;
 import com.intellij.util.IncorrectOperationException;
+import com.intellij.util.containers.ContainerUtil;
 import com.jetbrains.python.codeInsight.PyCodeInsightSettings;
-import com.jetbrains.python.documentation.DocStringUtil;
+import com.jetbrains.python.documentation.docstrings.DocStringUtil;
+import com.jetbrains.python.formatter.PyBlock;
 import com.jetbrains.python.psi.*;
 import com.jetbrains.python.psi.resolve.QualifiedNameFinder;
 import com.jetbrains.python.sdk.PythonSdkType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
+import static com.jetbrains.python.psi.PyUtil.as;
 import static com.jetbrains.python.psi.PyUtil.sure;
 
 /**
@@ -47,10 +53,53 @@ import static com.jetbrains.python.psi.PyUtil.sure;
 public class AddImportHelper {
   private static final Logger LOG = Logger.getInstance("#" + AddImportHelper.class.getName());
 
+  public static final Comparator<PyImportStatementBase> IMPORT_TYPE_THEN_NAME_COMPARATOR = new Comparator<PyImportStatementBase>() {
+    @Override
+    public int compare(@NotNull PyImportStatementBase import1, @NotNull PyImportStatementBase import2) {
+      // normal imports go first, then "from" imports
+      if (import1 instanceof PyImportStatement && import2 instanceof PyFromImportStatement) {
+        return -1;
+      }
+      if (import1 instanceof PyFromImportStatement && import2 instanceof PyImportStatement) {
+        return 1;
+      }
+
+      return ContainerUtil.compareLexicographically(getSortNames(import1), getSortNames(import2));
+    }
+
+    @NotNull
+    public List<String> getSortNames(@NotNull PyImportStatementBase importStatement) {
+      final List<String> result = new ArrayList<String>();
+      final PyFromImportStatement fromImport = as(importStatement, PyFromImportStatement.class);
+      if (fromImport != null) {
+        final QualifiedName source = fromImport.getImportSourceQName();
+        // because of that relative imports go to the end of an import block
+        result.add(StringUtil.repeatSymbol('.', fromImport.getRelativeLevel()));
+        result.add(source != null ? source.toString() : "");
+        if (fromImport.isStarImport()) {
+          result.add("*");
+        }
+      }
+      
+      for (PyImportElement importElement : importStatement.getImportElements()) {
+        final QualifiedName qualifiedName = importElement.getImportedQName();
+        result.add(qualifiedName != null ? qualifiedName.toString() : "");
+      }
+      return result;
+    }
+  };
+
+  public enum ImportPriority {
+    FUTURE,
+    BUILTIN,
+    THIRD_PARTY,
+    PROJECT
+  }
+
   private AddImportHelper() {
   }
 
-  public static void addLocalImportStatement(@NotNull PyElement element, @NotNull String name) {
+  public static void addLocalImportStatement(@NotNull PsiElement element, @NotNull String name) {
     final PyElementGenerator generator = PyElementGenerator.getInstance(element.getProject());
     final LanguageLevel languageLevel = LanguageLevel.forElement(element);
 
@@ -61,7 +110,7 @@ public class AddImportHelper {
     }
   }
 
-  public static void addLocalFromImportStatement(@NotNull PyElement element, @NotNull String qualifier, @NotNull String name) {
+  public static void addLocalFromImportStatement(@NotNull PsiElement element, @NotNull String qualifier, @NotNull String name) {
     final PyElementGenerator generator = PyElementGenerator.getInstance(element.getProject());
     final LanguageLevel languageLevel = LanguageLevel.forElement(element);
 
@@ -74,12 +123,8 @@ public class AddImportHelper {
   }
 
   @Nullable
-  public static PsiElement getLocalInsertPosition(@NotNull PyElement anchor) {
+  public static PsiElement getLocalInsertPosition(@NotNull PsiElement anchor) {
     return PsiTreeUtil.getParentOfType(anchor, PyStatement.class, false);
-  }
-
-  public enum ImportPriority {
-    BUILTIN, THIRD_PARTY, PROJECT
   }
 
   @Nullable
@@ -88,7 +133,8 @@ public class AddImportHelper {
   }
 
   @Nullable
-  private static PsiElement getInsertPosition(final PsiElement insertParent, @Nullable String nameToImport,
+  private static PsiElement getInsertPosition(@NotNull PsiElement insertParent,
+                                              @Nullable PyImportStatementBase newImport,
                                               @Nullable ImportPriority priority) {
     PsiElement feeler = insertParent.getFirstChild();
     if (feeler == null) return null;
@@ -97,10 +143,18 @@ public class AddImportHelper {
     boolean skippedOverDoc = false;
     PsiElement seeker = feeler;
     final boolean isInjected = InjectedLanguageManager.getInstance(feeler.getProject()).isInjectedFragment(feeler.getContainingFile());
+    PyImportStatementBase importAbove = null, importBelow = null;
     do {
       if (feeler instanceof PyImportStatementBase && !isInjected) {
-        if (nameToImport != null && priority != null && shouldInsertBefore(insertParent, (PyImportStatementBase)feeler, nameToImport, priority)) {
-          break;
+        final PyImportStatementBase existingImport = (PyImportStatementBase)feeler;
+        if (priority != null && newImport != null) {
+          if (shouldInsertBefore(newImport, existingImport, priority)) {
+            importBelow = existingImport;
+            break;
+          }
+          else {
+            importAbove = existingImport;
+          }
         }
         seeker = feeler;
         feeler = feeler.getNextSibling();
@@ -112,9 +166,9 @@ public class AddImportHelper {
       }
       // maybe we arrived at the doc comment stmt; skip over it, too
       else if (!skippedOverImports && !skippedOverDoc && insertParent instanceof PyFile) {
-        PsiElement doc_elt =
-          DocStringUtil.findDocStringExpression((PyElement)insertParent); // this gives the literal; its parent is the expr seeker may have encountered
-        if (doc_elt != null && doc_elt.getParent() == feeler) {
+        // this gives the literal; its parent is the expr seeker may have encountered
+        final PsiElement docElem = DocStringUtil.findDocStringExpression((PyElement)insertParent);
+        if (docElem != null && docElem.getParent() == feeler) {
           feeler = feeler.getNextSibling();
           seeker = feeler; // skip over doc even if there's nothing below it
           skippedOverDoc = true;
@@ -128,50 +182,83 @@ public class AddImportHelper {
       }
     }
     while (feeler != null);
+    final ImportPriority priorityAbove = importAbove != null ? getImportPriority(importAbove) : null;
+    final ImportPriority priorityBelow = importBelow != null ? getImportPriority(importBelow) : null;
+    if (newImport != null && (priorityAbove == null || priorityAbove.compareTo(priority) < 0)) {
+      newImport.putCopyableUserData(PyBlock.IMPORT_GROUP_BEGIN, true);
+    }
+    if (priorityBelow != null) {
+      // actually not necessary because existing import with higher priority (i.e. lower import group) 
+      // probably should have IMPORT_GROUP_BEGIN flag already, but we add it anyway just for safety
+      if (priorityBelow.compareTo(priority) > 0) {
+        importBelow.putCopyableUserData(PyBlock.IMPORT_GROUP_BEGIN, true);
+      }
+      else if (priorityBelow == priority) {
+        importBelow.putCopyableUserData(PyBlock.IMPORT_GROUP_BEGIN, null);
+      }
+    }
     return seeker;
   }
 
-  private static boolean shouldInsertBefore(PsiElement element, PyImportStatementBase relativeTo, String nameToImport,
-                                            ImportPriority priority) {
-    QualifiedName relativeToName;
-    PsiElement source;
-    if (relativeTo instanceof PyFromImportStatement) {
-      final PyFromImportStatement fromImportStatement = (PyFromImportStatement)relativeTo;
-      if (fromImportStatement.isFromFuture()) {
-        return false;
-      }
-      relativeToName = fromImportStatement.getImportSourceQName();
-      source = fromImportStatement.resolveImportSource();
+  private static boolean shouldInsertBefore(@Nullable PyImportStatementBase newImport,
+                                            @NotNull PyImportStatementBase existingImport,
+                                            @NotNull ImportPriority priority) {
+    final ImportPriority existingImportPriority = getImportPriority(existingImport);
+    final int byPriority = priority.compareTo(existingImportPriority);
+    if (byPriority != 0) {
+      return byPriority < 0;
     }
-    else {
-      final PyImportElement[] importElements = relativeTo.getImportElements();
-      if (importElements.length == 0) {
-        return false;
-      }
-      relativeToName = importElements[0].getImportedQName();
-      source = importElements[0].resolve();
-    }
-    if (relativeToName == null) {
+    if (newImport == null) {
       return false;
     }
-    final PsiFileSystemItem containingFile;
-    if (source instanceof PsiDirectory) {
-      containingFile = (PsiDirectory)source;
+    return IMPORT_TYPE_THEN_NAME_COMPARATOR.compare(newImport, existingImport) < 0;
+  }
+
+  @NotNull
+  public static ImportPriority getImportPriority(@NotNull PyImportStatementBase importStatement) {
+    final PsiElement resolved;
+    if (importStatement instanceof PyFromImportStatement) {
+      final PyFromImportStatement fromImportStatement = (PyFromImportStatement)importStatement;
+      if (fromImportStatement.isFromFuture()) {
+        return ImportPriority.FUTURE;
+      }
+      resolved = fromImportStatement.resolveImportSource();
     }
     else {
-      containingFile = source != null ? source.getContainingFile() : null;
+      final PyImportElement firstImportElement = ArrayUtil.getFirstElement(importStatement.getImportElements());
+      if (firstImportElement == null) {
+        return ImportPriority.THIRD_PARTY;
+      }
+      resolved = firstImportElement.resolve();
     }
-    ImportPriority relativeToPriority = source == null || containingFile == null
-                                        ? ImportPriority.BUILTIN
-                                        : getImportPriority(element, containingFile);
-    final int rc = priority.compareTo(relativeToPriority);
-    if (rc < 0) {
-      return true;
+    if (resolved == null) {
+      return ImportPriority.THIRD_PARTY;
     }
-    if (rc == 0) {
-      return nameToImport.compareTo(relativeToName.toString()) < 0;
+
+    final PsiFileSystemItem resolvedFileOrDir;
+    if (resolved instanceof PsiDirectory) {
+      resolvedFileOrDir = (PsiFileSystemItem)resolved;
     }
-    return false;
+    else {
+      resolvedFileOrDir = resolved.getContainingFile();
+    }
+    return getImportPriority(importStatement, resolvedFileOrDir);
+  }
+
+  @NotNull
+  public static ImportPriority getImportPriority(@NotNull PsiElement importLocation, @NotNull PsiFileSystemItem toImport) {
+    final VirtualFile vFile = toImport.getVirtualFile();
+    if (vFile == null) {
+      return ImportPriority.THIRD_PARTY;
+    }
+    final ProjectRootManager projectRootManager = ProjectRootManager.getInstance(toImport.getProject());
+    if (projectRootManager.getFileIndex().isInContent(vFile)) {
+      return ImportPriority.PROJECT;
+    }
+    final Module module = ModuleUtilCore.findModuleForPsiElement(importLocation);
+    final Sdk pythonSdk = module != null ? PythonSdkType.findPythonSdk(module) : projectRootManager.getProjectSdk();
+
+    return PythonSdkType.isStdLib(vFile, pythonSdk) ? ImportPriority.BUILTIN : ImportPriority.THIRD_PARTY;
   }
 
   /**
@@ -214,7 +301,7 @@ public class AddImportHelper {
         insertParent.addAfter(importNodeToInsert, anchor);
       }
       else {
-        insertParent.addBefore(importNodeToInsert, getInsertPosition(insertParent, name, priority));
+        insertParent.addBefore(importNodeToInsert, getInsertPosition(insertParent, importNodeToInsert, priority));
       }
     }
     catch (IncorrectOperationException e) {
@@ -224,7 +311,7 @@ public class AddImportHelper {
   }
 
   /**
-   * Adds a new {@link com.jetbrains.python.psi.PyFromImportStatement} statement below other top-level imports or as specified by anchor.
+   * Adds a new {@link PyFromImportStatement} statement within other top-level imports or as specified by anchor.
    *
    * @param file   where to operate
    * @param from   import source (reference after {@code from} keyword)
@@ -243,18 +330,37 @@ public class AddImportHelper {
                                             @Nullable PsiElement anchor) {
     final PyElementGenerator generator = PyElementGenerator.getInstance(file.getProject());
     final LanguageLevel languageLevel = LanguageLevel.forElement(file);
-    final PyFromImportStatement nodeToInsert = generator.createFromImportStatement(languageLevel, from, name, asName);
+    final PyFromImportStatement newImport = generator.createFromImportStatement(languageLevel, from, name, asName);
+    addFromImportStatement(file, newImport, priority, anchor);
+  }
+
+  /**
+   * Adds a new {@link PyFromImportStatement} statement within other top-level imports or as specified by anchor.
+   *
+   * @param file      where to operate
+   * @param newImport new "from import" statement to insert. It may be generated, because it won't be used for resolving anyway. 
+   *                  You might want to use overloaded version of this method to generate such statement automatically.
+   * @param anchor    place where the imported name was used. It will be used to determine proper block where new import should be inserted,
+   *                  e.g. inside conditional block or try/except statement. Also if anchor is another import statement, new import statement
+   *                  will be inserted right after it.
+   * @see #addFromImportStatement(PsiFile, String, String, String, ImportPriority, PsiElement)
+   * @see #addFromImportStatement
+   */
+  public static void addFromImportStatement(@NotNull PsiFile file,
+                                            @NotNull PyFromImportStatement newImport,
+                                            @Nullable ImportPriority priority,
+                                            @Nullable PsiElement anchor) {
     try {
-      final PyImportStatementBase importStatement = PsiTreeUtil.getParentOfType(anchor, PyImportStatementBase.class, false);
+      final PyImportStatementBase parentImport = PsiTreeUtil.getParentOfType(anchor, PyImportStatementBase.class, false);
       final PsiElement insertParent;
-      if (importStatement != null && importStatement.getContainingFile() == file) {
-        insertParent = importStatement.getParent();
+      if (parentImport != null && parentImport.getContainingFile() == file) {
+        insertParent = parentImport.getParent();
       }
       else {
         insertParent = file;
       }
       if (InjectedLanguageManager.getInstance(file.getProject()).isInjectedFragment(file)) {
-        final PsiElement element = insertParent.addBefore(nodeToInsert, getInsertPosition(insertParent, from, priority));
+        final PsiElement element = insertParent.addBefore(newImport, getInsertPosition(insertParent, newImport, priority));
         PsiElement whitespace = element.getNextSibling();
         if (!(whitespace instanceof PsiWhiteSpace)) {
           whitespace = PsiParserFacade.SERVICE.getInstance(file.getProject()).createWhiteSpaceFromText("  >>> ");
@@ -263,10 +369,10 @@ public class AddImportHelper {
       }
       else {
         if (anchor instanceof PyImportStatementBase) {
-          insertParent.addAfter(nodeToInsert, anchor);
+          insertParent.addAfter(newImport, anchor);
         }
         else {
-          insertParent.addBefore(nodeToInsert, getInsertPosition(insertParent, from, priority));
+          insertParent.addBefore(newImport, getInsertPosition(insertParent, newImport, priority));
         }
       }
     }
@@ -276,7 +382,7 @@ public class AddImportHelper {
   }
 
   /**
-   * Adds new {@link com.jetbrains.python.psi.PyFromImportStatement} in file or append {@link com.jetbrains.python.psi.PyImportElement} to
+   * Adds new {@link PyFromImportStatement} in file or append {@link PyImportElement} to
    * existing from import statement.
    *
    * @param file     module where import will be added
@@ -320,14 +426,14 @@ public class AddImportHelper {
   }
 
   /**
-   * Adds either {@link com.jetbrains.python.psi.PyFromImportStatement} or {@link com.jetbrains.python.psi.PyImportStatement}
+   * Adds either {@link PyFromImportStatement} or {@link PyImportStatement}
    * to specified target depending on user preferences and whether it's possible to import element via "from" form of import
    * (e.g. consider top level module).
    *
    * @param target  element import is pointing to
    * @param file    file where import will be inserted
    * @param element used to determine where to insert import
-   * @see com.jetbrains.python.codeInsight.PyCodeInsightSettings#PREFER_FROM_IMPORT
+   * @see PyCodeInsightSettings#PREFER_FROM_IMPORT
    * @see #addImportStatement
    * @see #addOrUpdateFromImportStatement
    */
@@ -335,6 +441,7 @@ public class AddImportHelper {
     final boolean useQualified = !PyCodeInsightSettings.getInstance().PREFER_FROM_IMPORT;
     final PsiFileSystemItem toImport =
       target instanceof PsiFileSystemItem ? ((PsiFileSystemItem)target).getParent() : target.getContainingFile();
+    if (toImport == null) return;
     final ImportPriority priority = getImportPriority(file, toImport);
     final QualifiedName qName = QualifiedNameFinder.findCanonicalImportPath(target, element);
     if (qName == null) return;
@@ -344,6 +451,7 @@ public class AddImportHelper {
     }
     else {
       final QualifiedName toImportQName = QualifiedNameFinder.findCanonicalImportPath(toImport, element);
+      if (toImportQName == null) return;
       if (useQualified) {
         addImportStatement(file, path, null, priority, element);
         final PyElementGenerator elementGenerator = PyElementGenerator.getInstance(file.getProject());
@@ -351,23 +459,10 @@ public class AddImportHelper {
         element.replace(elementGenerator.createExpressionFromText(LanguageLevel.forElement(target), toImportQName + "." + targetName));
       }
       else {
-        addOrUpdateFromImportStatement(file, toImportQName.toString(), target.getName(), null, priority, element);
+        final String name = target.getName();
+        if (name != null)
+          addOrUpdateFromImportStatement(file, toImportQName.toString(), name, null, priority, element);
       }
     }
-  }
-
-  public static ImportPriority getImportPriority(PsiElement importLocation, @NotNull PsiFileSystemItem toImport) {
-    final VirtualFile vFile = toImport.getVirtualFile();
-    if (vFile == null) {
-      return ImportPriority.PROJECT;
-    }
-    final ProjectRootManager projectRootManager = ProjectRootManager.getInstance(toImport.getProject());
-    if (projectRootManager.getFileIndex().isInContent(vFile)) {
-      return ImportPriority.PROJECT;
-    }
-    Module module = ModuleUtilCore.findModuleForPsiElement(importLocation);
-    Sdk pythonSdk = module != null ? PythonSdkType.findPythonSdk(module) : projectRootManager.getProjectSdk();
-
-    return PythonSdkType.isStdLib(vFile, pythonSdk) ? ImportPriority.BUILTIN : ImportPriority.THIRD_PARTY;
   }
 }

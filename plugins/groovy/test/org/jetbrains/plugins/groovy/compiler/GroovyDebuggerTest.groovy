@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 package org.jetbrains.plugins.groovy.compiler
-
 import com.intellij.debugger.DebuggerManagerEx
 import com.intellij.debugger.SourcePosition
 import com.intellij.debugger.engine.ContextUtil
@@ -34,39 +33,43 @@ import com.intellij.debugger.impl.GenericDebuggerRunner
 import com.intellij.debugger.ui.impl.watch.WatchItemDescriptor
 import com.intellij.debugger.ui.tree.render.DescriptorLabelListener
 import com.intellij.execution.executors.DefaultDebugExecutor
-import com.intellij.execution.process.OSProcessHandler
-import com.intellij.execution.process.OSProcessManager
-import com.intellij.execution.process.ProcessAdapter
-import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.*
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.roots.ModuleRootModificationUtil
 import com.intellij.openapi.util.Computable
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiFile
 import com.intellij.psi.impl.DebugUtil
+import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.testFramework.PsiTestUtil
+import com.intellij.testFramework.TestLoggerFactory
 import com.intellij.testFramework.builders.JavaModuleFixtureBuilder
 import com.intellij.testFramework.fixtures.impl.TempDirTestFixtureImpl
 import com.intellij.util.ExceptionUtil
 import com.intellij.util.SystemProperties
 import com.intellij.util.concurrency.Semaphore
-import org.jetbrains.annotations.NotNull
+import org.jetbrains.plugins.groovy.GroovyFileType
 
 /**
  * @author peter
  */
 class GroovyDebuggerTest extends GroovyCompilerTestCase {
+  private static final Logger LOG = Logger.getInstance("#org.jetbrains.plugins.groovy.compiler.GroovyDebuggerTest");
   private static final int ourTimeout = 60000
 
   @Override
   protected void setUp() {
     super.setUp()
     addGroovyLibrary(myModule);
+    enableDebugLogging()
   }
 
   @Override
@@ -74,9 +77,27 @@ class GroovyDebuggerTest extends GroovyCompilerTestCase {
     return false
   }
 
+  private void enableDebugLogging() {
+    TestLoggerFactory.enableDebugLogging(myTestRootDisposable,
+                                         "#com.intellij.debugger.engine.DebugProcessImpl",
+                                         "#com.intellij.debugger.engine.DebugProcessEvents",
+                                         "#org.jetbrains.plugins.groovy.compiler.GroovyDebuggerTest");
+    LOG.info(getTestStartedLogMessage());
+  }
+
+  private String getTestStartedLogMessage() {
+    return "Starting " + getClass().getName() + "." + getTestName(false);
+  }
+
   @Override
-  protected void invokeTestRunnable(@NotNull Runnable runnable) {
-    runnable.run()
+  protected void runTest() throws Throwable {
+    try {
+      super.runTest()
+    }
+    catch (Throwable e) {
+      TestLoggerFactory.dumpLogToStdout(getTestStartedLogMessage());
+      throw e
+    }
   }
 
   @Override
@@ -95,11 +116,19 @@ class GroovyDebuggerTest extends GroovyCompilerTestCase {
     def configuration = createScriptConfiguration(script.virtualFile.path, myModule)
     edt {
       ProgramRunner runner = ProgramRunner.PROGRAM_RUNNER_EP.extensions.find { it.class == GenericDebuggerRunner }
-      def listener = [onTextAvailable: { ProcessEvent evt, type -> /*println evt.text*/ }] as ProcessAdapter
+      def listener = [onTextAvailable: { ProcessEvent evt, type ->
+        if (type == ProcessOutputTypes.STDERR)
+          println evt.text
+      }] as ProcessAdapter
       runConfiguration(DefaultDebugExecutor, listener, runner, configuration);
     }
+    LOG.debug("after start")
     try {
       cl.call()
+    }
+    catch (Throwable t) {
+      t.printStackTrace()
+      throw t
     }
     finally {
       def handler = debugProcess.processHandler
@@ -295,6 +324,32 @@ cl.parseClass('''$mcText''', 'MyClass.groovy').foo(2)
     }
   }
 
+  public void "test groovy source named java in lib source"() {
+    def tempDir = new TempDirTestFixtureImpl()
+    edt {
+      tempDir.setUp()
+      disposeOnTearDown({ tempDir.tearDown() } as Disposable)
+      tempDir.createFile("pkg/java.groovy", "class java {}")
+      PsiTestUtil.addLibrary(myModule, 'lib', tempDir.getFile('').path, [] as String[], [''] as String[])
+    }
+
+    def facade = JavaPsiFacade.getInstance(project)
+    assert !facade.findClass('java', GlobalSearchScope.allScope(project))
+    assert !facade.findPackage('').findClassByShortName('java', GlobalSearchScope.allScope(project))
+
+    def file = myFixture.addFileToProject("Foo.groovy", """\
+int a = 42
+int b = 3 //1
+    """)
+
+    addBreakpoint(file.virtualFile, 1)
+
+    runDebugger file, {
+      waitForBreakpoint()
+      eval 'a', '42'
+    }
+  }
+
   private SourcePosition getSourcePosition() {
     managed {
       EvaluationContextImpl context = evaluationContext()
@@ -333,6 +388,17 @@ foo()
     runDebugger file, {
       waitForBreakpoint()
       eval 'x', '5'
+    }
+  }
+  void "test non-identifier script name"() {
+    def file = myFixture.addFileToProject('foo-bar.groovy', '''\
+int x = 1
+println "hello"
+''')
+    addBreakpoint file.name, 1
+    runDebugger file, {
+      waitForBreakpoint()
+      eval 'x', '1'
     }
   }
 
@@ -399,7 +465,7 @@ trait Introspector {  // 1
 class FooT implements Introspector {
     def a = 1
     def b = 3
-    
+
     String toString() { 'fooInstance' }
 }
 
@@ -411,6 +477,78 @@ new FooT().whoAmI()
       eval 'a', '1'
       eval 'b', '3'
       eval 'this', 'fooInstance'
+    }
+  }
+
+  public void "test evaluation in java context"() {
+    def starterFile = myFixture.addFileToProject 'Gr.groovy', '''
+new Main().foo()
+'''
+    def file = myFixture.addFileToProject 'Main.java', '''
+import java.util.Arrays;
+import java.util.List;
+
+public class Main {
+  void foo() {
+     List<Integer> a = Arrays.asList(1,2,3,4,5,6,7,8,9,10);
+     int x = 5; // 7
+  }
+}
+'''
+    make()
+
+    addBreakpoint file.virtualFile, 7
+    runDebugger starterFile, {
+      waitForBreakpoint()
+      eval 'a.find {it == 4}', '4', GroovyFileType.GROOVY_FILE_TYPE
+    }
+  }
+
+  public void "test evaluation in static java context"() {
+    def starterFile = myFixture.addFileToProject 'Gr.groovy', '''
+Main.test()
+'''
+    def file = myFixture.addFileToProject 'Main.java', '''
+import java.util.Arrays;
+import java.util.List;
+
+public class Main {
+  public static void test() {
+     List<Integer> a = Arrays.asList(1,2,3,4,5,6,7,8,9,10);
+     int x = 5; // 7
+  }
+}
+'''
+    make()
+
+    addBreakpoint file.virtualFile, 7
+    runDebugger starterFile, {
+      waitForBreakpoint()
+      eval 'a.find {it == 6}', '6', GroovyFileType.GROOVY_FILE_TYPE
+    }
+  }
+
+  public void "test evaluation with java references in java context"() {
+    def starterFile = myFixture.addFileToProject 'Gr.groovy', '''
+new Main().foo()
+'''
+    def file = myFixture.addFileToProject 'Main.java', '''
+import java.util.Arrays;
+import java.util.List;
+
+public class Main {
+  void foo() {
+     List<String> a = Arrays.asList("1","22","333");
+     int x = 5; // 7
+  }
+}
+'''
+    make()
+
+    addBreakpoint file.virtualFile, 7
+    runDebugger starterFile, {
+      waitForBreakpoint()
+      eval 'a.findAll {it.length() > 2}.size()', '1', GroovyFileType.GROOVY_FILE_TYPE
     }
   }
 
@@ -429,14 +567,17 @@ new FooT().whoAmI()
   }
 
   private def resume() {
+    if (debugSession == null) return
     debugProcess.managerThread.invoke(debugProcess.createResumeCommand(debugProcess.suspendManager.pausedContext))
   }
 
   private SuspendContextImpl waitForBreakpoint() {
+    LOG.debug("waitForBreakpoint")
     Semaphore semaphore = new Semaphore()
     semaphore.down()
+    def process = debugProcess
     // wait for all events processed
-    debugProcess.managerThread.schedule(new DebuggerCommandImpl() {
+    process.managerThread.schedule(new DebuggerCommandImpl() {
       @Override
       protected void action() throws Exception {
         semaphore.up();
@@ -446,18 +587,18 @@ new FooT().whoAmI()
     assert finished: 'Too long debugger actions'
 
     int i = 0
-    def suspendManager = debugProcess.suspendManager
-    while (i++ < ourTimeout / 10 && !suspendManager.pausedContext && !debugProcess.processHandler.processTerminated) {
+    def suspendManager = process.suspendManager
+    while (i++ < ourTimeout / 10 && !suspendManager.pausedContext && !process.processHandler.processTerminated) {
       Thread.sleep(10)
     }
 
     def context = suspendManager.pausedContext
-    assert context: "too long process, terminated=$debugProcess.processHandler.processTerminated"
+    assert context: "too long process, terminated=${process.processHandler.processTerminated}"
     return context
   }
 
   private DebugProcessImpl getDebugProcess() {
-    return getDebugSession().process
+    return debugSession?.process
   }
 
   private DebuggerSession getDebugSession() {
@@ -491,11 +632,15 @@ new FooT().whoAmI()
   }
 
   private void eval(final String codeText, String expected) throws EvaluateException {
+    eval(codeText, expected, null);
+  }
+
+  private void eval(final String codeText, String expected, FileType fileType) throws EvaluateException {
     Semaphore semaphore = new Semaphore()
     semaphore.down()
 
     EvaluationContextImpl ctx
-    def item = new WatchItemDescriptor(project, new TextWithImportsImpl(CodeFragmentKind.EXPRESSION, codeText))
+    def item = new WatchItemDescriptor(project, new TextWithImportsImpl(CodeFragmentKind.EXPRESSION, codeText, "", fileType))
     managed {
       ctx = evaluationContext()
       item.setContext(ctx)

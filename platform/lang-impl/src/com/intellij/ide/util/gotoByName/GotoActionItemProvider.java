@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,10 +23,7 @@ import com.intellij.ide.ui.search.ActionFromOptionDescriptorProvider;
 import com.intellij.ide.ui.search.OptionDescription;
 import com.intellij.ide.ui.search.SearchableOptionsRegistrar;
 import com.intellij.ide.ui.search.SearchableOptionsRegistrarImpl;
-import com.intellij.openapi.actionSystem.ActionManager;
-import com.intellij.openapi.actionSystem.AnAction;
-import com.intellij.openapi.actionSystem.CommonDataKeys;
-import com.intellij.openapi.actionSystem.DataContext;
+import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.actionSystem.impl.ActionManagerImpl;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
@@ -37,6 +34,7 @@ import com.intellij.util.Function;
 import com.intellij.util.Processor;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
@@ -45,6 +43,7 @@ import static com.intellij.ide.util.gotoByName.GotoActionModel.*;
 /**
  * @author peter
  */
+@SuppressWarnings("TestOnlyProblems")
 public class GotoActionItemProvider implements ChooseByNameItemProvider {
   private final ActionManager myActionManager = ActionManager.getInstance();
   protected final SearchableOptionsRegistrar myIndex = SearchableOptionsRegistrar.getInstance();
@@ -77,12 +76,35 @@ public class GotoActionItemProvider implements ChooseByNameItemProvider {
   public boolean filterElements(String pattern, boolean everywhere, Processor<MatchedValue> consumer) {
     DataContext dataContext = DataManager.getInstance().getDataContext(myModel.getContextComponent());
 
+    if (!processAbbreviations(pattern, consumer, dataContext)) return false;
     if (!processIntentions(pattern, consumer, dataContext)) return false;
     if (!processActions(pattern, everywhere, consumer, dataContext)) return false;
     if (!processTopHits(pattern, consumer, dataContext)) return false;
     if (!processOptions(pattern, consumer, dataContext)) return false;
 
     return true;
+  }
+
+  private boolean processAbbreviations(final String pattern, Processor<MatchedValue> consumer, DataContext context) {
+    List<String> actions = AbbreviationManager.getInstance().findActions(pattern);
+    if (actions.isEmpty()) return true;
+    List<ActionWrapper> wrappers = ContainerUtil.newArrayListWithCapacity(actions.size());
+    for (String actionId : actions) {
+      AnAction action = myActionManager.getAction(actionId);
+      wrappers.add(new ActionWrapper(action, myModel.myActionGroups.get(action), MatchMode.NAME, context));
+    }
+    return ContainerUtil.process(ContainerUtil.map(wrappers, new Function<ActionWrapper, MatchedValue>() {
+      @Override
+      public MatchedValue fun(@NotNull ActionWrapper w) {
+        return new MatchedValue(w, pattern) {
+          @Nullable
+          @Override
+          public String getValueText() {
+            return pattern;
+          }
+        };
+      }
+    }), consumer);
   }
 
   private static boolean processTopHits(String pattern, Processor<MatchedValue> consumer, DataContext dataContext) {

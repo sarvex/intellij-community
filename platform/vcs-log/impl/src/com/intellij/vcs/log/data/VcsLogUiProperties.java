@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2013 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,20 +25,17 @@ import com.intellij.vcs.log.VcsLogSettings;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
+import java.util.*;
 
 /**
  * Stores UI configuration based on user activity and preferences.
  * Differs from {@link VcsLogSettings} in the fact, that these settings have no representation in the UI settings,
  * and have insignificant effect to the logic of the log, they are just gracefully remember what user prefers to see in the UI.
  */
-@State(name = "Vcs.Log.UiProperties", storages = {@Storage(file = StoragePathMacros.WORKSPACE_FILE)})
+@State(name = "Vcs.Log.UiProperties", storages = {@Storage(StoragePathMacros.WORKSPACE_FILE)})
 public class VcsLogUiProperties implements PersistentStateComponent<VcsLogUiProperties.State> {
 
-  private static final int RECENTLY_FILTERED_USERS_AMOUNT = 5;
+  private static final int RECENTLY_FILTERED_VALUES_LIMIT = 10;
 
   private State myState = new State();
 
@@ -47,9 +44,9 @@ public class VcsLogUiProperties implements PersistentStateComponent<VcsLogUiProp
     public boolean LONG_EDGES_VISIBLE = false;
     public int BEK_SORT_TYPE = 0;
     public boolean SHOW_ROOT_NAMES = false;
-    public boolean HIGHLIGHT_MY_COMMITS = true;
     public Deque<UserGroup> RECENTLY_FILTERED_USER_GROUPS = new ArrayDeque<UserGroup>();
     public Deque<UserGroup> RECENTLY_FILTERED_BRANCH_GROUPS = new ArrayDeque<UserGroup>();
+    public Map<String, Boolean> HIGHLIGHTERS = ContainerUtil.newTreeMap();
   }
 
   @Nullable
@@ -79,18 +76,18 @@ public class VcsLogUiProperties implements PersistentStateComponent<VcsLogUiProp
     addRecentGroup(usersInGroup, myState.RECENTLY_FILTERED_USER_GROUPS);
   }
 
-  public void addRecentlyFilteredBranchGroup(@NotNull List<String> usersInGroup) {
-    addRecentGroup(usersInGroup, myState.RECENTLY_FILTERED_BRANCH_GROUPS);
+  public void addRecentlyFilteredBranchGroup(@NotNull List<String> valuesInGroup) {
+    addRecentGroup(valuesInGroup, myState.RECENTLY_FILTERED_BRANCH_GROUPS);
   }
 
-  private static void addRecentGroup(@NotNull List<String> usersInGroup, @NotNull Deque<UserGroup> stateField) {
+  private static void addRecentGroup(@NotNull List<String> valuesInGroup, @NotNull Deque<UserGroup> stateField) {
     UserGroup group = new UserGroup();
-    group.users = usersInGroup;
+    group.users = valuesInGroup;
     if (stateField.contains(group)) {
       return;
     }
     stateField.addFirst(group);
-    if (stateField.size() > RECENTLY_FILTERED_USERS_AMOUNT) {
+    if (stateField.size() > RECENTLY_FILTERED_VALUES_LIMIT) {
       stateField.removeLast();
     }
   }
@@ -139,12 +136,13 @@ public class VcsLogUiProperties implements PersistentStateComponent<VcsLogUiProp
     myState.SHOW_ROOT_NAMES = isShowRootNames;
   }
 
-  public boolean isHighlightMyCommits() {
-    return myState.HIGHLIGHT_MY_COMMITS;
+  public boolean isHighlighterEnabled(@NotNull String id) {
+    Boolean result = myState.HIGHLIGHTERS.get(id);
+    return result != null ? result : true; // new highlighters get enabled by default
   }
 
-  public void setHighlightMyCommits(boolean isHighlightMyCommits) {
-    myState.HIGHLIGHT_MY_COMMITS = isHighlightMyCommits;
+  public void enableHighlighter(@NotNull String id, boolean value) {
+    myState.HIGHLIGHTERS.put(id, value);
   }
 
   public static class UserGroup {

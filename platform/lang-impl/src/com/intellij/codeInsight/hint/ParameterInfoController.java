@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -234,7 +234,8 @@ public class ParameterInfoController implements Disposable {
     //JLayeredPane layeredPane = myEditor.getComponent().getRootPane().getLayeredPane();
     //p.x = Math.min(p.x, layeredPane.getWidth() - hintSize.width);
     //p.x = Math.max(p.x, 0);
-    myHint.updateBounds(p.x, p.y);
+    myHint.pack();
+    myHint.updateLocation(p.x, p.y);
   }
 
   private void addAlarmRequest(){
@@ -412,8 +413,8 @@ public class ParameterInfoController implements Disposable {
     }
 
     @Override
-    public void setUIComponentEnabled(int index, boolean b) {
-      myComponent.setEnabled(index, b);
+    public void setUIComponentEnabled(int index, boolean enabled) {
+      myComponent.setEnabled(index, enabled);
     }
 
     @Override

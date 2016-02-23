@@ -24,6 +24,8 @@ import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
@@ -40,6 +42,7 @@ import com.intellij.openapi.vcs.checkin.CheckinEnvironment;
 import com.intellij.openapi.vcs.checkin.CheckinHandler;
 import com.intellij.openapi.vcs.ui.VcsBalloonProblemNotifier;
 import com.intellij.openapi.vcs.update.RefreshVFsSynchronously;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Consumer;
 import com.intellij.util.Function;
 import com.intellij.util.NullableFunction;
@@ -255,6 +258,9 @@ public class CommitHelper {
       processor.doBeforeRefresh();
 
       AbstractVcsHelper.getInstance(myProject).showErrors(processor.getVcsExceptions(), myActionName);
+    }
+    catch (ProcessCanceledException pce) {
+      throw pce;
     }
     catch (RuntimeException e) {
       LOG.error(e);
@@ -541,10 +547,13 @@ public class CommitHelper {
   public static Collection<Document> markCommittingDocuments(@NotNull Project project, @NotNull List<Change> changes) {
     Collection<Document> committingDocs = new ArrayList<Document>();
     for (Change change : changes) {
-      Document doc = ChangesUtil.getFilePath(change).getDocument();
-      if (doc != null) {
-        doc.putUserData(DOCUMENT_BEING_COMMITTED_KEY, project);
-        committingDocs.add(doc);
+      VirtualFile virtualFile = ChangesUtil.getFilePath(change).getVirtualFile();
+      if (virtualFile != null && !virtualFile.getFileType().isBinary()) {
+        Document doc = FileDocumentManager.getInstance().getDocument(virtualFile);
+        if (doc != null) {
+          doc.putUserData(DOCUMENT_BEING_COMMITTED_KEY, project);
+          committingDocs.add(doc);
+        }
       }
     }
     return committingDocs;

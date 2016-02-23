@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,12 @@ package com.intellij.openapi.vfs.newvfs.impl;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.impl.ApplicationInfoImpl;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.FileAttributes;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.openapi.vfs.InvalidVirtualFileAccessException;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.impl.win32.Win32LocalFileSystem;
@@ -31,13 +33,14 @@ import com.intellij.openapi.vfs.newvfs.RefreshQueue;
 import com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent;
 import com.intellij.openapi.vfs.newvfs.persistent.FSRecords;
 import com.intellij.openapi.vfs.newvfs.persistent.PersistentFS;
+import com.intellij.openapi.vfs.newvfs.persistent.PersistentFSImpl;
+import com.intellij.psi.impl.PsiCachedValue;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.Function;
 import com.intellij.util.UriUtil;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.keyFMap.KeyFMap;
 import gnu.trove.TIntHashSet;
-import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -55,7 +58,7 @@ import java.util.List;
 public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
   private static final Logger LOG = Logger.getInstance("#com.intellij.openapi.vfs.newvfs.impl.VirtualDirectoryImpl");
 
-  public static boolean CHECK = ApplicationManager.getApplication().isUnitTestMode();
+  private static final boolean CHECK = ApplicationManager.getApplication().isUnitTestMode();
 
   private static final VirtualDirectoryImpl NULL_VIRTUAL_FILE =
     new VirtualDirectoryImpl(-42, null, null, null, LocalFileSystem.getInstance()) {
@@ -64,6 +67,7 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
         return "NULL";
       }
     };
+
   private final VfsData.DirectoryData myData;
   private final NewVirtualFileSystem myFs;
 
@@ -94,12 +98,6 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
     else if (result != null && doRefresh && delegate.isDirectory(result) != result.isDirectory()) {
       RefreshQueue.getInstance().refresh(false, false, null, result);
       result = findChild(name, false, ensureCanonicalName, delegate);
-    }
-
-    if (result == null) {
-      synchronized (myData) {
-        addToAdoptedChildren(ignoreCase, name);
-      }
     }
 
     return result;
@@ -142,6 +140,9 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
     if (name.isEmpty()) {
       return null;
     }
+    if (!isValid()) {
+      throw new InvalidVirtualFileAccessException(this);
+    }
 
     VirtualFileSystemEntry found = doFindChildInArray(name, ignoreCase);
     if (found != null) return found;
@@ -169,10 +170,14 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
       if (indexInReal >= 0) {
         return VfsData.getFileById(array[indexInReal], this);
       }
+      if (allChildrenLoaded()) {
+        return null;
+      }
 
       // do not extract getId outside the synchronized block since it will cause a concurrency problem.
       int id = ourPersistence.getId(this, name, delegate);
       if (id <= 0) {
+        myData.addAdoptedName(name, !ignoreCase);
         return null;
       }
       child = createChild(FileNameCache.storeName(name), id, delegate);
@@ -200,7 +205,7 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
 
   private VirtualFileSystemEntry[] getArraySafely() {
     synchronized (myData) {
-      return myData.getFileChildren(Math.abs(getId()), this);
+      return myData.getFileChildren(myId, this);
     }
   }
 
@@ -215,8 +220,13 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
   private VirtualFileSystemEntry createChild(int nameId, int id, @NotNull NewVirtualFileSystem delegate) {
     final int attributes = ourPersistence.getFileAttributes(id);
     VfsData.Segment segment = VfsData.getSegment(id, true);
-    VfsData.initFile(id, segment, nameId,
-                     PersistentFS.isDirectory(attributes) ? new VfsData.DirectoryData() : KeyFMap.EMPTY_MAP);
+    try {
+      VfsData.initFile(id, segment, nameId,
+                       PersistentFS.isDirectory(attributes) ? new VfsData.DirectoryData() : KeyFMap.EMPTY_MAP);
+    }
+    catch (VfsData.FileAlreadyCreatedException e) {
+      throw new RuntimeException("dir=" + myId + "; dir.children=" + Arrays.toString(FSRecords.listAll(myId)), e);
+    }
     LOG.assertTrue(!(getFileSystem() instanceof Win32LocalFileSystem));
 
     VirtualFileSystemEntry child = VfsData.getFileById(id, this);
@@ -280,6 +290,9 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
   @Override
   @NotNull
   public VirtualFile[] getChildren() {
+    if (!isValid()) {
+      throw new InvalidVirtualFileAccessException(this);
+    }
     NewVirtualFileSystem delegate = getFileSystem();
     final boolean ignoreCase = !delegate.isCaseSensitive();
     synchronized (myData) {
@@ -353,7 +366,9 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
       CharSequence prevName = VfsData.getNameByFileId(prev);
       int cmp = compareNames(name, prevName, ignoreCase);
       if (cmp <= 0) {
-        error(verboseToString.fun(VfsData.getFileById(prev, this)) + " is wrongly placed before " + verboseToString.fun(VfsData.getFileById(id, this)), getArraySafely(), details);
+        error(verboseToString.fun(VfsData.getFileById(prev, this)) +
+              " is wrongly placed before " +
+              verboseToString.fun(VfsData.getFileById(id, this)), getArraySafely(), details);
       }
     }
   }
@@ -362,7 +377,6 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
     @Override
     public String fun(VirtualFileSystemEntry file) {
       if (file == null) return "null";
-      //noinspection HardCodedStringLiteral
       return file + " (name: '" + file.getName()
              + "', " + file.getClass()
              + ", parent: "+file.getParent()
@@ -374,7 +388,8 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
              + ") ";
     }
   };
-  private static void error(@NonNls String message, VirtualFileSystemEntry[] array, Object... details) {
+
+  private static void error(String message, VirtualFileSystemEntry[] array, Object... details) {
     String children = StringUtil.join(array, verboseToString, ",");
     throw new AssertionError(
       message + "; children: " + children + "\nDetails: " + ContainerUtil.map(
@@ -393,10 +408,8 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
   }
 
   public VirtualFileSystemEntry findChildById(int id, boolean cachedOnly) {
-    synchronized (myData) {
-      if (ArrayUtil.indexOf(myData.myChildrenIds, id) >= 0) {
-        return VfsData.getFileById(id, this);
-      }
+    if (ArrayUtil.indexOf(myData.myChildrenIds, id) >= 0) {
+      return VfsData.getFileById(id, this);
     }
     if (cachedOnly) return null;
 
@@ -419,6 +432,7 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
       myData.removeAdoptedName(childName);
       if (indexInReal < 0) {
         insertChildAt(child, indexInReal);
+        ((PersistentFSImpl)PersistentFS.getInstance()).incStructuralModificationCount();
       }
       // else already stored
       assertConsistency(ignoreCase, child);
@@ -447,6 +461,7 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
 
   private void removeFromArray(int index) {
     myData.myChildrenIds = ArrayUtil.remove(myData.myChildrenIds, index);
+    ((PersistentFSImpl)PersistentFS.getInstance()).incStructuralModificationCount();
   }
 
   public boolean allChildrenLoaded() {
@@ -464,6 +479,7 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
     }
   }
 
+  @SuppressWarnings("Duplicates")
   private static int findIndex(final int[] array, @NotNull CharSequence name, boolean ignoreCase) {
     int low = 0;
     int high = array.length - 1;
@@ -471,17 +487,12 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
     while (low <= high) {
       int mid = low + high >>> 1;
       int cmp = -compareNames(VfsData.getNameByFileId(array[mid]), name, ignoreCase);
-      if (cmp > 0) {
-        low = mid + 1;
-      }
-      else if (cmp < 0) {
-        high = mid - 1;
-      }
-      else {
-        return mid; // key found
-      }
+      if (cmp > 0) low = mid + 1;
+      else if (cmp < 0) high = mid - 1;
+      else return mid;
     }
-    return -(low + 1);  // key not found.
+
+    return -(low + 1);
   }
 
   private static int compareNames(@NotNull CharSequence name1, @NotNull CharSequence name2, boolean ignoreCase) {
@@ -546,6 +557,15 @@ public class VirtualDirectoryImpl extends VirtualFileSystemEntry {
 
   @Override
   protected boolean changeUserMap(KeyFMap oldMap, KeyFMap newMap) {
+    checkLeaks(newMap);
     return myData.changeUserMap(oldMap, UserDataInterner.internUserData(newMap));
+  }
+
+  static void checkLeaks(KeyFMap newMap) {
+    for (Key key : newMap.getKeys()) {
+      if (key != null && newMap.get(key) instanceof PsiCachedValue) {
+        throw new AssertionError("Don't store CachedValue in VFS user data, since it leads to memory leaks");
+      }
+    }
   }
 }

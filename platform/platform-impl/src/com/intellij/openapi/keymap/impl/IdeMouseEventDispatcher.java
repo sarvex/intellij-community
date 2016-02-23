@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -81,17 +81,19 @@ public final class IdeMouseEventDispatcher {
     myActions.clear();
 
     // here we try to find "local" shortcuts
-    if (component instanceof JComponent) {
-      for (AnAction action : ActionUtil.getActions((JComponent)component)) {
-        for (Shortcut shortcut : action.getShortcutSet().getShortcuts()) {
-          if (mouseShortcut.equals(shortcut) && !myActions.contains(action)) {
-            myActions.add(action);
+    for (; component != null; component = component.getParent()) {
+      if (component instanceof JComponent) {
+        for (AnAction action : ActionUtil.getActions((JComponent)component)) {
+          for (Shortcut shortcut : action.getShortcutSet().getShortcuts()) {
+            if (mouseShortcut.equals(shortcut) && !myActions.contains(action)) {
+              myActions.add(action);
+            }
           }
         }
-      }
-      // once we've found a proper local shortcut(s), we exit
-      if (!myActions.isEmpty()) {
-        return;
+        // once we've found a proper local shortcut(s), we exit
+        if (!myActions.isEmpty()) {
+          return;
+        }
       }
     }
 
@@ -146,17 +148,24 @@ public final class IdeMouseEventDispatcher {
     boolean ignore = false;
     if (!(e.getID() == MouseEvent.MOUSE_PRESSED ||
           e.getID() == MouseEvent.MOUSE_RELEASED ||
+          e.getID() == MOUSE_WHEEL && 0 < e.getModifiersEx() ||
           e.getID() == MOUSE_CLICKED)) {
       ignore = true;
     }
 
     patchClickCount(e);
 
+    int clickCount = e.getClickCount();
+    int button = MouseShortcut.getButton(e);
+    if (button == MouseShortcut.BUTTON_WHEEL_UP || button == MouseShortcut.BUTTON_WHEEL_DOWN) {
+      clickCount = 1;
+    }
+
     if (e.isConsumed()
         || e.isPopupTrigger()
-        || (e.getButton() > 3 ? e.getID() != MOUSE_PRESSED : e.getID() != MOUSE_RELEASED)
-        || e.getClickCount() < 1
-        || e.getButton() == MouseEvent.NOBUTTON) { // See #16995. It did happen
+        || (button > 3 ? e.getID() != MOUSE_PRESSED && e.getID() != MOUSE_WHEEL : e.getID() != MOUSE_RELEASED)
+        || clickCount < 1
+        || button == NOBUTTON) { // See #16995. It did happen
       ignore = true;
     }
 
@@ -218,7 +227,7 @@ public final class IdeMouseEventDispatcher {
       return false;
     }
 
-    final MouseShortcut shortcut = new MouseShortcut(e.getButton(), modifiersEx, e.getClickCount());
+    final MouseShortcut shortcut = new MouseShortcut(button, modifiersEx, clickCount);
     fillActionsList(c, shortcut, IdeKeyEventDispatcher.isModalContext(c));
     ActionManagerEx actionManager = ActionManagerEx.getInstanceEx();
     if (actionManager != null) {
@@ -261,6 +270,7 @@ public final class IdeMouseEventDispatcher {
   public static boolean patchClickCount(final MouseEvent e) {
     if (e.getClickCount() != 1 && e.getButton() > 3) {
       ReflectionUtil.setField(MouseEvent.class, e, int.class, "clickCount", 1);
+      return true;
     }
     return false;
   }
@@ -305,7 +315,8 @@ public final class IdeMouseEventDispatcher {
   private static JScrollBar findHorizontalScrollBar(Component c) {
     if (c == null) return null;
     if (c instanceof JScrollPane) {
-      return ((JScrollPane)c).getHorizontalScrollBar();
+      JScrollBar scrollBar = ((JScrollPane)c).getHorizontalScrollBar();
+      return scrollBar != null && scrollBar.isVisible() ? scrollBar : null;
     }
 
     if (isDiagramViewComponent(c)) {
@@ -314,7 +325,7 @@ public final class IdeMouseEventDispatcher {
          if (view.getComponent(i) instanceof JScrollBar) {
            final JScrollBar scrollBar = (JScrollBar)view.getComponent(i);
            if (scrollBar.getOrientation() == Adjustable.HORIZONTAL) {
-            return scrollBar;
+             return scrollBar.isVisible() ? scrollBar : null;
            }
          }
       }

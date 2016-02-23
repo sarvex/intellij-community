@@ -38,7 +38,8 @@ class IndentImpl extends Indent {
     myEnforceIndentToChildren = enforceIndentToChildren;
   }
 
-  Type getType() {
+  @Override
+  public Type getType() {
     return myType;
   }
 

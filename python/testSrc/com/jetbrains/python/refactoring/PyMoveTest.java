@@ -156,7 +156,7 @@ public class PyMoveTest extends PyTestCase {
     doMoveFileTest("p1/p2/m1.py", "nonp3");
   }
 
-  // PY-6432
+  // PY-6432, PY-15347
   public void testStarImportWithUsages() {
     doMoveSymbolTest("f", "c.py");
   }
@@ -314,12 +314,77 @@ public class PyMoveTest extends PyTestCase {
     }
   }
 
+  // PY-10553
+  public void testMoveModuleWithSameNameAsSymbolInside() {
+    doMoveFileTest("Animals/Carnivore.py", "Animals/test");
+  }
+
+  // PY-14617
+  public void testOldStyleRelativeImport() {
+    doMoveFileTest("pkg/a.py", "");
+  }
+
+  // PY-14617
+  public void testRelativeImportsToModulesInSameMovedPackageNotUpdated() {
+    doMoveFileTest("pkg/subpkg", "");
+  }
+
+  // PY-14617
+  public void testUsagesOfUnqualifiedOldStyleRelativeImportsInsideMovedModule() {
+    doMoveFileTest("pkg/m1.py", "");
+  }
+
   // PY-15324
   public void testInterdependentSymbols() {
     doMoveSymbolsTest("b.py", "f", "A");
   }
 
-  private void doMoveFileTest(String fileName, String toDirName)  {
+  // PY-15343
+  public void testDunderAll() {
+    doMoveSymbolTest("func", "b.py");
+  }
+
+  // PY-15343
+  public void testDunderAllSingleElementTuple() {
+    doMoveSymbolTest("func", "b.py");
+  }
+
+  // PY-15343
+  public void testDunderAllTwoElementsTuple() {
+    doMoveSymbolTest("func", "b.py");
+  }
+
+  // PY-15342
+  public void testGlobalStatementWithSingleName() {
+    doMoveSymbolTest("VAR", "b.py");
+  }
+
+  // PY-15342
+  public void testGlobalStatementWithTwoNames() {
+    doMoveSymbolTest("VAR", "b.py");
+  }
+
+  // PY-15342
+  public void testGlobalStatementOnly() {
+    doMoveSymbolTest("VAR", "b.py");
+  }
+
+  // PY-15350
+  public void testMoveSymbolFromStatementList() {
+    doMoveSymbolsTest("b.py", "func", "C");
+  }
+
+  // PY-14811
+  public void testUsageFromFunctionResolvesToDunderAll() {
+    doMoveSymbolTest("use_foo", "c.py");
+  }
+
+  // PY-14811
+  public void testUsageFromFunctionResolvesToDunderAllWithAlias() {
+    doMoveSymbolTest("use_foo", "c.py");
+  }
+
+  private void doMoveFileTest(String fileName, String toDirName) {
     Project project = myFixture.getProject();
     PsiManager manager = PsiManager.getInstance(project);
 
@@ -340,7 +405,7 @@ public class PyMoveTest extends PyTestCase {
     VirtualFile toVirtualDir = dir1.findFileByRelativePath(toDirName);
     assertNotNull(toVirtualDir);
     PsiDirectory toDir = manager.findDirectory(toVirtualDir);
-    new MoveFilesOrDirectoriesProcessor(project, new PsiElement[] {file}, toDir, false, false, null, null).run();
+    new MoveFilesOrDirectoriesProcessor(project, new PsiElement[]{file}, toDir, false, false, null, null).run();
 
     VirtualFile dir2 = getVirtualFileByName(PythonTestUtil.getTestDataPath() + rootAfter);
     try {
@@ -362,7 +427,7 @@ public class PyMoveTest extends PyTestCase {
       @Override
       public PsiNamedElement fun(String name) {
         final PsiNamedElement found = findFirstNamedElement(name);
-        assertNotNull(found);
+        assertNotNull("Symbol '" + name + "' does not exist", found);
         return found;
       }
     });

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,8 +24,7 @@ public class Semaphore {
   /**
    * Creates Semaphore in an up state
    */
-  public Semaphore() {
-  }
+  public Semaphore() { }
 
   private static final class Sync extends AbstractQueuedSynchronizer {
     @Override
@@ -39,8 +38,8 @@ public class Semaphore {
       while (true) {
         int c = getState();
         if (c == 0) return false;
-        int nextc = c - 1;
-        if (compareAndSetState(c, nextc)) return nextc == 0;
+        int next = c - 1;
+        if (compareAndSetState(c, next)) return next == 0;
       }
     }
 
@@ -80,7 +79,8 @@ public class Semaphore {
     sync.acquireSharedInterruptibly(1);
   }
 
-  public boolean waitFor(final long msTimeout)  {
+  // true if semaphore became free
+  public boolean waitFor(final long msTimeout) {
     try {
       return waitForUnsafe(msTimeout);
     }
@@ -89,9 +89,9 @@ public class Semaphore {
     }
   }
 
+  // true if semaphore became free
   public boolean waitForUnsafe(long msTimeout) throws InterruptedException {
     if (sync.tryAcquireShared(1) >= 0) return true;
     return sync.tryAcquireSharedNanos(1, TimeUnit.MILLISECONDS.toNanos(msTimeout));
   }
-
 }

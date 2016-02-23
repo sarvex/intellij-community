@@ -16,34 +16,33 @@
 package com.intellij.diff.tools.util.base;
 
 import com.intellij.diff.DiffContext;
-import com.intellij.diff.comparison.DiffTooBigException;
+import com.intellij.diff.util.DiffUtil;
 import com.intellij.openapi.actionSystem.DataProvider;
-import com.intellij.openapi.diff.DiffBundle;
 import com.intellij.openapi.project.Project;
-import com.intellij.ui.EditorNotificationPanel;
+import com.intellij.ui.components.panels.Wrapper;
+import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.List;
 
 public abstract class DiffPanelBase extends JPanel implements DataProvider {
-  @NotNull protected final JPanel CONTENTS_EQUAL_NOTIFICATION =
-    createNotification(DiffBundle.message("diff.contents.are.identical.message.text"));
-  @NotNull protected final JPanel CANT_CALCULATE_DIFF =
-    createNotification("Can not calculate diff");
-  @NotNull protected final JPanel CONTENTS_OPERATION_CANCELED_NOTIFICATION =
-    createNotification("Can not calculate diff. Operation canceled.");
-  @NotNull protected final JPanel CONTENTS_TOO_BIG_NOTIFICATION =
-    createNotification("Can not calculate diff. " + DiffTooBigException.MESSAGE);
-
   @Nullable protected final Project myProject;
   @NotNull private final DataProvider myDataProvider;
   @NotNull protected final DiffContext myContext;
 
+  @NotNull private final List<JComponent> myPersistentNotifications = new ArrayList<JComponent>();
+  @NotNull private final List<JComponent> myNotifications = new ArrayList<JComponent>();
+
   @NotNull protected final JPanel myContentPanel;
-  @NotNull protected final JPanel myNotificationsPanel;
+  @NotNull protected final Wrapper myNotificationsPanel;
+
+  @NotNull private final Wrapper myNorthPanel;
+  @NotNull private final Wrapper mySouthPanel;
 
   @NotNull protected final CardLayout myCardLayout;
 
@@ -60,38 +59,21 @@ public abstract class DiffPanelBase extends JPanel implements DataProvider {
     myCardLayout = new CardLayout();
     myContentPanel = new JPanel(myCardLayout);
 
-    myNotificationsPanel = new JPanel();
-    myNotificationsPanel.setLayout(new BoxLayout(myNotificationsPanel, BoxLayout.Y_AXIS));
+    myNotificationsPanel = new Wrapper();
+    myNorthPanel = new Wrapper();
+    mySouthPanel = new Wrapper();
 
     add(myContentPanel, BorderLayout.CENTER);
-
-    JComponent topPanel = createTopPanel();
-    if (topPanel != null) add(topPanel, BorderLayout.NORTH);
-
-    JComponent bottomPanel = createBottomPanel();
-    if (bottomPanel != null) add(bottomPanel, BorderLayout.SOUTH);
+    add(myNorthPanel, BorderLayout.NORTH);
+    add(mySouthPanel, BorderLayout.SOUTH);
   }
 
-  @Nullable
-  public JComponent createTopPanel() {
-    return null;
+  public void setTopPanel(@Nullable JComponent component) {
+    myNorthPanel.setContent(component);
   }
 
-  @Nullable
-  public JComponent createBottomPanel() {
-    return null;
-  }
-
-  public boolean isWindowFocused() {
-    return myContext.isWindowFocused();
-  }
-
-  public boolean isFocused() {
-    return myContext.isFocused();
-  }
-
-  public void requestFocus() {
-    myContext.requestFocus();
+  public void setBottomPanel(@Nullable JComponent component) {
+    mySouthPanel.setContent(component);
   }
 
   protected void setCurrentCard(@NotNull String card) {
@@ -99,13 +81,13 @@ public abstract class DiffPanelBase extends JPanel implements DataProvider {
   }
 
   protected void setCurrentCard(@NotNull String card, boolean keepFocus) {
-    boolean restoreFocus = keepFocus && isFocused();
+    boolean restoreFocus = keepFocus && myContext.isFocused();
 
     myCardLayout.show(myContentPanel, card);
     myCurrentCard = card;
     myContentPanel.revalidate();
 
-    if (restoreFocus) requestFocus();
+    if (restoreFocus) myContext.requestFocus();
   }
 
   @Nullable
@@ -114,50 +96,30 @@ public abstract class DiffPanelBase extends JPanel implements DataProvider {
     return myDataProvider.getData(dataId);
   }
 
-  @Nullable
-  public abstract JComponent getPreferredFocusedComponent();
-
   //
   // Notifications
   //
 
-  public void addContentsEqualNotification() {
-    myNotificationsPanel.add(CONTENTS_EQUAL_NOTIFICATION);
-    myNotificationsPanel.revalidate();
-  }
-
-  public void addTooBigContentNotification() {
-    myNotificationsPanel.add(CONTENTS_TOO_BIG_NOTIFICATION);
-    myNotificationsPanel.revalidate();
-  }
-
-  public void addOperationCanceledNotification() {
-    myNotificationsPanel.add(CONTENTS_OPERATION_CANCELED_NOTIFICATION);
-    myNotificationsPanel.revalidate();
-  }
-
-  public void addDiffErrorNotification() {
-    myNotificationsPanel.add(CANT_CALCULATE_DIFF);
-    myNotificationsPanel.revalidate();
+  public void setPersistentNotifications(@NotNull List<JComponent> components) {
+    myPersistentNotifications.clear();
+    myPersistentNotifications.addAll(components);
+    updateNotifications();
   }
 
   public void resetNotifications() {
-    myNotificationsPanel.removeAll();
-    myNotificationsPanel.revalidate();
+    myNotifications.clear();
+    updateNotifications();
   }
 
-  @NotNull
-  public static JPanel createNotification(@NotNull String text) {
-    return new EditorNotificationPanel().text(text);
+  public void addNotification(@NotNull JComponent notification) {
+    myNotifications.add(notification);
+    updateNotifications();
   }
 
-  @NotNull
-  public static JPanel createNotification(@NotNull String text, @NotNull final Color background) {
-    return new EditorNotificationPanel() {
-      @Override
-      public Color getBackground() {
-        return background;
-      }
-    }.text(text);
+  private void updateNotifications() {
+    List<JComponent> notifications = ContainerUtil.concat(myPersistentNotifications, myNotifications);
+    myNotificationsPanel.setContent(DiffUtil.createStackedComponents(notifications, DiffUtil.TITLE_GAP));
+    validate();
+    repaint();
   }
 }

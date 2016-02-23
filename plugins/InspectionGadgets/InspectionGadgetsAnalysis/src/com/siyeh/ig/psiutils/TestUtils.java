@@ -1,5 +1,5 @@
 /*
- * Copyright 2003-2014 Dave Griffith, Bas Leijdekkers
+ * Copyright 2003-2015 Dave Griffith, Bas Leijdekkers
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,14 +39,8 @@ public class TestUtils {
       return false;
     }
     final PsiFile file = element.getContainingFile();
-    final VirtualFile virtualFile = file.getVirtualFile();
-    if (virtualFile == null) {
-      return true;
-    }
-    final Project project = element.getProject();
-    final ProjectRootManager rootManager = ProjectRootManager.getInstance(project);
-    final ProjectFileIndex fileIndex = rootManager.getFileIndex();
-    return fileIndex.isInTestSourceContent(virtualFile);
+    final VirtualFile virtualFile = file == null ? null : file.getVirtualFile();
+    return virtualFile != null && ProjectRootManager.getInstance(file.getProject()).getFileIndex().isInTestSourceContent(virtualFile);
   }
 
   public static boolean isPartOfJUnitTestMethod(@NotNull PsiElement element) {
@@ -106,6 +100,15 @@ public class TestUtils {
 
   public static boolean isJUnitTestClass(@Nullable PsiClass targetClass) {
     return targetClass != null && InheritanceUtil.isInheritor(targetClass, "junit.framework.TestCase");
+  }
+
+  public static boolean isJUnit4TestClass(@Nullable PsiClass aClass, boolean runWithIsTestClass) {
+    if (aClass == null) return false;
+    if (AnnotationUtil.isAnnotated(aClass, RUN_WITH, true)) return runWithIsTestClass;
+    for (final PsiMethod method : aClass.getAllMethods()) {
+      if (isJUnit4TestMethod(method)) return true;
+    }
+    return false;
   }
 
   public static boolean isInTestCode(PsiElement element) {

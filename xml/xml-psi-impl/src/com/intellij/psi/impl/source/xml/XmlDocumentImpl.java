@@ -41,6 +41,7 @@ import com.intellij.psi.tree.ChildRoleBase;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.util.CachedValue;
 import com.intellij.psi.util.CachedValueProvider;
+import com.intellij.psi.util.CachedValuesManager;
 import com.intellij.psi.xml.*;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.containers.ContainerUtil;
@@ -113,16 +114,17 @@ public class XmlDocumentImpl extends XmlElementImpl implements XmlDocument {
     XmlProlog prolog = myProlog;
 
     if (prolog == null) {
+      prolog = (XmlProlog)findElementByTokenType(XmlElementType.XML_PROLOG);
       synchronized (PsiLock.LOCK) {
-        prolog = myProlog;
-        if (prolog == null) {
-          prolog = (XmlProlog)findElementByTokenType(XmlElementType.XML_PROLOG);
+        if (myProlog == null) {
           myProlog = prolog;
+        } else {
+          prolog = myProlog;
         }
       }
     }
 
-    return myProlog;
+    return prolog;
   }
 
   @Override
@@ -130,16 +132,17 @@ public class XmlDocumentImpl extends XmlElementImpl implements XmlDocument {
     XmlTag rootTag = myRootTag;
 
     if (rootTag == null) {
+      rootTag = (XmlTag)findElementByTokenType(XmlElementType.XML_TAG);
       synchronized (PsiLock.LOCK) {
-        rootTag = myRootTag;
-        if (rootTag == null) {
-          rootTag = (XmlTag)findElementByTokenType(XmlElementType.XML_TAG);
+        if (myRootTag == null) {
           myRootTag = rootTag;
+        } else {
+          rootTag = myRootTag;
         }
       }
     }
 
-    return myRootTag;
+    return rootTag;
   }
 
   @Override
@@ -158,8 +161,10 @@ public class XmlDocumentImpl extends XmlElementImpl implements XmlDocument {
   public void clearCaches() {
     myDefaultDescriptorsCacheStrict.clear();
     myDefaultDescriptorsCacheNotStrict.clear();
-    myProlog = null;
-    myRootTag = null;
+    synchronized (PsiLock.LOCK) {
+      myProlog = null;
+      myRootTag = null;
+    }
     super.clearCaches();
   }
 
@@ -233,6 +238,10 @@ public class XmlDocumentImpl extends XmlElementImpl implements XmlDocument {
         }
         nsDescriptor = getDefaultNSDescriptor(htmlns, false);
       }
+      final XmlFile descriptorFile = nsDescriptor.getDescriptorFile();
+      if (descriptorFile != null) {
+        return getCachedHtmlNsDescriptor(descriptorFile);
+      }
       return new HtmlNSDescriptorImpl(nsDescriptor);
     }
     else if (XmlUtil.XHTML_URI.equals(namespace)) {
@@ -293,7 +302,19 @@ public class XmlDocumentImpl extends XmlElementImpl implements XmlDocument {
 
     return null;
   }
-  
+
+  private static XmlNSDescriptor getCachedHtmlNsDescriptor(final XmlFile descriptorFile) {
+    return CachedValuesManager.getCachedValue(descriptorFile, new CachedValueProvider<XmlNSDescriptor>() {
+      @Nullable
+      @Override
+      public Result<XmlNSDescriptor> compute() {
+        final XmlDocument document = descriptorFile.getDocument();
+        if (document == null) return Result.create(null, descriptorFile);
+        return Result.<XmlNSDescriptor>create(new HtmlNSDescriptorImpl((XmlNSDescriptor)document.getMetaData()), descriptorFile);
+      }
+    });
+  }
+
   @NotNull
   private static String getFilePathForLogging(@Nullable PsiFile file) {
     if (file == null) {

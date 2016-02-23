@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2011 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 package com.intellij.execution.testframework.sm.runner;
 
 import com.intellij.execution.testframework.sm.runner.events.*;
+import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
-import com.intellij.testIntegration.TestLocationProvider;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -26,6 +26,10 @@ import org.jetbrains.annotations.Nullable;
 */
 public class MockGeneralTestEventsProcessorAdapter extends GeneralTestEventsProcessor {
   private final StringBuilder myOutputBuffer = new StringBuilder();
+
+  public MockGeneralTestEventsProcessorAdapter(Project project, String testFrameworkName) {
+    super(project, testFrameworkName);
+  }
 
   @Override
   public void onStartTesting() {
@@ -81,6 +85,10 @@ public class MockGeneralTestEventsProcessorAdapter extends GeneralTestEventsProc
   }
 
   @Override
+  public void onCustomProgressTestFinished() {
+  }
+
+  @Override
   public void onCustomProgressTestFailed() {
   }
 
@@ -89,11 +97,11 @@ public class MockGeneralTestEventsProcessorAdapter extends GeneralTestEventsProc
   }
 
   @Override
-  public void setLocator(@NotNull TestLocationProvider locator) {
+  public void setLocator(@NotNull SMTestLocator locator) {
   }
 
   @Override
-  public void addEventsListener(@NotNull SMTRunnerEventsListener viewer) {
+  public void addEventsListener(@NotNull SMTRunnerEventsListener listener) {
   }
 
   @Override

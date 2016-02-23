@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 package com.intellij.codeInsight;
 
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.psi.util.*;
 import com.intellij.util.ArrayUtil;
@@ -212,7 +213,10 @@ public class AnnotationUtil {
         List<T> list = new ArrayList<T>();
         //noinspection unchecked
         list.addAll((Collection<? extends T>)result);
-        return Result.create(list, PsiModificationTracker.MODIFICATION_COUNT);
+        
+        List<Object> dependencies = ContainerUtil.<Object>newArrayList(result);
+        dependencies.add(PsiModificationTracker.MODIFICATION_COUNT);
+        return Result.create(list, dependencies);
       }
     });
   }
@@ -330,7 +334,7 @@ public class AnnotationUtil {
         if (!processed.add(method)) return false;
         final PsiMethod[] superMethods = method.findSuperMethods();
         for (PsiMethod superMethod : superMethods) {
-          if (isAnnotated(superMethod, annotationFQN, checkHierarchy, skipExternal, processed)) return true;
+          if (isAnnotated(superMethod, annotationFQN, true, skipExternal, processed)) return true;
         }
       } else if (listOwner instanceof PsiClass) {
         final PsiClass clazz = (PsiClass)listOwner;
@@ -338,7 +342,7 @@ public class AnnotationUtil {
         if (!processed.add(clazz)) return false;
         final PsiClass[] superClasses = clazz.getSupers();
         for (PsiClass superClass : superClasses) {
-          if (isAnnotated(superClass, annotationFQN, checkHierarchy, skipExternal, processed)) return true;
+          if (isAnnotated(superClass, annotationFQN, true, skipExternal, processed)) return true;
         }
       }
     }
@@ -377,11 +381,12 @@ public class AnnotationUtil {
       boolean isPattern = fqn.endsWith("*");
       if (!isPattern && isAnnotated(owner, fqn, false)) {
         return true;
-      } else if (isPattern) {
+      }
+      else if (isPattern) {
         if (fqns == null) {
           fqns = new ArrayList<String>();
-          final PsiAnnotation[] annos = modList.getAnnotations();
-          for (PsiAnnotation anno : annos) {
+          final PsiAnnotation[] ownAnnotations = modList.getAnnotations();
+          for (PsiAnnotation anno : ownAnnotations) {
             final String qName = anno.getQualifiedName();
             if (qName != null) {
               fqns.add(qName);
@@ -447,7 +452,7 @@ public class AnnotationUtil {
       if (owner instanceof PsiClass) {
         for (PsiClass superClass : ((PsiClass)owner).getSupers()) {
           if (visited == null) visited = new THashSet<PsiModifierListOwner>();
-          if (visited.add(superClass)) annotations = ArrayUtil.mergeArrays(annotations, getAllAnnotations(superClass, inHierarchy, visited));
+          if (visited.add(superClass)) annotations = ArrayUtil.mergeArrays(annotations, getAllAnnotations(superClass, true, visited));
         }
       }
       else if (owner instanceof PsiMethod) {
@@ -463,7 +468,7 @@ public class AnnotationUtil {
             if (visited == null) visited = new THashSet<PsiModifierListOwner>();
             if (!visited.add(superMethod)) continue;
             if (!resolveHelper.isAccessible(superMethod, owner, null)) continue;
-            annotations = ArrayUtil.mergeArrays(annotations, getAllAnnotations(superMethod, inHierarchy, visited));
+            annotations = ArrayUtil.mergeArrays(annotations, getAllAnnotations(superMethod, true, visited));
           }
         }
       }
@@ -487,7 +492,7 @@ public class AnnotationUtil {
               if (!resolveHelper.isAccessible(superMethod, owner, null)) continue;
               PsiParameter[] superParameters = superMethod.getParameterList().getParameters();
               if (index < superParameters.length) {
-                annotations = ArrayUtil.mergeArrays(annotations, getAllAnnotations(superParameters[index], inHierarchy, visited));
+                annotations = ArrayUtil.mergeArrays(annotations, getAllAnnotations(superParameters[index], true, visited));
               }
             }
           }
@@ -498,7 +503,12 @@ public class AnnotationUtil {
   }
 
   public static boolean isInsideAnnotation(PsiElement element) {
-    return PsiTreeUtil.getParentOfType(element, PsiNameValuePair.class, PsiArrayInitializerMemberValue.class) != null;
+    for (int level = 0; level<4; level++) {
+      if (element instanceof PsiNameValuePair) return true;
+      element = element.getParent();
+      if (element == null) return false;
+    }
+    return false;
   }
 
   public static boolean isInferredAnnotation(@NotNull PsiAnnotation annotation) {
@@ -523,10 +533,18 @@ public class AnnotationUtil {
   }
 
   @Nullable
+  public static String getDeclaredStringAttributeValue(@NotNull PsiAnnotation anno, @Nullable final String attributeName) {
+    PsiAnnotationMemberValue attrValue = anno.findDeclaredAttributeValue(attributeName);
+    Object constValue = JavaPsiFacade.getInstance(anno.getProject()).getConstantEvaluationHelper().computeConstantExpression(attrValue);
+    return constValue instanceof String ? (String)constValue : null;
+  }
+
+  @Nullable
   public static <T extends Annotation> T findAnnotationInHierarchy(@NotNull PsiModifierListOwner listOwner, @NotNull Class<T> annotationClass) {
     PsiAnnotation annotation = findAnnotationInHierarchy(listOwner, Collections.singleton(annotationClass.getName()));
     if (annotation == null) return null;
-    return (T)Proxy.newProxyInstance(
-      annotationClass.getClassLoader(), new Class<?>[]{annotationClass}, new AnnotationInvocationHandler(annotationClass, annotation));
+    AnnotationInvocationHandler handler = new AnnotationInvocationHandler(annotationClass, annotation);
+    @SuppressWarnings("unchecked") T t = (T)Proxy.newProxyInstance(annotationClass.getClassLoader(), new Class<?>[]{annotationClass}, handler);
+    return t;
   }
 }

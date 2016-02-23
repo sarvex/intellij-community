@@ -18,6 +18,7 @@ package com.intellij.codeInspection;
 import com.intellij.analysis.AnalysisScope;
 import com.intellij.codeInsight.daemon.GroupNames;
 import com.intellij.codeInsight.daemon.impl.RemoveSuppressWarningAction;
+import com.intellij.codeInspection.deadCode.UnusedDeclarationInspectionBase;
 import com.intellij.codeInspection.ex.*;
 import com.intellij.codeInspection.reference.*;
 import com.intellij.codeInspection.ui.SingleCheckboxOptionsPanel;
@@ -178,7 +179,8 @@ public class RedundantSuppressInspectionBase extends GlobalInspectionTool {
           }
           else if (toolWrapper.getShortName().equals(shortName)) {
             //ignore global unused as it won't be checked anyway
-            if (toolWrapper instanceof LocalInspectionToolWrapper || toolWrapper instanceof GlobalInspectionToolWrapper) {
+            if (toolWrapper instanceof LocalInspectionToolWrapper || 
+                toolWrapper instanceof GlobalInspectionToolWrapper && !isGlobalInspectionRunCustomly(toolWrapper.getTool())) {
               suppressedTools.put(toolWrapper, shortName);
             }
             else {
@@ -213,6 +215,7 @@ public class RedundantSuppressInspectionBase extends GlobalInspectionTool {
         else if (toolWrapper instanceof GlobalInspectionToolWrapper) {
           final GlobalInspectionToolWrapper global = (GlobalInspectionToolWrapper)toolWrapper;
           GlobalInspectionTool globalTool = global.getTool();
+          if (isGlobalInspectionRunCustomly(globalTool)) continue;
           if (globalTool.isGraphNeeded()) {
             refManager.findAllDeclarations();
           }
@@ -289,7 +292,10 @@ public class RedundantSuppressInspectionBase extends GlobalInspectionTool {
               myQuickFixes.put(key, fix);
             }
             PsiElement identifier = null;
-            if (psiMember instanceof PsiMethod) {
+            if (!(suppressedScope instanceof PsiMember)) {
+              identifier = suppressedScope;
+            }
+            else if (psiMember instanceof PsiMethod) {
               identifier = ((PsiMethod)psiMember).getNameIdentifier();
             }
             else if (psiMember instanceof PsiField) {
@@ -313,6 +319,10 @@ public class RedundantSuppressInspectionBase extends GlobalInspectionTool {
       globalContext.close(true);
     }
     return result.toArray(new ProblemDescriptor[result.size()]);
+  }
+
+  private static boolean isGlobalInspectionRunCustomly(InspectionProfileEntry tool) {
+    return tool instanceof UnusedDeclarationInspectionBase;
   }
 
   protected GlobalInspectionContextBase createContext(PsiFile file) {

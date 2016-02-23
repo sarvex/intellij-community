@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -112,6 +112,7 @@ public class ReplacePathToMacroMap extends PathMacroMap {
     return myMacroMap.get(path) + text.substring(endOfOccurrence);
   }
 
+  @NotNull
   @Override
   public String substituteRecursively(@NotNull String text, final boolean caseSensitive) {
     for (final String path : getPathIndex()) {
@@ -173,6 +174,7 @@ public class ReplacePathToMacroMap extends PathMacroMap {
     final String replacement = s.getValue();
     if (replacement.contains("..")) return 1;
     if (replacement.contains("$" + PathMacrosImpl.USER_HOME_MACRO_NAME + "$")) return 1;
+    if (replacement.contains("$" + PathMacrosImpl.APPLICATION_HOME_MACRO_NAME + "$")) return 1;
     if (replacement.contains("$" + PathMacrosImpl.MODULE_DIR_MACRO_NAME + "$")) return 3;
     if (replacement.contains("$" + PathMacrosImpl.PROJECT_DIR_MACRO_NAME + "$")) return 3;
     return 2;

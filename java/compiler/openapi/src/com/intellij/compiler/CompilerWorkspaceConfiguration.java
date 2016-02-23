@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,20 +22,13 @@ package com.intellij.compiler;
 import com.intellij.openapi.components.*;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.util.xmlb.XmlSerializerUtil;
 
-@State(
-  name = "CompilerWorkspaceConfiguration",
-  storages = {
-    @Storage(
-      file = StoragePathMacros.WORKSPACE_FILE
-    )}
-)
+@State(name = "CompilerWorkspaceConfiguration", storages = @Storage(StoragePathMacros.WORKSPACE_FILE))
 public class CompilerWorkspaceConfiguration implements PersistentStateComponent<CompilerWorkspaceConfiguration> {
   private static final Logger LOG = Logger.getInstance("#com.intellij.compiler.CompilerWorkspaceConfiguration");
   
-  public static final int DEFAULT_COMPILE_PROCESS_HEAP_SIZE = 700;
-  public static final String DEFAULT_COMPILE_PROCESS_VM_OPTIONS = "";
   static {
     LOG.info("Available processors: " + Runtime.getRuntime().availableProcessors());
   }
@@ -46,8 +39,12 @@ public class CompilerWorkspaceConfiguration implements PersistentStateComponent<
   public boolean CLEAR_OUTPUT_DIRECTORY = true;
   public boolean MAKE_PROJECT_ON_SAVE = false; // until we fix problems with several open projects (IDEA-104064), daemon slowness (IDEA-104666)
   public boolean PARALLEL_COMPILATION = false;
-  public int COMPILER_PROCESS_HEAP_SIZE = DEFAULT_COMPILE_PROCESS_HEAP_SIZE;
-  public String COMPILER_PROCESS_ADDITIONAL_VM_OPTIONS = DEFAULT_COMPILE_PROCESS_VM_OPTIONS;
+  /**
+   * @Deprecated. Use corresponding value from CompilerConfiguration
+   * This field is left here for compatibility with older projects
+   */
+  public int COMPILER_PROCESS_HEAP_SIZE = 700;
+  public String COMPILER_PROCESS_ADDITIONAL_VM_OPTIONS = "";
   public boolean REBUILD_ON_DEPENDENCY_CHANGE = true;
 
   public static CompilerWorkspaceConfiguration getInstance(Project project) {
@@ -63,15 +60,6 @@ public class CompilerWorkspaceConfiguration implements PersistentStateComponent<
   }
 
   public boolean allowAutoMakeWhileRunningApplication() {
-    return false;/*ALLOW_AUTOMAKE_WHILE_RUNNING_APPLICATION*/
-  }
-
-  public int getProcessHeapSize(final int javacPreferredHeapSize) {
-    final int heapSize = COMPILER_PROCESS_HEAP_SIZE;
-    if (heapSize != DEFAULT_COMPILE_PROCESS_HEAP_SIZE) {
-      return heapSize;
-    }
-    // compatibility with older builds: if javac is set to use larger heap, and if so, use it.
-    return Math.max(heapSize, javacPreferredHeapSize);
+    return Registry.is("compiler.automake.allow.when.app.running", false);/*ALLOW_AUTOMAKE_WHILE_RUNNING_APPLICATION*/
   }
 }

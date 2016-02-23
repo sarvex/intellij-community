@@ -25,7 +25,6 @@ import com.intellij.refactoring.listeners.MoveMemberListener;
 import com.intellij.refactoring.memberPullUp.PullUpConflictsUtil;
 import com.intellij.refactoring.memberPullUp.PullUpProcessor;
 import com.intellij.refactoring.util.DocCommentPolicy;
-import com.intellij.refactoring.util.classMembers.InterfaceContainmentVerifier;
 import com.intellij.refactoring.util.classMembers.MemberInfo;
 import com.intellij.testFramework.IdeaTestUtil;
 import com.intellij.util.containers.MultiMap;
@@ -39,6 +38,8 @@ import java.util.Arrays;
  */
 public class PullUpTest extends LightRefactoringTestCase {
   private static final String BASE_PATH = "/refactoring/pullUp/";
+
+  private static final String IGNORE_CONFLICTS = "IGNORE"; 
 
   public void testQualifiedThis() {
     doTest(new RefactoringTestUtil.MemberDescriptor("Inner", PsiClass.class));
@@ -96,6 +97,11 @@ public class PullUpTest extends LightRefactoringTestCase {
   public void testNotFunctionalAnymore() {
     setLanguageLevel(LanguageLevel.JDK_1_8);
     doTest(true, "Functional expression demands functional interface to have exact one method", new RefactoringTestUtil.MemberDescriptor("get", PsiMethod.class, true));
+  }
+
+  public void testPullToInterfaceAsDefault() throws Exception {
+    setLanguageLevel(LanguageLevel.JDK_1_8);
+    doTest(true, "Method <b><code>mass()</code></b> uses field <b><code>SimplePlanet.mass</code></b>, which is not moved to the superclass", new RefactoringTestUtil.MemberDescriptor("mass", PsiMethod.class, false));
   }
 
   public void testStillFunctional() {
@@ -163,12 +169,25 @@ public class PullUpTest extends LightRefactoringTestCase {
   public void testPreserveOverride() {
     doTest(false, new RefactoringTestUtil.MemberDescriptor("foo", PsiMethod.class));
   }
+
+  public void testSubstituteOverrideToMerge() {
+    doTest(false, IGNORE_CONFLICTS, new RefactoringTestUtil.MemberDescriptor("foo", PsiMethod.class));
+  }
+
   public void testAsDefaultMethodOverAbstract() {
     doTest(false, "Class <b><code>Test.Printer</code></b> already contains a method <b><code>foo()</code></b>", new RefactoringTestUtil.MemberDescriptor("foo", PsiMethod.class));
   }
 
   public void testPublicMethodFromPrivateClassConflict() {
     doTest(false, new RefactoringTestUtil.MemberDescriptor("HM", PsiClass.class), new RefactoringTestUtil.MemberDescriptor("foo", PsiMethod.class));
+  }
+
+  public void testSOEOnSelfInheritance() throws Exception {
+    doTest(false, IGNORE_CONFLICTS, new RefactoringTestUtil.MemberDescriptor("test", PsiMethod.class));
+  }
+
+  public void testPullUpAsAbstractInClass() throws Exception {
+    doTest(false, new RefactoringTestUtil.MemberDescriptor("test", PsiMethod.class, true));
   }
 
   private void doTest(RefactoringTestUtil.MemberDescriptor... membersToFind) {
@@ -182,7 +201,7 @@ public class PullUpTest extends LightRefactoringTestCase {
   private void doTest(final boolean checkMembersMovedCount,
                       String conflictMessage,
                       RefactoringTestUtil.MemberDescriptor... membersToFind) {
-    final MultiMap<PsiElement, String> conflictsMap = new MultiMap<PsiElement, String>();
+    final MultiMap<PsiElement, String> conflictsMap = new MultiMap<>();
     configureByFile(BASE_PATH + getTestName(false) + ".java");
     PsiElement elementAt = getFile().findElementAt(getEditor().getCaretModel().getOffset());
     final PsiClass sourceClass = PsiTreeUtil.getParentOfType(elementAt, PsiClass.class);
@@ -199,24 +218,17 @@ public class PullUpTest extends LightRefactoringTestCase {
     final MemberInfo[] infos = RefactoringTestUtil.findMembers(sourceClass, membersToFind);
 
     final int[] countMoved = {0};
-    final MoveMemberListener listener = new MoveMemberListener() {
-      @Override
-      public void memberMoved(PsiClass aClass, PsiMember member) {
-        assertEquals(sourceClass, aClass);
-        countMoved[0]++;
-      }
+    final MoveMemberListener listener = (aClass, member) -> {
+      assertEquals(sourceClass, aClass);
+      countMoved[0]++;
     };
     JavaRefactoringListenerManager.getInstance(getProject()).addMoveMembersListener(listener);
     final PsiDirectory targetDirectory = targetClass.getContainingFile().getContainingDirectory();
     final PsiPackage targetPackage = targetDirectory != null ? JavaDirectoryService.getInstance().getPackage(targetDirectory) : null;
     conflictsMap.putAllValues(
       PullUpConflictsUtil
-        .checkConflicts(infos, sourceClass, targetClass, targetPackage, targetDirectory, new InterfaceContainmentVerifier() {
-          @Override
-          public boolean checkedInterfacesContain(PsiMethod psiMethod) {
-            return PullUpProcessor.checkedInterfacesContain(Arrays.asList(infos), psiMethod);
-          }
-        })
+        .checkConflicts(infos, sourceClass, targetClass, targetPackage, targetDirectory,
+                        psiMethod -> PullUpProcessor.checkedInterfacesContain(Arrays.asList(infos), psiMethod))
     );
     final PullUpProcessor helper = new PullUpProcessor(sourceClass, targetClass, infos, new DocCommentPolicy(DocCommentPolicy.ASIS));
     helper.run();
@@ -231,7 +243,7 @@ public class PullUpTest extends LightRefactoringTestCase {
       fail(conflictsMap.values().iterator().next());
     }
 
-    if (conflictMessage != null) {
+    if (conflictMessage != null && !IGNORE_CONFLICTS.equals(conflictMessage)) {
       assertEquals(conflictMessage, conflictsMap.values().iterator().next());
       return;
     }

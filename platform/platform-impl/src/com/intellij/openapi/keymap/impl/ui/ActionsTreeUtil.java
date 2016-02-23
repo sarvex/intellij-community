@@ -16,6 +16,7 @@
 package com.intellij.openapi.keymap.impl.ui;
 
 import com.intellij.icons.AllIcons;
+import com.intellij.ide.DataManager;
 import com.intellij.ide.actionMacro.ActionMacro;
 import com.intellij.ide.plugins.IdeaPluginDescriptor;
 import com.intellij.ide.plugins.PluginManagerCore;
@@ -33,7 +34,6 @@ import com.intellij.openapi.keymap.ex.KeymapManagerEx;
 import com.intellij.openapi.keymap.impl.ActionShortcutRestrictions;
 import com.intellij.openapi.keymap.impl.KeymapImpl;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
@@ -247,7 +247,7 @@ public class ActionsTreeUtil {
             group.addGroup(subGroup);
           }
         }
-        else if (filtered == null || filtered.value(actionGroup)) {
+        else if (filtered == null || filtered.value(action)) {
           group.addGroup(subGroup);
         }
       }
@@ -377,7 +377,8 @@ public class ActionsTreeUtil {
     final KeymapManagerEx keymapManager = KeymapManagerEx.getInstanceEx();
     String[] registeredActionIds = actionManager.getActionIds("");
     for (String id : registeredActionIds) {
-      if (actionManager.getActionOrStub(id)instanceof ActionGroup) {
+      final AnAction actionOrStub = actionManager.getActionOrStub(id);
+      if (actionOrStub instanceof ActionGroup && !((ActionGroup)actionOrStub).canBePerformed(DataManager.getInstance().getDataContext())) {
         continue;
       }
       if (id.startsWith(QuickList.QUICK_LIST_PREFIX) || addedActions.containsId(id) || result.contains(id)) {
@@ -452,6 +453,7 @@ public class ActionsTreeUtil {
         node.add(childNode);
       }
       else {
+        LOG.assertTrue(child != null);
         node.add(new DefaultMutableTreeNode(child));
       }
     }
@@ -526,19 +528,16 @@ public class ActionsTreeUtil {
 
   public static Condition<AnAction> isActionFiltered(final ActionManager actionManager,
                                                      final Keymap keymap,
-                                                     final KeyboardShortcut keyboardShortcut) {
+                                                     final Shortcut shortcut) {
     return new Condition<AnAction>() {
       public boolean value(final AnAction action) {
-        if (keyboardShortcut == null) return true;
+        if (shortcut == null) return true;
         if (action == null) return false;
         final Shortcut[] actionShortcuts =
           keymap.getShortcuts(action instanceof ActionStub ? ((ActionStub)action).getId() : actionManager.getId(action));
-        for (Shortcut shortcut : actionShortcuts) {
-          if (shortcut instanceof KeyboardShortcut) {
-            final KeyboardShortcut keyboardActionShortcut = (KeyboardShortcut)shortcut;
-            if (Comparing.equal(keyboardActionShortcut, keyboardShortcut)) {
-              return true;
-            }
+        for (Shortcut actionShortcut : actionShortcuts) {
+          if (shortcut.equals(actionShortcut)) {
+            return true;
           }
         }
         return false;
@@ -548,7 +547,7 @@ public class ActionsTreeUtil {
 
   public static Condition<AnAction> isActionFiltered(final ActionManager actionManager,
                                                      final Keymap keymap,
-                                                     final KeyboardShortcut shortcut,
+                                                     final Shortcut shortcut,
                                                      final String filter,
                                                      final boolean force) {
     return filter != null && filter.length() > 0 ? isActionFiltered(filter, force) :

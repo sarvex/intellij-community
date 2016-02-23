@@ -45,6 +45,7 @@ import java.util.EventObject;
 public class JBTable extends JTable implements ComponentWithEmptyText, ComponentWithExpandableItems<TableCell> {
   public static final int PREFERRED_SCROLLABLE_VIEWPORT_HEIGHT_IN_ROWS = 7;
   public static final int COLUMN_RESIZE_AREA_WIDTH = 3; // same as in BasicTableHeaderUI
+  private static final int DEFAULT_MIN_COLUMN_WIDTH = 15; // see TableColumn constructor javadoc
 
   private final StatusText myEmptyText;
   private final ExpandableItemsHandler<TableCell> myExpandableItemsHandler;
@@ -93,12 +94,7 @@ public class JBTable extends JTable implements ComponentWithEmptyText, Component
     final TableModelListener modelListener = new TableModelListener() {
       @Override
       public void tableChanged(@NotNull final TableModelEvent e) {
-        if (!myRowHeightIsExplicitlySet) {
-          myRowHeight = -1;
-        }
-        if (e.getType() == TableModelEvent.DELETE && isEmpty() || e.getType() == TableModelEvent.INSERT && !isEmpty()) {
-          repaintViewport();
-        }
+        onTableChanged(e);
       }
     };
 
@@ -122,6 +118,15 @@ public class JBTable extends JTable implements ComponentWithEmptyText, Component
     new MyCellEditorRemover();
   }
 
+  protected void onTableChanged(@NotNull TableModelEvent e) {
+    if (!myRowHeightIsExplicitlySet) {
+      myRowHeight = -1;
+    }
+    if (e.getType() == TableModelEvent.DELETE && isEmpty() || e.getType() == TableModelEvent.INSERT && !isEmpty()) {
+      repaintViewport();
+    }
+  }
+
   @Override
   public int getRowHeight() {
     if (myRowHeightIsComputing) {
@@ -131,19 +136,7 @@ public class JBTable extends JTable implements ComponentWithEmptyText, Component
     if (myRowHeight < 0) {
       try {
         myRowHeightIsComputing = true;
-        for (int row = 0; row < Math.min(getRowCount(), myMaxItemsForSizeCalculation); row++) {
-          for (int column = 0; column < Math.min(getColumnCount(), myMaxItemsForSizeCalculation); column++) {
-            final TableCellRenderer renderer = getCellRenderer(row, column);
-            if (renderer != null) {
-              final Object value = getValueAt(row, column);
-              final Component component = renderer.getTableCellRendererComponent(this, value, true, true, row, column);
-              if (component != null) {
-                final Dimension size = component.getPreferredSize();
-                myRowHeight = Math.max(size.height, myRowHeight);
-              }
-            }
-          }
-        }
+        myRowHeight = calculateRowHeight();
       }
       finally {
         myRowHeightIsComputing = false;
@@ -155,6 +148,26 @@ public class JBTable extends JTable implements ComponentWithEmptyText, Component
     }
 
     return Math.max(myRowHeight, myMinRowHeight);
+  }
+
+  protected int calculateRowHeight() {
+    int result = -1;
+
+    for (int row = 0; row < Math.min(getRowCount(), myMaxItemsForSizeCalculation); row++) {
+      for (int column = 0; column < Math.min(getColumnCount(), myMaxItemsForSizeCalculation); column++) {
+        final TableCellRenderer renderer = getCellRenderer(row, column);
+        if (renderer != null) {
+          final Object value = getValueAt(row, column);
+          final Component component = renderer.getTableCellRendererComponent(this, value, true, true, row, column);
+          if (component != null) {
+            final Dimension size = component.getPreferredSize();
+            result = Math.max(size.height, result);
+          }
+        }
+      }
+    }
+
+    return result;
   }
 
   public void setShowColumns(boolean value) {
@@ -497,13 +510,12 @@ public class JBTable extends JTable implements ComponentWithEmptyText, Component
     }
 
     if (myExpandableItemsHandler.getExpandedItems().contains(new TableCell(row, column))) {
-      result = new ExpandedItemRendererComponentWrapper(result);
+      result = ExpandedItemRendererComponentWrapper.wrap(result);
     }
     return result;
   }
 
   private final class MyCellEditorRemover extends Activatable.Adapter implements PropertyChangeListener {
-    private final IdeFocusManager myFocusManager = IdeFocusManager.findInstanceByComponent(JBTable.this);
     private boolean myIsActive = false;
 
     public MyCellEditorRemover() {
@@ -557,7 +569,8 @@ public class JBTable extends JTable implements ComponentWithEmptyText, Component
         return;
       }
 
-      myFocusManager.doWhenFocusSettlesDown(new ExpirableRunnable() {
+      final IdeFocusManager focusManager = IdeFocusManager.findInstanceByComponent(JBTable.this);
+      focusManager.doWhenFocusSettlesDown(new ExpirableRunnable() {
         @Override
         public boolean isExpired() {
           return !isEditing();
@@ -565,7 +578,7 @@ public class JBTable extends JTable implements ComponentWithEmptyText, Component
 
         @Override
         public void run() {
-          Component c = myFocusManager.getFocusOwner();
+          Component c = focusManager.getFocusOwner();
           if (UIUtil.isMeaninglessFocusOwner(c)) {
             // this allows using popup menus and menu bar without stopping cell editing
             return;
@@ -794,27 +807,6 @@ public class JBTable extends JTable implements ComponentWithEmptyText, Component
       });
     }
 
-    protected int getExpandedColumnWidth(int columnToExpand) {
-      int expandedWidth = getPreferredHeaderWidth(columnToExpand);
-      for (int row = 0; row < getRowCount(); row++) {
-        TableCellRenderer cellRenderer = getCellRenderer(row, columnToExpand);
-        if (cellRenderer != null) {
-          Component c = JBTable.this.prepareRenderer(cellRenderer, row, columnToExpand);
-          expandedWidth = Math.max(expandedWidth, c.getPreferredSize().width);
-        }
-      }
-      return expandedWidth;
-    }
-
-    private int getPreferredHeaderWidth(int columnIdx) {
-      TableColumn column = getColumnModel().getColumn(columnIdx);
-      TableCellRenderer renderer = column.getHeaderRenderer();
-      renderer = renderer == null ? getDefaultRenderer() : renderer;
-      Object headerValue = column.getHeaderValue();
-      Component headerCellRenderer = renderer.getTableCellRendererComponent(JBTable.this, headerValue, false, false, -1, columnIdx);
-      return headerCellRenderer.getPreferredSize().width;
-    }
-
     private int getColumnToPack(Point p) {
       int viewColumnIdx = JBTable.this.columnAtPoint(p);
       if (viewColumnIdx == -1) return -1;
@@ -834,6 +826,33 @@ public class JBTable extends JTable implements ComponentWithEmptyText, Component
       TableColumnModel columnModel = getColumnModel();
       return resizingAllowed && columnModel.getColumn(columnIdx).getResizable();
     }
+  }
+
+  public int getExpandedColumnWidth(int columnToExpand) {
+    int expandedWidth = getPreferredHeaderWidth(columnToExpand);
+    for (int row = 0; row < getRowCount(); row++) {
+      TableCellRenderer cellRenderer = getCellRenderer(row, columnToExpand);
+      if (cellRenderer != null) {
+        Component c = prepareRenderer(cellRenderer, row, columnToExpand);
+        expandedWidth = Math.max(expandedWidth, c.getPreferredSize().width);
+      }
+    }
+    return expandedWidth;
+  }
+
+  private int getPreferredHeaderWidth(int columnIdx) {
+    TableColumn column = getColumnModel().getColumn(columnIdx);
+    TableCellRenderer renderer = column.getHeaderRenderer();
+    if (renderer == null) {
+      JTableHeader header = getTableHeader();
+      if (header == null) {
+        return DEFAULT_MIN_COLUMN_WIDTH;
+      }
+      renderer = header.getDefaultRenderer();
+    }
+    Object headerValue = column.getHeaderValue();
+    Component headerCellRenderer = renderer.getTableCellRendererComponent(this, headerValue, false, false, -1, columnIdx);
+    return headerCellRenderer.getPreferredSize().width;
   }
 
   /**

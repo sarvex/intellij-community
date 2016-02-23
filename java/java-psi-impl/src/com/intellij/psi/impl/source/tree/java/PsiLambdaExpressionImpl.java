@@ -110,16 +110,15 @@ public class PsiLambdaExpressionImpl extends ExpressionPsiElement implements Psi
     final PsiElement body = getBody();
     if (body instanceof PsiCodeBlock) {
       try {
-        ControlFlow controlFlow = ControlFlowFactory.getInstance(getProject()).getControlFlow(body, ourPolicy);
+        ControlFlow controlFlow = ControlFlowFactory.getInstance(getProject()).getControlFlow(body, ourPolicy, false, false);
         int startOffset = controlFlow.getStartOffset(body);
         int endOffset = controlFlow.getEndOffset(body);
         if (startOffset != -1 && endOffset != -1 && ControlFlowUtil.canCompleteNormally(controlFlow, startOffset, endOffset)) {
           return false;
         }
       }
-      catch (AnalysisCanceledException e) {
-        return false;
-      }
+      //error would be shown inside body
+      catch (AnalysisCanceledException ignore) {}
 
       for (PsiReturnStatement statement : PsiUtil.findReturnStatements((PsiCodeBlock)body)) {
         if (statement.getReturnValue() == null) {
@@ -225,7 +224,7 @@ public class PsiLambdaExpressionImpl extends ExpressionPsiElement implements Psi
     }
 
     PsiType methodReturnType = interfaceMethod.getReturnType();
-    if (methodReturnType != null && methodReturnType != PsiType.VOID) {
+    if (methodReturnType != null && !PsiType.VOID.equals(methodReturnType)) {
       Map<PsiElement, PsiType> map = LambdaUtil.getFunctionalTypeMap();
       try {
         if (map.put(this, leftType) != null) {
@@ -250,7 +249,7 @@ public class PsiLambdaExpressionImpl extends ExpressionPsiElement implements Psi
     }
     final PsiType methodReturnType = interfaceMethod.getReturnType();
     final PsiElement body = getBody();
-    if (methodReturnType == PsiType.VOID) {
+    if (PsiType.VOID.equals(methodReturnType)) {
       if (body instanceof PsiCodeBlock) {
         return isVoidCompatible();
       } else {
@@ -272,6 +271,6 @@ public class PsiLambdaExpressionImpl extends ExpressionPsiElement implements Psi
   @Nullable
   @Override
   public Icon getIcon(int flags) {
-    return AllIcons.Nodes.AnonymousClass;
+    return AllIcons.Nodes.Function;
   }
 }

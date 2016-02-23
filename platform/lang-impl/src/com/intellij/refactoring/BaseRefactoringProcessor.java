@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,13 +60,14 @@ import com.intellij.usageView.UsageViewUtil;
 import com.intellij.usages.*;
 import com.intellij.usages.rules.PsiElementUsage;
 import com.intellij.util.Processor;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.HashSet;
 import com.intellij.util.containers.MultiMap;
 import com.intellij.util.ui.UIUtil;
 import gnu.trove.THashSet;
-import gnu.trove.TObjectHashingStrategy;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.*;
@@ -91,7 +92,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
   }
 
   @NotNull
-  protected abstract UsageViewDescriptor createUsageViewDescriptor(UsageInfo[] usages);
+  protected abstract UsageViewDescriptor createUsageViewDescriptor(@NotNull UsageInfo[] usages);
 
   /**
    * Is called inside atomic action.
@@ -104,7 +105,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
    *
    * @param elements - refreshed elements that are returned by UsageViewDescriptor.getElements()
    */
-  protected void refreshElements(PsiElement[] elements) {}
+  protected void refreshElements(@NotNull PsiElement[] elements) {}
 
   /**
    * Is called inside atomic action.
@@ -112,7 +113,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
    * @param refUsages usages to be filtered
    * @return true if preprocessed successfully
    */
-  protected boolean preprocessUsages(Ref<UsageInfo[]> refUsages) {
+  protected boolean preprocessUsages(@NotNull Ref<UsageInfo[]> refUsages) {
     prepareSuccessful();
     return true;
   }
@@ -120,7 +121,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
   /**
    * Is called inside atomic action.
    */
-  protected boolean isPreviewUsages(UsageInfo[] usages) {
+  protected boolean isPreviewUsages(@NotNull UsageInfo[] usages) {
     return myIsPreviewUsages;
   }
 
@@ -144,7 +145,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
   /**
    * Is called in a command and inside atomic action.
    */
-  protected abstract void performRefactoring(UsageInfo[] usages);
+  protected abstract void performRefactoring(@NotNull UsageInfo[] usages);
 
   protected abstract String getCommandName();
 
@@ -215,6 +216,9 @@ public abstract class BaseRefactoringProcessor implements Runnable {
       }
     }
     if (isPreview) {
+      for (UsageInfo usage : usages) {
+        LOG.assertTrue(usage != null, getClass());
+      }
       previewRefactoring(usages);
     }
     else {
@@ -222,7 +226,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
     }
   }
 
-  protected void previewRefactoring(final UsageInfo[] usages) {
+  protected void previewRefactoring(@NotNull UsageInfo[] usages) {
     if (ApplicationManager.getApplication().isUnitTestMode()) {
       execute(usages);
       return;
@@ -263,8 +267,8 @@ public abstract class BaseRefactoringProcessor implements Runnable {
     return false;
   }
 
-  private boolean ensureElementsWritable(@NotNull final UsageInfo[] usages, final UsageViewDescriptor descriptor) {
-    Set<PsiElement> elements = new THashSet<PsiElement>(TObjectHashingStrategy.IDENTITY); // protect against poorly implemented equality
+  private boolean ensureElementsWritable(@NotNull final UsageInfo[] usages, @NotNull UsageViewDescriptor descriptor) {
+    Set<PsiElement> elements = new THashSet<PsiElement>(ContainerUtil.<PsiElement>identityStrategy()); // protect against poorly implemented equality
     for (UsageInfo usage : usages) {
       assert usage != null: "Found null element in usages array";
       if (skipNonCodeUsages() && usage.isNonCodeUsage()) continue;
@@ -275,12 +279,12 @@ public abstract class BaseRefactoringProcessor implements Runnable {
     return ensureFilesWritable(myProject, elements);
   }
 
-  private static boolean ensureFilesWritable(final Project project, Collection<? extends PsiElement> elements) {
+  private static boolean ensureFilesWritable(@NotNull Project project, @NotNull Collection<? extends PsiElement> elements) {
     PsiElement[] psiElements = PsiUtilCore.toPsiElementArray(elements);
     return CommonRefactoringUtil.checkReadOnlyStatus(project, psiElements);
   }
 
-  protected void execute(final UsageInfo[] usages) {
+  protected void execute(@NotNull final UsageInfo[] usages) {
     CommandProcessor.getInstance().executeCommand(myProject, new Runnable() {
       @Override
       public void run() {
@@ -296,11 +300,13 @@ public abstract class BaseRefactoringProcessor implements Runnable {
   }
 
   @SuppressWarnings("MethodMayBeStatic")
+  @NotNull
   protected UndoConfirmationPolicy getUndoConfirmationPolicy() {
     return UndoConfirmationPolicy.DEFAULT;
   }
 
-  private static UsageViewPresentation createPresentation(UsageViewDescriptor descriptor, final Usage[] usages) {
+  @NotNull
+  private static UsageViewPresentation createPresentation(@NotNull UsageViewDescriptor descriptor, @NotNull Usage[] usages) {
     UsageViewPresentation presentation = new UsageViewPresentation();
     presentation.setTabText(RefactoringBundle.message("usageView.tabText"));
     presentation.setTargetsNodeText(descriptor.getProcessedElementsHeader());
@@ -359,7 +365,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
     return presentation;
   }
 
-  private void showUsageView(final UsageViewDescriptor viewDescriptor, final Factory<UsageSearcher> factory, final UsageInfo[] usageInfos) {
+  private void showUsageView(@NotNull final UsageViewDescriptor viewDescriptor, final Factory<UsageSearcher> factory, @NotNull final UsageInfo[] usageInfos) {
     UsageViewManager viewManager = UsageViewManager.getInstance(myProject);
 
     final PsiElement[] initialElements = viewDescriptor.getElements();
@@ -384,7 +390,10 @@ public abstract class BaseRefactoringProcessor implements Runnable {
     final UsageViewPresentation presentation = createPresentation(viewDescriptor, usages);
 
     final UsageView usageView = viewManager.showUsages(targets, usages, presentation, factory);
+    customizeUsagesView(viewDescriptor, usageView);
+  }
 
+  protected void customizeUsagesView(@NotNull final UsageViewDescriptor viewDescriptor, @NotNull final UsageView usageView) {
     final Runnable refactoringRunnable = new Runnable() {
       @Override
       public void run() {
@@ -401,7 +410,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
     addDoRefactoringAction(usageView, refactoringRunnable, canNotMakeString);
   }
 
-  protected void addDoRefactoringAction(UsageView usageView, Runnable refactoringRunnable, String canNotMakeString) {
+  private void addDoRefactoringAction(@NotNull UsageView usageView, @NotNull Runnable refactoringRunnable, @NotNull String canNotMakeString) {
     usageView.addPerformOperationAction(refactoringRunnable, getCommandName(), canNotMakeString,
                                         RefactoringBundle.message("usageView.doAction"), false);
   }
@@ -454,16 +463,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
 
           try {
             if (refactoringId != null) {
-              UndoableAction action = new BasicUndoableAction() {
-                @Override
-                public void undo() {
-                  myProject.getMessageBus().syncPublisher(RefactoringEventListener.REFACTORING_EVENT_TOPIC).undoRefactoring(refactoringId);
-                }
-  
-                @Override
-                public void redo() {
-                }
-              };
+              UndoableAction action = new UndoRefactoringAction(myProject, refactoringId);
               UndoManager.getInstance(myProject).undoableActionPerformed(action);
             }
 
@@ -505,7 +505,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
     }
   }
 
-  protected boolean isToBeChanged(UsageInfo usageInfo) {
+  protected boolean isToBeChanged(@NotNull UsageInfo usageInfo) {
     return usageInfo.isWritable();
   }
 
@@ -543,6 +543,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
       return;
     }
     if (ApplicationManager.getApplication().isWriteAccessAllowed()) {
+      LOG.info(new Exception());
       DumbService.getInstance(myProject).smartInvokeLater(new Runnable() {
         @Override
         public void run() {
@@ -558,13 +559,14 @@ public abstract class BaseRefactoringProcessor implements Runnable {
   public static class ConflictsInTestsException extends RuntimeException {
     private final Collection<? extends String> messages;
 
-    private static boolean myTestIgnore = false;
+    private static boolean myTestIgnore;
 
-    public ConflictsInTestsException(Collection<? extends String> messages) {
+    public ConflictsInTestsException(@NotNull Collection<? extends String> messages) {
       this.messages = messages;
     }
 
-    public static void setTestIgnore(boolean myIgnore) {
+    @TestOnly
+    static void setTestIgnore(boolean myIgnore) {
       myTestIgnore = myIgnore;
     }
 
@@ -572,6 +574,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
       return myTestIgnore;
     }
 
+    @NotNull
     public Collection<String> getMessages() {
         List<String> result = new ArrayList<String>(messages);
         for (int i = 0; i < messages.size(); i++) {
@@ -582,18 +585,21 @@ public abstract class BaseRefactoringProcessor implements Runnable {
 
     @Override
     public String getMessage() {
-      return StringUtil.join(messages, "\n");
+      List<String> result = new ArrayList<>(messages);
+      Collections.sort(result);
+      return StringUtil.join(result, "\n");
     }
   }
 
   @Deprecated
-  protected boolean showConflicts(final MultiMap<PsiElement, String> conflicts) {
+  protected boolean showConflicts(@NotNull MultiMap<PsiElement, String> conflicts) {
     return showConflicts(conflicts, null);
   }
 
-  protected boolean showConflicts(final MultiMap<PsiElement, String> conflicts, @Nullable final UsageInfo[] usages) {
+  protected boolean showConflicts(@NotNull MultiMap<PsiElement, String> conflicts, @Nullable final UsageInfo[] usages) {
     if (!conflicts.isEmpty() && ApplicationManager.getApplication().isUnitTestMode()) {
-      throw new ConflictsInTestsException(conflicts.values());
+      if (!ConflictsInTestsException.isTestIgnore()) throw new ConflictsInTestsException(conflicts.values());
+      return true;
     }
 
     if (myPrepareSuccessfulSwingThreadCallback != null && !conflicts.isEmpty()) {
@@ -616,7 +622,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
   }
 
   @NotNull
-  protected ConflictsDialog prepareConflictsDialog(MultiMap<PsiElement, String> conflicts, @Nullable final UsageInfo[] usages) {
+  protected ConflictsDialog prepareConflictsDialog(@NotNull MultiMap<PsiElement, String> conflicts, @Nullable final UsageInfo[] usages) {
     final ConflictsDialog conflictsDialog = createConflictsDialog(conflicts, usages);
     conflictsDialog.setCommandName(getCommandName());
     return conflictsDialog;
@@ -628,7 +634,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
   }
 
   @Nullable
-  protected RefactoringEventData getAfterData(UsageInfo[] usages) {
+  protected RefactoringEventData getAfterData(@NotNull UsageInfo[] usages) {
     return null;
   }
 
@@ -638,7 +644,7 @@ public abstract class BaseRefactoringProcessor implements Runnable {
   }
   
   @NotNull
-  protected ConflictsDialog createConflictsDialog(MultiMap<PsiElement, String> conflicts, @Nullable final UsageInfo[] usages) {
+  protected ConflictsDialog createConflictsDialog(@NotNull MultiMap<PsiElement, String> conflicts, @Nullable final UsageInfo[] usages) {
     return new ConflictsDialog(myProject, conflicts, usages == null ? null : new Runnable() {
         @Override
         public void run() {
@@ -655,12 +661,32 @@ public abstract class BaseRefactoringProcessor implements Runnable {
   public static class UnknownReferenceTypeException extends RuntimeException {
     private final Language myElementLanguage;
 
-    public UnknownReferenceTypeException(final Language elementLanguage) {
+    public UnknownReferenceTypeException(@NotNull Language elementLanguage) {
       myElementLanguage = elementLanguage;
     }
 
+    @NotNull
     public Language getElementLanguage() {
       return myElementLanguage;
+    }
+  }
+
+  private static class UndoRefactoringAction extends BasicUndoableAction {
+    private final Project myProject;
+    private final String myRefactoringId;
+
+    public UndoRefactoringAction(Project project, String refactoringId) {
+      myProject = project;
+      myRefactoringId = refactoringId;
+    }
+
+    @Override
+    public void undo() {
+      myProject.getMessageBus().syncPublisher(RefactoringEventListener.REFACTORING_EVENT_TOPIC).undoRefactoring(myRefactoringId);
+    }
+
+    @Override
+    public void redo() {
     }
   }
 }

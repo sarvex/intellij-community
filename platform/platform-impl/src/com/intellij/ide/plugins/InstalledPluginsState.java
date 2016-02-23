@@ -19,15 +19,15 @@ import com.intellij.idea.IdeaApplication;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.extensions.PluginId;
 import com.intellij.openapi.updateSettings.impl.PluginDownloader;
-import com.intellij.openapi.updateSettings.impl.UpdateSettings;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.containers.SmartHashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * A service to hold a state of plugin changes in a current session (i.e. before the changes are applied on restart).
@@ -45,11 +45,7 @@ public class InstalledPluginsState {
   private final Object myLock = new Object();
   private final Map<PluginId, IdeaPluginDescriptor> myInstalledPlugins = ContainerUtil.newIdentityHashMap();
   private final Map<PluginId, IdeaPluginDescriptor> myUpdatedPlugins = ContainerUtil.newIdentityHashMap();
-  private final UpdateSettings myUpdateSettings;
-
-  public InstalledPluginsState(@NotNull UpdateSettings updateSettings) {
-    myUpdateSettings = updateSettings;
-  }
+  private final Set<String> myOutdatedPlugins = new SmartHashSet<String>();
 
   @NotNull
   public Collection<IdeaPluginDescriptor> getInstalledPlugins() {
@@ -60,7 +56,7 @@ public class InstalledPluginsState {
 
   public boolean hasNewerVersion(@NotNull PluginId id) {
     synchronized (myLock) {
-      return !wasUpdated(id) && myUpdateSettings.getOutdatedPlugins().contains(id.getIdString());
+      return !wasUpdated(id) && myOutdatedPlugins.contains(id.getIdString());
     }
   }
 
@@ -82,22 +78,21 @@ public class InstalledPluginsState {
   public void onDescriptorDownload(@NotNull IdeaPluginDescriptor descriptor) {
     PluginId id = descriptor.getPluginId();
     IdeaPluginDescriptor existing = PluginManager.getPlugin(id);
-    if (existing == null || existing.isBundled() || wasUpdated(id)) {
+    if (existing == null || (existing.isBundled() && !existing.allowBundledUpdate()) || wasUpdated(id)) {
       return;
     }
 
-    boolean newer = PluginDownloader.compareVersionsSkipBroken(existing, descriptor.getVersion()) > 0 && !PluginManagerCore.isIncompatible(descriptor);
+    boolean supersedes = PluginManagerCore.isCompatible(descriptor) &&
+                         PluginDownloader.compareVersionsSkipBrokenAndIncompatible(existing, descriptor.getVersion()) > 0;
+
     String idString = id.getIdString();
 
     synchronized (myLock) {
-      List<String> outdatedPlugins = myUpdateSettings.getOutdatedPlugins();
-      if (newer) {
-        if (!outdatedPlugins.contains(idString)) {
-          outdatedPlugins.add(idString);
-        }
+      if (supersedes) {
+        myOutdatedPlugins.add(idString);
       }
       else {
-        outdatedPlugins.remove(idString);
+        myOutdatedPlugins.remove(idString);
       }
     }
   }
@@ -110,7 +105,7 @@ public class InstalledPluginsState {
     boolean existing = PluginManager.isPluginInstalled(id);
 
     synchronized (myLock) {
-      myUpdateSettings.getOutdatedPlugins().remove(id.getIdString());
+      myOutdatedPlugins.remove(id.getIdString());
       if (existing) {
         myUpdatedPlugins.put(id, descriptor);
       }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,8 @@
  */
 package com.intellij.xdebugger.frame;
 
-import com.intellij.openapi.editor.Document;
-import com.intellij.openapi.vfs.VirtualFile;
-import org.jetbrains.annotations.NotNull;
+import com.intellij.xdebugger.XSourcePosition;
 
 public abstract class XInlineDebuggerDataCallback {
-  public abstract void computed(@NotNull VirtualFile file, @NotNull Document document, int line);
+  public abstract void computed(XSourcePosition position);
 }

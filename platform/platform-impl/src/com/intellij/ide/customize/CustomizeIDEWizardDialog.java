@@ -16,13 +16,14 @@
 package com.intellij.ide.customize;
 
 import com.intellij.ide.startup.StartupActionScriptManager;
-import com.intellij.idea.Main;
 import com.intellij.openapi.application.ApplicationNamesInfo;
 import com.intellij.openapi.ui.DialogWrapper;
-import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.JBCardLayout;
+import com.intellij.ui.components.JBLabel;
 import com.intellij.util.PlatformUtils;
 import com.intellij.util.ui.JBUI;
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -42,74 +43,41 @@ public class CustomizeIDEWizardDialog extends DialogWrapper implements ActionLis
   private final JButton myNextButton = new JButton("Next");
 
   private final JBCardLayout myCardLayout = new JBCardLayout();
-  protected final List<AbstractCustomizeWizardStep> mySteps = new ArrayList<AbstractCustomizeWizardStep>();
+  private final List<AbstractCustomizeWizardStep> mySteps = new ArrayList<AbstractCustomizeWizardStep>();
   private int myIndex = 0;
-  private final JLabel myNavigationLabel = new JLabel();
-  private final JLabel myHeaderLabel = new JLabel();
-  private final JLabel myFooterLabel = new JLabel();
+  private final JBLabel myNavigationLabel = new JBLabel();
+  private final JBLabel myHeaderLabel = new JBLabel();
+  private final JBLabel myFooterLabel = new JBLabel();
   private final CardLayout myButtonWrapperLayout = new CardLayout();
   private final JPanel myButtonWrapper = new JPanel(myButtonWrapperLayout);
   private JPanel myContentPanel;
 
-  public CustomizeIDEWizardDialog() {
+  public CustomizeIDEWizardDialog(@NotNull CustomizeIDEWizardStepsProvider stepsProvider) {
     super(null, true, true);
     setTitle("Customize " + ApplicationNamesInfo.getInstance().getProductName());
     getPeer().setAppIcons();
-    initSteps();
+
+    stepsProvider.initSteps(this, mySteps);
+    if (mySteps.isEmpty()) {
+      throw new IllegalArgumentException(stepsProvider + " provided no steps");
+    }
+
     mySkipButton.addActionListener(this);
     myBackButton.addActionListener(this);
     myNextButton.addActionListener(this);
-    myNavigationLabel.setEnabled(false);
-    myFooterLabel.setEnabled(false);
+    AbstractCustomizeWizardStep.applyHeaderFooterStyle(myNavigationLabel);
+    AbstractCustomizeWizardStep.applyHeaderFooterStyle(myHeaderLabel);
+    AbstractCustomizeWizardStep.applyHeaderFooterStyle(myFooterLabel);
     init();
     initCurrentStep(true);
     setSize(400, 300);
     System.setProperty(StartupActionScriptManager.STARTUP_WIZARD_MODE, "true");
   }
 
-  public static void showCustomSteps(String stepsProviderName) {
-    final CustomizeIDEWizardStepsProvider provider;
-
-    try {
-      Class<?> providerClass = Class.forName(stepsProviderName);
-      provider = (CustomizeIDEWizardStepsProvider)providerClass.newInstance();
-    }
-    catch (Throwable e) {
-      Main.showMessage("Configuration Wizard Failed", e);
-      return;
-    }
-
-    new CustomizeIDEWizardDialog() {
-      @Override
-      protected void initSteps() {
-        provider.initSteps(this, mySteps);
-      }
-    }.show();
-  }
-
   @Override
   protected void dispose() {
     System.clearProperty(StartupActionScriptManager.STARTUP_WIZARD_MODE);
     super.dispose();
-  }
-
-  protected void initSteps() {
-    mySteps.add(new CustomizeUIThemeStepPanel());
-    if (SystemInfo.isMac) {
-      mySteps.add(new CustomizeKeyboardSchemeStepPanel());
-    }
-    if (CustomizeDesktopEntryStep.isAvailable()) {
-      mySteps.add(new CustomizeDesktopEntryStep("/UbuntuDesktopEntry.png"));
-    }
-
-    PluginGroups pluginGroups = new PluginGroups();
-    mySteps.add(new CustomizePluginsStepPanel(pluginGroups));
-    try {
-      mySteps.add(new CustomizeFeaturedPluginsStepPanel(pluginGroups));
-    }
-    catch (CustomizeFeaturedPluginsStepPanel.OfflineException e) {
-      //skip featured step if we're offline
-    }
   }
 
   @Override
@@ -229,8 +197,8 @@ public class CustomizeIDEWizardDialog extends DialogWrapper implements ActionLis
     myNextButton.setText(myIndex < mySteps.size() - 1
                          ? "Next: " + mySteps.get(myIndex + 1).getTitle()
                          : "Start using " + ApplicationNamesInfo.getInstance().getFullProductName());
-    myHeaderLabel.setText(myCurrentStep.getHTMLHeader());
-    myFooterLabel.setText(myCurrentStep.getHTMLFooter());
+    myHeaderLabel.setText(ensureHTML(myCurrentStep.getHTMLHeader()));
+    myFooterLabel.setText(ensureHTML(myCurrentStep.getHTMLFooter()));
     StringBuilder navHTML = new StringBuilder("<html><body>");
     for (int i = 0; i < mySteps.size(); i++) {
       if (i > 0) navHTML.append("&nbsp;&#8594;&nbsp;");
@@ -239,5 +207,10 @@ public class CustomizeIDEWizardDialog extends DialogWrapper implements ActionLis
       if (i == myIndex) navHTML.append("</b>");
     }
     myNavigationLabel.setText(navHTML.toString());
+  }
+
+  @Contract("!null->!null")
+  private static String ensureHTML(@Nullable String s) {
+    return s == null ? null : s.startsWith("<html>") ? s : "<html>" + StringUtil.escapeXml(s) + "</html>";
   }
 }

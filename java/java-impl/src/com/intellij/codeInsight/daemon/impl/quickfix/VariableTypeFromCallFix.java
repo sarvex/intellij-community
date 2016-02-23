@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2010 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,16 +66,15 @@ public class VariableTypeFromCallFix implements IntentionAction {
 
   @Override
   public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
-    return true;
+    return myExpressionType.isValid() && myVar.isValid();
   }
 
   @Override
   public void invoke(@NotNull final Project project, final Editor editor, PsiFile file) throws IncorrectOperationException {
-    final TypeMigrationRules rules = new TypeMigrationRules(TypeMigrationLabeler.getElementType(myVar));
-    rules.setMigrationRootType(myExpressionType);
+    final TypeMigrationRules rules = new TypeMigrationRules();
     rules.setBoundScope(PsiSearchHelper.SERVICE.getInstance(project).getUseScope(myVar));
 
-    TypeMigrationProcessor.runHighlightingTypeMigration(project, editor, rules, myVar);
+    TypeMigrationProcessor.runHighlightingTypeMigration(project, editor, rules, myVar, myExpressionType);
   }
 
   @Override
@@ -91,8 +90,9 @@ public class VariableTypeFromCallFix implements IntentionAction {
     PsiMethod method = (PsiMethod) result.getElement();
     final PsiSubstitutor substitutor = result.getSubstitutor();
     PsiExpression[] expressions = list.getExpressions();
-    if (method == null || method.getParameterList().getParametersCount() != expressions.length) return Collections.emptyList();
+    if (method == null) return Collections.emptyList();
     final PsiParameter[] parameters = method.getParameterList().getParameters();
+    if (parameters.length != expressions.length) return Collections.emptyList();
     List<IntentionAction> actions = new ArrayList<IntentionAction>();
     for (int i = 0; i < expressions.length; i++) {
       final PsiExpression expression = expressions[i];

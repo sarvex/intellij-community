@@ -19,28 +19,21 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.externalSystem.model.DataNode;
 import com.intellij.openapi.externalSystem.model.Key;
 import com.intellij.openapi.externalSystem.model.ProjectKeys;
-import com.intellij.openapi.externalSystem.model.project.ModuleData;
-import com.intellij.openapi.externalSystem.model.project.ModuleDependencyData;
-import com.intellij.openapi.externalSystem.model.project.ProjectData;
-import com.intellij.openapi.externalSystem.service.project.ProjectStructureHelper;
-import com.intellij.openapi.externalSystem.util.DisposeAwareProjectChange;
-import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
+import com.intellij.openapi.externalSystem.model.project.*;
+import com.intellij.openapi.externalSystem.service.project.IdeModifiableModelsProvider;
 import com.intellij.openapi.externalSystem.util.ExternalSystemConstants;
 import com.intellij.openapi.externalSystem.util.Order;
 import com.intellij.openapi.module.Module;
-import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.*;
+import com.intellij.openapi.roots.impl.ModuleOrderEntryImpl;
 import com.intellij.openapi.util.Pair;
-import com.intellij.util.BooleanFunction;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.ContainerUtilRt;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
 import java.util.Map;
-
-import static com.intellij.openapi.externalSystem.model.ProjectKeys.MODULE;
+import java.util.Set;
 
 /**
  * @author Denis Zhdanov
@@ -51,105 +44,95 @@ public class ModuleDependencyDataService extends AbstractDependencyDataService<M
 
   private static final Logger LOG = Logger.getInstance("#" + ModuleDependencyDataService.class.getName());
 
-  @NotNull private final ProjectStructureHelper myProjectStructureHelper;
-  @NotNull private final ModuleDataService      myModuleDataManager;
-
-  public ModuleDependencyDataService(@NotNull ProjectStructureHelper projectStructureHelper, @NotNull ModuleDataService manager) {
-    myProjectStructureHelper = projectStructureHelper;
-    myModuleDataManager = manager;
-  }
-
   @NotNull
   @Override
   public Key<ModuleDependencyData> getTargetDataKey() {
     return ProjectKeys.MODULE_DEPENDENCY;
   }
 
+  @NotNull
   @Override
-  public void importData(@NotNull Collection<DataNode<ModuleDependencyData>> toImport, @NotNull Project project, boolean synchronous) {
-    Map<DataNode<ModuleData>, List<DataNode<ModuleDependencyData>>> byModule= ExternalSystemApiUtil.groupBy(toImport, MODULE);
-    for (Map.Entry<DataNode<ModuleData>, List<DataNode<ModuleDependencyData>>> entry : byModule.entrySet()) {
-      Module ideModule = myProjectStructureHelper.findIdeModule(entry.getKey().getData(), project);
-      if (ideModule == null) {
-        myModuleDataManager.importData(Collections.singleton(entry.getKey()), project, true);
-        ideModule = myProjectStructureHelper.findIdeModule(entry.getKey().getData(), project);
-      }
-      if (ideModule == null) {
-        LOG.warn(String.format(
-          "Can't import module dependencies %s. Reason: target module (%s) is not found at the ide and can't be imported",
-          entry.getValue(), entry.getKey()
-        ));
-        continue;
-      }
-      importData(entry.getValue(), ideModule, synchronous);
-    }
+  public Class<ModuleOrderEntry> getOrderEntryType() {
+    return ModuleOrderEntry.class;
   }
 
-  public void importData(@NotNull final Collection<DataNode<ModuleDependencyData>> toImport,
-                         @NotNull final Module module,
-                         final boolean synchronous)
-  {
-    ExternalSystemApiUtil.executeProjectChangeAction(synchronous, new DisposeAwareProjectChange(module) {
-      @Override
-      public void execute() {
-        ModuleRootManager moduleRootManager = ModuleRootManager.getInstance(module);
-        Map<Pair<String /* dependency module internal name */, /* dependency module scope */DependencyScope> , ModuleOrderEntry> toRemove = ContainerUtilRt.newHashMap();
-        for (OrderEntry entry : moduleRootManager.getOrderEntries()) {
-          if (entry instanceof ModuleOrderEntry) {
-            ModuleOrderEntry e = (ModuleOrderEntry)entry;
-            toRemove.put(Pair.create(e.getModuleName(), e.getScope()), e);
-          }
-        }
-        
-        final ModifiableRootModel moduleRootModel = moduleRootManager.getModifiableModel();
-        try {
-          for (DataNode<ModuleDependencyData> dependencyNode : toImport) {
-            final ModuleDependencyData dependencyData = dependencyNode.getData();
-            toRemove.remove(Pair.create(dependencyData.getInternalName(), dependencyData.getScope()));
-            final String moduleName = dependencyData.getInternalName();
-            Module ideDependencyModule = myProjectStructureHelper.findIdeModule(moduleName, module.getProject());
-            if (ideDependencyModule == null) {
-              DataNode<ProjectData> projectNode = dependencyNode.getDataNode(ProjectKeys.PROJECT);
-              if (projectNode != null) {
-                DataNode<ModuleData> n
-                  = ExternalSystemApiUtil.find(projectNode, MODULE, new BooleanFunction<DataNode<ModuleData>>() {
-                  @Override
-                  public boolean fun(DataNode<ModuleData> node) {
-                    return node.getData().equals(dependencyData.getTarget());
-                  }
-                });
-                if (n != null) {
-                  myModuleDataManager.importData(Collections.singleton(n), module.getProject(), true);
-                  ideDependencyModule = myProjectStructureHelper.findIdeModule(moduleName, module.getProject());
-                }
-              }
-            }
+  @Override
+  protected String getOrderEntryName(@NotNull IdeModifiableModelsProvider modelsProvider, @NotNull ModuleOrderEntry orderEntry) {
+    String moduleName = orderEntry.getModuleName();
+    final Module orderEntryModule = orderEntry.getModule();
+    if(orderEntryModule != null) {
+      final String newName = modelsProvider.getModifiableModuleModel().getNewName(orderEntryModule);
+      if (newName != null) {
+        moduleName = newName;
+      }
+    }
+    return moduleName;
+  }
 
-            if (ideDependencyModule == null) {
-              assert false;
-              return;
-            }
-            else if (ideDependencyModule.equals(module)) {
-              // Gradle api returns recursive module dependencies (a module depends on itself) for 'gradle' project.
-              continue;
-            }
+  @Override
+  protected Map<OrderEntry, OrderAware> importData(@NotNull final Collection<DataNode<ModuleDependencyData>> toImport,
+                                                 @NotNull final Module module,
+                                                 @NotNull final IdeModifiableModelsProvider modelsProvider) {
+    final Map<Pair<String /* dependency module internal name */, /* dependency module scope */DependencyScope>, ModuleOrderEntry> toRemove =
+      ContainerUtilRt.newHashMap();
+    final Map<OrderEntry, OrderAware> orderEntryDataMap = ContainerUtil.newLinkedHashMap();
 
-            ModuleOrderEntry orderEntry = myProjectStructureHelper.findIdeModuleDependency(dependencyData, moduleRootModel);
-            if (orderEntry == null) {
-              orderEntry = moduleRootModel.addModuleOrderEntry(ideDependencyModule);
-            }
-            orderEntry.setScope(dependencyData.getScope());
-            orderEntry.setExported(dependencyData.isExported());
-          }
-        }
-        finally {
-          moduleRootModel.commit();
-        }
+    for (OrderEntry entry : modelsProvider.getOrderEntries(module)) {
+      if (entry instanceof ModuleOrderEntry) {
+        ModuleOrderEntry e = (ModuleOrderEntry)entry;
+        toRemove.put(Pair.create(e.getModuleName(), e.getScope()), e);
+      }
+    }
+    final Set<ModuleDependencyData> processed = ContainerUtil.newHashSet();
+    final ModifiableRootModel modifiableRootModel = modelsProvider.getModifiableRootModel(module);
+    for (DataNode<ModuleDependencyData> dependencyNode : toImport) {
+      final ModuleDependencyData dependencyData = dependencyNode.getData();
 
-        if (!toRemove.isEmpty()) {
-          removeData(toRemove.values(), module, synchronous);
+      if (processed.contains(dependencyData)) continue;
+      processed.add(dependencyData);
+
+      toRemove.remove(Pair.create(dependencyData.getInternalName(), dependencyData.getScope()));
+      final String moduleName = dependencyData.getInternalName();
+      Module ideDependencyModule = modelsProvider.findIdeModule(moduleName);
+
+      ModuleOrderEntry orderEntry;
+      if (module.equals(ideDependencyModule)) {
+        // skip recursive module dependency check
+        continue;
+      }
+      else {
+        if (ideDependencyModule == null) {
+          LOG.warn(String.format(
+            "Can't import module dependency for '%s' module. Reason: target module (%s) is not found at the ide",
+            module.getName(), dependencyData
+          ));
+        }
+        orderEntry = modelsProvider.findIdeModuleDependency(dependencyData, module);
+        if (orderEntry == null) {
+          orderEntry = ideDependencyModule == null
+                       ? modifiableRootModel.addInvalidModuleEntry(moduleName)
+                       : modifiableRootModel.addModuleOrderEntry(ideDependencyModule);
         }
       }
-    });
+
+      orderEntry.setScope(dependencyData.getScope());
+      orderEntry.setExported(dependencyData.isExported());
+
+      final boolean productionOnTestDependency = dependencyData.isProductionOnTestDependency();
+      if (orderEntry instanceof ModuleOrderEntryImpl) {
+        ((ModuleOrderEntryImpl)orderEntry).setProductionOnTestDependency(productionOnTestDependency);
+      }
+      else if (productionOnTestDependency) {
+        LOG.warn("Unable to set productionOnTestDependency for entry: " + orderEntry);
+      }
+
+      orderEntryDataMap.put(orderEntry, dependencyData);
+    }
+
+    if (!toRemove.isEmpty()) {
+      removeData(toRemove.values(), module, modelsProvider);
+    }
+
+    return orderEntryDataMap;
   }
 }

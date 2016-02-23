@@ -52,11 +52,12 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
   private ToolWindowType myInternalType;
   private ToolWindowType myType;
   private boolean myVisible;
+  private boolean myShowStripeButton;
   private float myWeight;
   private float mySideWeight;
   private boolean mySplitMode;
 
-  private ToolWindowContentUiType myContentUiType = ToolWindowContentUiType.TABBED;
+  @NotNull private ToolWindowContentUiType myContentUiType = ToolWindowContentUiType.TABBED;
   /**
    * Defines order of tool window button inside the stripe.
    * The default value is <code>-1</code>.
@@ -78,6 +79,7 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
   @NonNls static final String HEIGHT_ATTR = "height";
   @NonNls static final String SIDE_TOOL_ATTR = "side_tool";
   @NonNls static final String CONTENT_UI_ATTR = "content_ui";
+  @NonNls static final String SHOW_STRIPE_BUTTON = "show_stripe_button";
 
 
   private boolean myWasRead;
@@ -93,6 +95,7 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
     myId = id;
     setType(ToolWindowType.DOCKED);
     myVisible = false;
+    myShowStripeButton = true;
     myWeight = DEFAULT_WEIGHT;
     mySideWeight = DEFAULT_SIDE_WEIGHT;
     myOrder = -1;
@@ -132,6 +135,7 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
     mySideWeight = info.mySideWeight;
     myOrder = info.myOrder;
     mySplitMode = info.mySplitMode;
+    myContentUiType = info.myContentUiType;
   }
 
   /**
@@ -143,12 +147,13 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
     return myAnchor;
   }
 
+  @NotNull
   @Override
   public ToolWindowContentUiType getContentUiType() {
     return myContentUiType;
   }
 
-  void setContentUiType(ToolWindowContentUiType type) {
+  void setContentUiType(@NotNull ToolWindowContentUiType type) {
     myContentUiType = type;
   }
 
@@ -157,7 +162,7 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
    */
   @Override
   public Rectangle getFloatingBounds(){
-    return myFloatingBounds;
+    return myFloatingBounds != null ? new Rectangle(myFloatingBounds) : null;
   }
 
   /**
@@ -230,12 +235,25 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
   }
 
   @Override
+  public boolean isWindowed(){
+    return ToolWindowType.WINDOWED==myType;
+  }
+
+  @Override
   public boolean isSliding(){
     return ToolWindowType.SLIDING==myType;
   }
 
   boolean isVisible(){
     return myVisible;
+  }
+
+  public boolean isShowStripeButton() {
+    return myShowStripeButton;
+  }
+
+  public void setShowStripeButton(boolean showStripeButton) {
+    myShowStripeButton = showStripeButton;
   }
 
   @Override
@@ -245,36 +263,6 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
 
   public void setSplit(final boolean sideTool) {
     mySplitMode =sideTool;
-  }
-
-  private static ToolWindowType parseToolWindowType(final String text) {
-    if (ToolWindowType.DOCKED.toString().equalsIgnoreCase(text)) {
-      return ToolWindowType.DOCKED;
-    }
-    if (ToolWindowType.FLOATING.toString().equalsIgnoreCase(text)) {
-      return ToolWindowType.FLOATING;
-    }
-    if (ToolWindowType.SLIDING.toString().equalsIgnoreCase(text)) {
-      return ToolWindowType.SLIDING;
-    }
-    throw new IllegalArgumentException(text);
-  }
-
-  @NotNull
-  private static ToolWindowAnchor parseToolWindowAnchor(final String text) {
-    if (ToolWindowAnchor.TOP.toString().equalsIgnoreCase(text)) {
-      return ToolWindowAnchor.TOP;
-    }
-    if (ToolWindowAnchor.LEFT.toString().equalsIgnoreCase(text)) {
-      return ToolWindowAnchor.LEFT;
-    }
-    if (ToolWindowAnchor.BOTTOM.toString().equalsIgnoreCase(text)) {
-      return ToolWindowAnchor.BOTTOM;
-    }
-    if (ToolWindowAnchor.RIGHT.toString().equalsIgnoreCase(text)) {
-      return ToolWindowAnchor.RIGHT;
-    }
-    throw new IllegalArgumentException(text);
   }
 
   @Override
@@ -288,22 +276,25 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
     catch (NumberFormatException ignored) {
     }
     try {
-      myAnchor = parseToolWindowAnchor(element.getAttributeValue(ANCHOR_ATTR));
+      myAnchor = ToolWindowAnchor.fromText(element.getAttributeValue(ANCHOR_ATTR));
     }
     catch (IllegalArgumentException ignored) {
     }
     myAutoHide = Boolean.valueOf(element.getAttributeValue(AUTOHIDE_ATTR)).booleanValue();
     try {
-      myInternalType = parseToolWindowType(element.getAttributeValue(INTERNAL_TYPE_ATTR));
+      myInternalType = ToolWindowType.valueOf(element.getAttributeValue(INTERNAL_TYPE_ATTR));
     }
     catch (IllegalArgumentException ignored) {
     }
     try {
-      setTypeAndCheck(parseToolWindowType(element.getAttributeValue(TYPE_ATTR)));
+      setTypeAndCheck(ToolWindowType.valueOf(element.getAttributeValue(TYPE_ATTR)));
     }
     catch (IllegalArgumentException ignored) {
     }
     myVisible = Boolean.valueOf(element.getAttributeValue(VISIBLE_ATTR)).booleanValue();
+    if (element.getAttributeValue(SHOW_STRIPE_BUTTON) != null) {
+      myShowStripeButton = Boolean.valueOf(element.getAttributeValue(SHOW_STRIPE_BUTTON)).booleanValue();
+    }
     try {
       myWeight = Float.parseFloat(element.getAttributeValue(WEIGHT_ATTR));
     }
@@ -390,6 +381,7 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
     element.setAttribute(INTERNAL_TYPE_ATTR,myInternalType.toString());
     element.setAttribute(TYPE_ATTR,myType.toString());
     element.setAttribute(VISIBLE_ATTR, Boolean.toString(myVisible));
+    element.setAttribute(SHOW_STRIPE_BUTTON, Boolean.toString(myShowStripeButton));
     element.setAttribute(WEIGHT_ATTR,Float.toString(myWeight));
     element.setAttribute(SIDE_WEIGHT_ATTR, Float.toString(mySideWeight));
     element.setAttribute(ORDER_ATTR,Integer.toString(myOrder));
@@ -416,6 +408,7 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
            myInternalType == info.myInternalType &&
            myType == info.myType &&
            myVisible == info.myVisible &&
+           myShowStripeButton == info.myShowStripeButton &&
            myWeight == info.myWeight &&
            mySideWeight == info.mySideWeight &&
            myOrder == info.myOrder &&
@@ -431,6 +424,7 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
   public String toString(){
     return getClass().getName() + "[myId=" + myId
            + "; myVisible=" + myVisible
+           + "; myShowStripeButton=" + myShowStripeButton
            + "; myActive=" + myActive
            + "; myAnchor=" + myAnchor
            + "; myOrder=" + myOrder
@@ -440,7 +434,8 @@ public final class WindowInfoImpl implements Cloneable,JDOMExternalizable, Windo
            + "; myType=" + myType
            + "; myInternalType=" + myInternalType
            + "; myFloatingBounds=" + myFloatingBounds
-           + "; mySplitMode=" + mySplitMode +
+           + "; mySplitMode=" + mySplitMode
+           + "; myContentUiType=" + myContentUiType.getName() +
            ']';
   }
 

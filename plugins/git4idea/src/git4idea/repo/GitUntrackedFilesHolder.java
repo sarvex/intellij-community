@@ -19,6 +19,7 @@ import com.intellij.openapi.Disposable;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.vcs.ProjectLevelVcsManager;
 import com.intellij.openapi.vcs.VcsException;
 import com.intellij.openapi.vcs.changes.ChangeListManager;
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager;
@@ -27,6 +28,7 @@ import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.openapi.vfs.newvfs.BulkFileListener;
 import com.intellij.openapi.vfs.newvfs.events.*;
 import com.intellij.util.messages.MessageBusConnection;
+import git4idea.GitLocalBranch;
 import git4idea.GitUtil;
 import git4idea.commands.Git;
 import org.jetbrains.annotations.NotNull;
@@ -37,11 +39,11 @@ import java.util.*;
 /**
  * <p>
  *   Stores files which are untracked by the Git repository.
- *   Should be updated by calling {@link #add(com.intellij.openapi.vfs.VirtualFile)} and {@link #remove(java.util.Collection)}
+ *   Should be updated by calling {@link #add(VirtualFile)} and {@link #remove(Collection)}
  *   whenever the list of unversioned files changes.
  *   Able to get the list of unversioned files from Git.
  * </p>
- * 
+ *
  * <p>
  *   This class is used by {@link git4idea.status.GitNewChangesCollector}.
  *   By keeping track of unversioned files in the Git repository we may invoke
@@ -87,8 +89,10 @@ public class GitUntrackedFilesHolder implements Disposable, BulkFileListener {
 
   private final Project myProject;
   private final VirtualFile myRoot;
+  private final GitRepository myRepository;
   private final ChangeListManager myChangeListManager;
   private final VcsDirtyScopeManager myDirtyScopeManager;
+  private final ProjectLevelVcsManager myVcsManager;
   private final GitRepositoryFiles myRepositoryFiles;
   private final Git myGit;
 
@@ -100,10 +104,12 @@ public class GitUntrackedFilesHolder implements Disposable, BulkFileListener {
 
   GitUntrackedFilesHolder(@NotNull GitRepository repository) {
     myProject = repository.getProject();
+    myRepository = repository;
     myRoot = repository.getRoot();
     myChangeListManager = ChangeListManager.getInstance(myProject);
     myDirtyScopeManager = VcsDirtyScopeManager.getInstance(myProject);
     myGit = ServiceManager.getService(Git.class);
+    myVcsManager = ProjectLevelVcsManager.getInstance(myProject);
 
     myRepositoryManager = GitUtil.getRepositoryManager(myProject);
     myRepositoryFiles = GitRepositoryFiles.getInstance(repository.getGitDir());
@@ -180,7 +186,7 @@ public class GitUntrackedFilesHolder implements Disposable, BulkFileListener {
   /**
    * Resets the list of untracked files after retrieving the full list of them from Git.
    */
-  public void rescanAll() throws VcsException {
+  private void rescanAll() throws VcsException {
     Set<VirtualFile> untrackedFiles = myGit.untrackedFiles(myProject, myRoot, null);
     synchronized (myDefinitelyUntrackedFiles) {
       myDefinitelyUntrackedFiles.clear();
@@ -250,7 +256,7 @@ public class GitUntrackedFilesHolder implements Disposable, BulkFileListener {
 
     // if index has changed, no need to refresh specific files - we get the full status of all files
     if (allChanged) {
-      LOG.debug(String.format("GitUntrackedFilesHolder: Index has changed, marking %s recursively dirty", myRoot));
+      LOG.debug(String.format("GitUntrackedFilesHolder: total refresh is needed, marking %s recursively dirty", myRoot));
       myDirtyScopeManager.dirDirtyRecursively(myRoot);
       synchronized (LOCK) {
         myReady = false;
@@ -263,7 +269,21 @@ public class GitUntrackedFilesHolder implements Disposable, BulkFileListener {
   }
 
   private boolean totalRefreshNeeded(@NotNull String path) {
-    return indexChanged(path) || externallyCommitted(path) || gitignoreChanged(path);
+    return indexChanged(path) || externallyCommitted(path) || headMoved(path) ||
+           headChanged(path) || currentBranchChanged(path) || gitignoreChanged(path);
+  }
+
+  private boolean headChanged(@NotNull String path) {
+    return myRepositoryFiles.isHeadFile(path);
+  }
+
+  private boolean currentBranchChanged(@NotNull String path) {
+    GitLocalBranch currentBranch = myRepository.getCurrentBranch();
+    return currentBranch != null && myRepositoryFiles.isBranchFile(path, currentBranch.getFullName());
+  }
+
+  private boolean headMoved(@NotNull String path) {
+    return myRepositoryFiles.isOrigHeadFile(path);
   }
 
   private boolean indexChanged(@NotNull String path) {
@@ -281,7 +301,7 @@ public class GitUntrackedFilesHolder implements Disposable, BulkFileListener {
 
   @Nullable
   private static VirtualFile getAffectedFile(@NotNull VFileEvent event) {
-    if (event instanceof VFileCreateEvent || event instanceof VFileDeleteEvent || event instanceof VFileMoveEvent) {
+    if (event instanceof VFileCreateEvent || event instanceof VFileDeleteEvent || event instanceof VFileMoveEvent || isRename(event)) {
       return event.getFile();
     } else if (event instanceof VFileCopyEvent) {
       VFileCopyEvent copyEvent = (VFileCopyEvent) event;
@@ -290,14 +310,18 @@ public class GitUntrackedFilesHolder implements Disposable, BulkFileListener {
     return null;
   }
 
+  private static boolean isRename(@NotNull VFileEvent event) {
+    return event instanceof VFilePropertyChangeEvent && ((VFilePropertyChangeEvent)event).getPropertyName().equals(VirtualFile.PROP_NAME);
+  }
 
   private boolean notIgnored(@Nullable VirtualFile file) {
     return file != null && belongsToThisRepository(file) && !myChangeListManager.isIgnoredFile(file);
   }
 
   private boolean belongsToThisRepository(VirtualFile file) {
-    final GitRepository repository = myRepositoryManager.getRepositoryForFile(file);
+    // this check should be quick
+    // we shouldn't create a full instance repository here because it may lead to SOE while many unversioned files will be processed
+    GitRepository repository = myRepositoryManager.getRepositoryForRootQuick(myVcsManager.getVcsRootFor(file));
     return repository != null && repository.getRoot().equals(myRoot);
   }
-  
 }

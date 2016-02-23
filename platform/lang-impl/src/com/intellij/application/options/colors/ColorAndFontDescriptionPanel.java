@@ -23,12 +23,12 @@ import com.intellij.openapi.options.colors.AttributesDescriptor;
 import com.intellij.openapi.options.colors.ColorSettingsPage;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Pair;
-import com.intellij.ui.CollectionComboBoxModel;
-import com.intellij.ui.ColorPanel;
-import com.intellij.ui.HyperlinkAdapter;
-import com.intellij.ui.ListCellRendererWrapper;
+import com.intellij.ui.*;
 import com.intellij.ui.components.JBCheckBox;
+import com.intellij.util.FontUtil;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.ui.UIUtil;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -37,6 +37,7 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -68,6 +69,7 @@ public class ColorAndFontDescriptionPanel extends JPanel {
     myEffectsMap = Collections.unmodifiableMap(map);
   }
   private JComboBox myEffectsCombo;
+  private final EffectsComboModel myEffectsModel;
 
   private JBCheckBox myCbBold;
   private JBCheckBox myCbItalic;
@@ -81,7 +83,10 @@ public class ColorAndFontDescriptionPanel extends JPanel {
     add(myPanel, BorderLayout.CENTER);
 
     setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 4));
-    myEffectsCombo.setModel(new CollectionComboBoxModel(ContainerUtil.newArrayList(myEffectsMap.keySet())));
+    myEffectsModel = new EffectsComboModel(ContainerUtil.newArrayList(myEffectsMap.keySet()));
+    //noinspection unchecked
+    myEffectsCombo.setModel(myEffectsModel);
+    //noinspection unchecked
     myEffectsCombo.setRenderer(new ListCellRendererWrapper<String>() {
       @Override
       public void customize(JList list, String value, int index, boolean selected, boolean hasFocus) {
@@ -102,7 +107,7 @@ public class ColorAndFontDescriptionPanel extends JPanel {
       c.addActionListener(actionListener);
     }
     myEffectsCombo.addActionListener(actionListener);
-    Messages.configureMessagePaneUi(myInheritanceLabel, "<html>", false);
+    Messages.configureMessagePaneUi(myInheritanceLabel, "<html>", null);
     myInheritanceLabel.addHyperlinkListener(new HyperlinkAdapter() {
       @Override
       protected void hyperlinkActivated(HyperlinkEvent e) {
@@ -135,6 +140,8 @@ public class ColorAndFontDescriptionPanel extends JPanel {
     updateColorChooser(myCbErrorStripe, myErrorStripeColorChooser, false, false, null);
     updateColorChooser(myCbEffects, myEffectsColorChooser, false, false, null);
     myEffectsCombo.setEnabled(false);
+    myInheritanceLabel.setVisible(false);
+    myInheritAttributesBox.setVisible(false);
   }
 
   private static void updateColorChooser(JCheckBox checkBox,
@@ -148,7 +155,7 @@ public class ColorAndFontDescriptionPanel extends JPanel {
       colorPanel.setSelectedColor(color);
     }
     else {
-      colorPanel.setSelectedColor(Color.white);
+      colorPanel.setSelectedColor(JBColor.WHITE);
     }
     colorPanel.setEnabled(isChecked);
   }
@@ -185,7 +192,7 @@ public class ColorAndFontDescriptionPanel extends JPanel {
 
     if (description.isEffectsColorEnabled() && description.isEffectsColorChecked()) {
       myEffectsCombo.setEnabled(true);
-      myEffectsCombo.getModel().setSelectedItem(ContainerUtil.reverseMap(myEffectsMap).get(effectType));
+      myEffectsModel.setEffectName(ContainerUtil.reverseMap(myEffectsMap).get(effectType));
     }
     else {
       myEffectsCombo.setEnabled(false);
@@ -199,33 +206,34 @@ public class ColorAndFontDescriptionPanel extends JPanel {
     Pair<ColorSettingsPage, AttributesDescriptor> baseDescriptor = description.getBaseAttributeDescriptor();
     if (baseDescriptor != null && baseDescriptor.second.getDisplayName() != null) {
       String attrName = baseDescriptor.second.getDisplayName();
+      String attrLabel = attrName.replaceAll(ColorOptionsTree.NAME_SEPARATOR, FontUtil.rightArrow(UIUtil.getLabelFont()));
       ColorSettingsPage settingsPage = baseDescriptor.first;
       String style = "<div style=\"text-align:right\" vertical-align=\"top\">";
       String tooltipText;
       String labelText;
       if (settingsPage != null) {
         String pageName = settingsPage.getDisplayName();
-        tooltipText = "'" + attrName + "' from<br>'" + pageName + "' section";
-        labelText = style + "'" + attrName + "'<br>of <a href=\"" + attrName + "\">" + pageName;
+        tooltipText = "'" + attrLabel + "' from<br>'" + pageName + "' section";
+        labelText = style + "'" + attrLabel + "'<br>of <a href=\"" + attrName + "\">" + pageName;
       }
       else {
-        tooltipText = attrName;
-        labelText = style + attrName + "<br>&nbsp;";
+        tooltipText = attrLabel;
+        labelText = style + attrLabel + "<br>&nbsp;";
       }
 
+      myInheritanceLabel.setVisible(true);
       myInheritanceLabel.setText(labelText);
       myInheritanceLabel.setToolTipText(tooltipText);
-      myInheritanceLabel.setEnabled(description.isInherited());
+      myInheritanceLabel.setEnabled(true);
+      myInheritAttributesBox.setVisible(true);
       myInheritAttributesBox.setEnabled(true);
       myInheritAttributesBox.setSelected(description.isInherited());
       setEditEnabled(!description.isInherited(), description);
     }
     else {
-      myInheritanceLabel.setToolTipText(null);
-      myInheritanceLabel.setText("<html><br>&nbsp;");
-      myInheritanceLabel.setEnabled(true);
-      myInheritAttributesBox.setEnabled(false);
+      myInheritanceLabel.setVisible(false);
       myInheritAttributesBox.setSelected(false);
+      myInheritAttributesBox.setVisible(false);
       setEditEnabled(true, description);
     }
   }
@@ -286,6 +294,22 @@ public class ColorAndFontDescriptionPanel extends JPanel {
         }
       }
       description.apply(scheme);
+    }
+  }
+
+  private static class EffectsComboModel extends CollectionComboBoxModel<String> {
+    public EffectsComboModel(List<String> names) {
+      super(names);
+    }
+
+    /**
+     * Set the current effect name when a text attribute selection changes without notifying the listeners since otherwise it will
+     * be considered as an actual change and lead to unnecessary evens including 'read-only scheme' check.
+     *
+     * @param effectName
+     */
+    public void setEffectName(@NotNull String effectName) {
+      mySelection = effectName;
     }
   }
 }

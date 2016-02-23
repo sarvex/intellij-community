@@ -16,6 +16,7 @@
 
 package com.intellij.lang.properties.psi;
 
+import com.intellij.lang.ASTNode;
 import com.intellij.lang.properties.IProperty;
 import com.intellij.lang.properties.PropertiesFileType;
 import com.intellij.lang.properties.psi.codeStyle.PropertiesCodeStyleSettings;
@@ -43,21 +44,33 @@ public class PropertiesElementFactory {
   };
 
   @NotNull
-  public static IProperty createProperty(@NotNull Project project, @NonNls @NotNull String name, @NonNls @NotNull String value) {
-    String text = getPropertyText(name, value, null, project);
+  public static IProperty createProperty(@NotNull Project project,
+                                         @NonNls @NotNull String name,
+                                         @NonNls @NotNull String value,
+                                         @Nullable Character delimiter) {
+    String text = getPropertyText(name, value, delimiter, project, true);
     final PropertiesFile dummyFile = createPropertiesFile(project, text);
     return dummyFile.getProperties().get(0);
+  }
+
+  @Deprecated
+  @NotNull
+  public static IProperty createProperty(@NotNull Project project,
+                                         @NonNls @NotNull String name,
+                                         @NonNls @NotNull String value) {
+    return createProperty(project, name, value, null);
   }
 
   @NotNull
   public static String getPropertyText(@NonNls @NotNull String name,
                                        @NonNls @NotNull String value,
                                        @NonNls @Nullable Character delimiter,
-                                       @Nullable Project project) {
+                                       @Nullable Project project,
+                                       boolean escape) {
     if (delimiter == null) {
-      delimiter = project == null ? PropertiesCodeStyleSettings.DEFAULT_KEY_VALUE_DELIMITER : PropertiesCodeStyleSettings.getInstance(project).KEY_VALUE_DELIMITER;
+      delimiter = project == null ? '=' : PropertiesCodeStyleSettings.getInstance(project).getDelimiter();
     }
-    return escape(name) + String.valueOf(delimiter) + escapeValue(value);
+    return (escape ? escape(name) : name) + String.valueOf(delimiter) + (escape ? escapeValue(value, delimiter) : value);
   }
 
   @NotNull
@@ -88,34 +101,18 @@ public class PropertiesElementFactory {
 
   @NotNull
   private static String escape(@NotNull String name) {
-    if (StringUtil.startsWithChar(name, '#')) {
-      name = escapeChar(name, '#');
+    if (StringUtil.startsWithChar(name, '#') || StringUtil.startsWithChar(name, '!')) {
+      name = "\\" + name;
     }
-    if (StringUtil.startsWithChar(name, '!')) {
-      name = escapeChar(name, '!');
-    }
-    name = escapeChar(name, '=');
-    name = escapeChar(name, ':');
-    name = escapeChar(name, ' ');
-    name = escapeChar(name, '\t');
-    return name;
+    return StringUtil.escapeChars(name, '=', ':', ' ', '\t');
   }
 
-  @NotNull
-  private static String escapeChar(@NotNull String name, char c) {
-    int offset = 0;
-    while (true) {
-      int i = name.indexOf(c, offset);
-      if (i == -1) return name;
-      if (i == 0 || name.charAt(i - 1) != '\\') {
-        name = name.substring(0, i) + '\\' + name.substring(i);
-      }
-      offset = i + 2;
-    }
-  }
-
+  @Deprecated
   public static String escapeValue(String value) {
-    return PropertiesResourceBundleUtil.fromValueEditorToPropertyValue(value);
+    return escapeValue(value, '=');
   }
 
+  public static String escapeValue(String value, char delimiter) {
+    return PropertiesResourceBundleUtil.fromValueEditorToPropertyValue(value, delimiter);
+  }
 }

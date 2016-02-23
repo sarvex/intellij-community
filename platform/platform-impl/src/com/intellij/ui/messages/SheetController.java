@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.wm.IdeFocusManager;
 import com.intellij.ui.Gray;
 import com.intellij.ui.JBColor;
 import com.intellij.util.ArrayUtil;
@@ -36,7 +37,6 @@ import java.awt.event.*;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 
@@ -50,14 +50,15 @@ public class SheetController {
   private static final Font regularFont = new Font(fontName, Font.PLAIN, 10);
   private static final Font boldFont = new Font(fontName, Font.BOLD, 12).deriveFont(Font.BOLD);
   private final DialogWrapper.DoNotAskOption myDoNotAskOption;
-  private JCheckBox doNotAskCheckBox;
   private boolean myDoNotAskResult;
 
   private BufferedImage myShadowImage;
   
   private final JButton[] buttons;
   private JButton myDefaultButton;
-  private JButton myFocusedButton;
+  private JComponent myFocusedComponent;
+
+  private JCheckBox doNotAskCheckBox = new JCheckBox();
 
   public static int SHADOW_BORDER = 5;
 
@@ -99,7 +100,7 @@ public class SheetController {
                   final String[] buttonTitles,
                   final String defaultButtonTitle,
                   final DialogWrapper.DoNotAskOption doNotAskOption,
-                  final String focusedButton) {
+                  final String focusedButtonTitle) {
     if (icon != null) {
       myIcon = icon;
     }
@@ -111,6 +112,9 @@ public class SheetController {
 
     myResult = null;
 
+    int defaultButtonIndex = -1;
+    int focusedButtonIndex = -1;
+
     for (int i = 0; i < buttons.length; i++) {
       String buttonTitle = buttonTitles[i];
 
@@ -119,16 +123,25 @@ public class SheetController {
       handleMnemonics(i, buttonTitle);
 
       if (buttonTitle.equals(defaultButtonTitle)) {
-        myDefaultButton = buttons[i];
+        defaultButtonIndex = i;
       }
-      if (buttonTitle.equals(focusedButton)) {
-        myFocusedButton = buttons[i];
+
+      if (buttonTitle.equals(focusedButtonTitle) && !focusedButtonTitle.equals("Cancel")) {
+        focusedButtonIndex = i;
       }
     }
 
-    if (myFocusedButton == null) {
-      myFocusedButton = myDefaultButton;
+    defaultButtonIndex = (focusedButtonIndex == defaultButtonIndex) || defaultButtonTitle == null ? 0 : defaultButtonIndex;
+
+    if (focusedButtonIndex != -1 && defaultButtonIndex != focusedButtonIndex) {
+      myFocusedComponent = buttons[focusedButtonIndex];
+    } else if (doNotAskOption != null) {
+      myFocusedComponent = doNotAskCheckBox;
+    } else if (buttons.length > 1) {
+      myFocusedComponent = buttons[buttons.length - 1];
     }
+
+    myDefaultButton = (defaultButtonIndex == -1) ? buttons[0] : buttons[defaultButtonIndex];
 
     if (myResult == null) {
       myResult = Messages.CANCEL_BUTTON;
@@ -171,12 +184,16 @@ public class SheetController {
   }
 
   void requestFocus() {
-    if (myFocusedButton == null) return; // it might be we have only one button. it is a default one in that case
-    if (SystemInfo.isAppleJvm) {
-      myFocusedButton.requestFocus();
-    } else {
-      myFocusedButton.requestFocusInWindow();
-    }
+    IdeFocusManager.getGlobalInstance().doWhenFocusSettlesDown(new Runnable() {
+      @Override
+      public void run() {
+        if (myFocusedComponent != null) {
+          myFocusedComponent.requestFocus();
+        } else {
+          LOG.debug("My focused component is null for the next message: " + messageTextPane.getText());
+        }
+      }
+    });
   }
 
   JPanel getPanel(final JDialog w) {
@@ -350,7 +367,7 @@ public class SheetController {
   }
 
   private static String handleBreaks(final String message) {
-    return message.replaceAll("(\r\n|\n)", "<br/>");
+    return message == null ? "" : message.replaceAll("(\r\n|\n)", "<br/>");
   }
 
   private void shiftButtonsToTheBottom(int shiftDistance) {
@@ -422,11 +439,13 @@ public class SheetController {
   }
 
   private void layoutDoNotAskCheckbox(JPanel sheetPanel) {
-    doNotAskCheckBox = new JCheckBox(myDoNotAskOption.getDoNotShowMessage(), !myDoNotAskOption.isToBeShown());
+    doNotAskCheckBox.setText(myDoNotAskOption.getDoNotShowMessage());
+    doNotAskCheckBox.setSelected(!myDoNotAskOption.isToBeShown());
+    doNotAskCheckBox.setOpaque(false);
     doNotAskCheckBox.addItemListener(new ItemListener() {
       @Override
       public void itemStateChanged(@NotNull ItemEvent e) {
-        myDoNotAskResult = e.getStateChange() == ItemEvent.SELECTED;
+        myDoNotAskResult = (e.getStateChange() == ItemEvent.SELECTED);
       }
     });
     doNotAskCheckBox.repaint();
@@ -434,6 +453,10 @@ public class SheetController {
 
     doNotAskCheckBox.setLocation(LEFT_SHEET_OFFSET, SHEET_HEIGHT);
     sheetPanel.add(doNotAskCheckBox);
+
+    if (myFocusedComponent == null) {
+      myFocusedComponent = doNotAskCheckBox;
+    }
 
     SHEET_HEIGHT += doNotAskCheckBox.getHeight();
   }
@@ -466,5 +489,9 @@ public class SheetController {
 
   public String getResult() {
     return myResult;
+  }
+
+  public void dispose() {
+    mySheetPanel.unregisterKeyboardAction(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0));
   }
 }

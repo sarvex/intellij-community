@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -229,7 +229,7 @@ public class CodeFoldingManagerImpl extends CodeFoldingManager implements Projec
     }
 
 
-    final FoldingUpdate.FoldingMap foldingMap = FoldingUpdate.getFoldingsFor(myProject, file, document, true);
+    final FoldingUpdate.FoldingMap foldingMap = FoldingUpdate.getFoldingsFor(file, document, true);
 
     return new CodeFoldingState() {
       @Override
@@ -241,7 +241,8 @@ public class CodeFoldingManagerImpl extends CodeFoldingManager implements Projec
         if (isFoldingsInitializedInEditor(editor)) return;
         if (DumbService.isDumb(myProject) && !FoldingUpdate.supportsDumbModeFolding(editor)) return;
 
-        foldingModel.runBatchFoldingOperationDoNotCollapseCaret(new UpdateFoldRegionsOperation(myProject, editor, file, foldingMap, YES, false));
+        foldingModel.runBatchFoldingOperationDoNotCollapseCaret(new UpdateFoldRegionsOperation(myProject, editor, file, foldingMap, YES, 
+                                                                                               false, false));
         initFolding(editor);
       }
     };

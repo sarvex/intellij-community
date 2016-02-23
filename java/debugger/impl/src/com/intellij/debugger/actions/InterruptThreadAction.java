@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2010 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class InterruptThreadAction extends DebuggerAction{
     }
 
     //noinspection ConstantConditions
-    final List<ThreadReferenceProxyImpl> threadsToInterrupt = new ArrayList<ThreadReferenceProxyImpl>();
+    final List<ThreadReferenceProxyImpl> threadsToInterrupt = new ArrayList<>();
     for (final DebuggerTreeNodeImpl debuggerTreeNode : nodes) {
       final NodeDescriptorImpl descriptor = debuggerTreeNode.getDescriptor();
       if (descriptor instanceof ThreadDescriptorImpl) {
@@ -58,32 +58,34 @@ public class InterruptThreadAction extends DebuggerAction{
     if (!threadsToInterrupt.isEmpty()) {
       final DebuggerContextImpl debuggerContext = getDebuggerContext(e.getDataContext());
       final DebugProcessImpl debugProcess = debuggerContext.getDebugProcess();
-      debugProcess.getManagerThread().schedule(new DebuggerCommandImpl() {
-        protected void action() throws Exception {
-          boolean unsupported = false;
-          for (ThreadReferenceProxyImpl thread : threadsToInterrupt) {
-            try {
-              thread.getThreadReference().interrupt();
-            }
-            catch (UnsupportedOperationException ignored) {
-              unsupported = true;
-            }
-          }
-          if (unsupported) {
-            final Project project = debugProcess.getProject();
-            //noinspection SSBasedInspection
-            SwingUtilities.invokeLater(new Runnable() {
-              public void run() {
-                if (!project.isDisposed()) {
-                  XDebugSessionImpl.NOTIFICATION_GROUP.createNotification("Thread operation 'interrupt' is not supported by VM", MessageType.INFO).notify(project);
-                }
+      if (debugProcess != null) {
+        debugProcess.getManagerThread().schedule(new DebuggerCommandImpl() {
+          protected void action() throws Exception {
+            boolean unsupported = false;
+            for (ThreadReferenceProxyImpl thread : threadsToInterrupt) {
+              try {
+                thread.getThreadReference().interrupt();
               }
-            });
+              catch (UnsupportedOperationException ignored) {
+                unsupported = true;
+              }
+            }
+            if (unsupported) {
+              final Project project = debugProcess.getProject();
+              //noinspection SSBasedInspection
+              SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                  if (!project.isDisposed()) {
+                    XDebugSessionImpl.NOTIFICATION_GROUP
+                      .createNotification("Thread operation 'interrupt' is not supported by VM", MessageType.INFO).notify(project);
+                  }
+                }
+              });
+            }
           }
-        }
-      });
+        });
+      }
     }
-
   }
 
   public void update(AnActionEvent e) {
@@ -106,7 +108,7 @@ public class InterruptThreadAction extends DebuggerAction{
       if (visible) {
         for (DebuggerTreeNodeImpl selectedNode : selectedNodes) {
           final ThreadDescriptorImpl threadDescriptor = (ThreadDescriptorImpl)selectedNode.getDescriptor();
-          if (threadDescriptor.isFrozen()) {
+          if (threadDescriptor.isFrozen() || threadDescriptor.isSuspended()) {
             enabled = false;
             break;
           }
@@ -115,7 +117,6 @@ public class InterruptThreadAction extends DebuggerAction{
     }
     final Presentation presentation = e.getPresentation();
     presentation.setText(DebuggerBundle.message("action.interrupt.thread.text"));
-    presentation.setVisible(visible);
-    presentation.setEnabled(enabled);
+    presentation.setEnabledAndVisible(visible && enabled);
   }
 }

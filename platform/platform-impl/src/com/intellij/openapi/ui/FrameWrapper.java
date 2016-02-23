@@ -16,19 +16,24 @@
 package com.intellij.openapi.ui;
 
 import com.intellij.ide.DataManager;
+import com.intellij.ide.ui.UISettings;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.CommonShortcuts;
 import com.intellij.openapi.actionSystem.DataProvider;
 import com.intellij.openapi.actionSystem.ex.ActionManagerEx;
+import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.actionSystem.impl.MouseGestureManager;
 import com.intellij.openapi.application.impl.ApplicationInfoImpl;
-import com.intellij.openapi.project.*;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.project.ProjectManager;
+import com.intellij.openapi.project.ProjectManagerAdapter;
+import com.intellij.openapi.project.ProjectManagerListener;
+import com.intellij.openapi.ui.popup.util.PopupUtil;
 import com.intellij.openapi.util.ActionCallback;
-import com.intellij.openapi.util.DimensionService;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.WindowStateService;
 import com.intellij.openapi.wm.*;
 import com.intellij.openapi.wm.ex.LayoutFocusTraversalPolicyExt;
 import com.intellij.openapi.wm.ex.WindowManagerEx;
@@ -38,6 +43,7 @@ import com.intellij.openapi.wm.impl.IdeMenuBar;
 import com.intellij.ui.AppUIUtil;
 import com.intellij.ui.BalloonLayout;
 import com.intellij.ui.FocusTrackback;
+import com.intellij.ui.FrameState;
 import com.intellij.util.ImageLoader;
 import com.intellij.util.containers.HashMap;
 import com.intellij.util.ui.UIUtil;
@@ -47,9 +53,7 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.FocusEvent;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
+import java.awt.event.*;
 import java.io.File;
 import java.util.Map;
 
@@ -74,9 +78,6 @@ public class FrameWrapper implements Disposable, DataProvider {
   private boolean myShown;
   private boolean myIsDialog;
   private boolean myImageWasChanged;
-
-  //Skip restoration of MAXIMIZED_BOTH_PROPERTY
-  private static final boolean WORKAROUND_FOR_JDK_8007219 = SystemInfo.isMac && SystemInfo.isOracleJvm;
 
   public FrameWrapper(Project project) {
     this(project, null);
@@ -141,7 +142,7 @@ public class FrameWrapper implements Disposable, DataProvider {
     final WindowAdapter focusListener = new WindowAdapter() {
       public void windowOpened(WindowEvent e) {
         IdeFocusManager fm = IdeFocusManager.getInstance(myProject);
-        JComponent toFocus = myPreferedFocus;
+        JComponent toFocus = getPreferredFocusedComponent();
         if (toFocus == null) {
           toFocus = fm.getFocusTargetFor(myComponent);
         }
@@ -228,14 +229,11 @@ public class FrameWrapper implements Disposable, DataProvider {
   }
 
   private void addCloseOnEsc(final RootPaneContainer frame) {
-    new DumbAwareAction() {
+    JRootPane rootPane = frame.getRootPane();
+    ActionListener closeAction = new ActionListener() {
       @Override
-      public void actionPerformed(@NotNull AnActionEvent e) {
-        MenuSelectionManager menuSelectionManager = MenuSelectionManager.defaultManager();
-        MenuElement[] selectedPath = menuSelectionManager.getSelectedPath();
-        if (selectedPath.length > 0) { // hide popup menu if any
-          menuSelectionManager.clearSelectedPath();
-        } else {
+      public void actionPerformed(ActionEvent e) {
+        if (!PopupUtil.handleEscKeyEvent()) {
           // if you remove this line problems will start happen on Mac OS X
           // 2 projects opened, call Cmd+D on the second opened project and then Esc.
           // Weird situation: 2nd IdeFrame will be active, but focus will be somewhere inside the 1st IdeFrame
@@ -244,7 +242,9 @@ public class FrameWrapper implements Disposable, DataProvider {
           close();
         }
       }
-    }.registerCustomShortcutSet(CommonShortcuts.ESCAPE, myComponent, this);
+    };
+    rootPane.registerKeyboardAction(closeAction, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+    ActionUtil.registerForEveryKeyboardShortcut(rootPane, closeAction, CommonShortcuts.getCloseActiveWindow());
   }
 
   public Window getFrame() {
@@ -290,6 +290,10 @@ public class FrameWrapper implements Disposable, DataProvider {
     myPreferedFocus = preferedFocus;
   }
 
+  public JComponent getPreferredFocusedComponent() {
+    return myPreferedFocus;
+  }
+
   public void closeOnEsc() {
     myCloseOnEsc = true;
   }
@@ -301,47 +305,13 @@ public class FrameWrapper implements Disposable, DataProvider {
 
   protected void loadFrameState() {
     final Window frame = getFrame();
-    final Point location;
-    final Dimension size;
-    final int extendedState;
-    DimensionService dimensionService = DimensionService.getInstance();
-    if (myDimensionKey == null || dimensionService == null) {
-      location = null;
-      size = null;
-      extendedState = -1;
-    }
-    else {
-      location = dimensionService.getLocation(myDimensionKey);
-      size = dimensionService.getSize(myDimensionKey);
-      extendedState = dimensionService.getExtendedState(myDimensionKey);
-    }
-
-    if (size != null && location != null) {
-      frame.setLocation(location);
-      frame.setSize(size);
-      ((RootPaneContainer)frame).getRootPane().revalidate();
-    }
-    else {
+    if (myDimensionKey != null && !WindowStateService.getInstance().loadStateFor(myProject, myDimensionKey, frame)) {
       final IdeFrame ideFrame = WindowManagerEx.getInstanceEx().getIdeFrame(myProject);
       if (ideFrame != null) {
-        frame.pack();
         frame.setBounds(ideFrame.suggestChildFrameBounds());
       }
     }
-
-    if (!WORKAROUND_FOR_JDK_8007219 && extendedState == Frame.MAXIMIZED_BOTH && frame instanceof JFrame) {
-      ((JFrame)frame).setExtendedState(extendedState);
-    }
-  }
-
-  private static void saveFrameState(String dimensionKey, Component frame) {
-    DimensionService dimensionService = DimensionService.getInstance();
-    if (dimensionKey == null || dimensionService == null) return;
-    dimensionService.setLocation(dimensionKey, frame.getLocation());
-    dimensionService.setSize(dimensionKey, frame.getSize());
-    if (frame instanceof JFrame) {
-      dimensionService.setExtendedState(dimensionKey, ((JFrame)frame).getExtendedState());
-    }
+    ((RootPaneContainer)frame).getRootPane().revalidate();
   }
 
   public void setTitle(String title) {
@@ -369,10 +339,23 @@ public class FrameWrapper implements Disposable, DataProvider {
     private File myFile;
 
     private MyJFrame(IdeFrame parent) throws HeadlessException {
+      FrameState.setFrameStateListener(this);
       myParent = parent;
       setGlassPane(new IdeGlassPaneImpl(getRootPane()));
 
-      if (SystemInfo.isMac) {
+      boolean setMenuOnFrame = SystemInfo.isMac;
+
+      if (SystemInfo.isLinux && "Unity".equals(System.getenv("XDG_CURRENT_DESKTOP"))) {
+        try {
+          Class.forName("com.jarego.jayatana.Agent");
+          setMenuOnFrame = true;
+        }
+        catch (ClassNotFoundException e) {
+          // ignore
+        }
+      }
+
+      if (setMenuOnFrame) {
         setJMenuBar(new IdeMenuBar(ActionManagerEx.getInstanceEx(), DataManager.getInstance()));
       }
 
@@ -439,8 +422,8 @@ public class FrameWrapper implements Disposable, DataProvider {
 
       MouseGestureManager.getInstance().remove(this);
 
-      if (myShown) {
-        saveFrameState(myDimensionKey, this);
+      if (myShown && myDimensionKey != null) {
+        WindowStateService.getInstance().saveStateFor(myProject, myDimensionKey, this);
       }
 
       Disposer.dispose(FrameWrapper.this);
@@ -471,7 +454,7 @@ public class FrameWrapper implements Disposable, DataProvider {
 
     @Override
     public void paint(Graphics g) {
-      UIUtil.applyRenderingHints(g);
+      UISettings.setupAntialiasing(g);
       super.paint(g);
     }
   }
@@ -544,8 +527,8 @@ public class FrameWrapper implements Disposable, DataProvider {
 
       MouseGestureManager.getInstance().remove(this);
 
-      if (myShown) {
-        saveFrameState(myDimensionKey, this);
+      if (myShown && myDimensionKey != null) {
+        WindowStateService.getInstance().saveStateFor(myProject, myDimensionKey, this);
       }
 
       Disposer.dispose(FrameWrapper.this);
@@ -576,7 +559,7 @@ public class FrameWrapper implements Disposable, DataProvider {
 
     @Override
     public void paint(Graphics g) {
-      UIUtil.applyRenderingHints(g);
+      UISettings.setupAntialiasing(g);
       super.paint(g);
     }
   }

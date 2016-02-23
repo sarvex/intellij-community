@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2012 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,14 +20,16 @@ import org.jetbrains.annotations.NotNull;
 
 public abstract class PathMacroManager implements PathMacroSubstitutor {
   public static PathMacroManager getInstance(@NotNull ComponentManager componentManager) {
-    final PathMacroManager component = (PathMacroManager)componentManager.getPicoContainer().getComponentInstanceOfType(PathMacroManager.class);
+    final PathMacroManager component = (PathMacroManager)componentManager.getPicoContainer().getComponentInstance(PathMacroManager.class);
     assert component != null;
     return component;
   }
 
   public abstract void collapsePathsRecursively(@NotNull Element element);
 
+  @NotNull
   public abstract String collapsePathsRecursively(@NotNull String text);
 
+  @NotNull
   public abstract TrackingPathMacroSubstitutor createTrackingSubstitutor();
 }

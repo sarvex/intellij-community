@@ -16,12 +16,14 @@
 package com.intellij.testFramework;
 
 import com.intellij.openapi.actionSystem.CommonDataKeys;
+import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.actionSystem.DataProvider;
 import com.intellij.openapi.actionSystem.PlatformDataKeys;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.impl.EditorComponentImpl;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx;
+import com.intellij.openapi.fileEditor.impl.FileEditorManagerImpl;
 import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider;
 import com.intellij.openapi.project.Project;
 import org.jetbrains.annotations.NonNls;
@@ -32,7 +34,7 @@ import javax.swing.*;
 /**
  * @author peter
  */
-public class TestDataProvider implements DataProvider {
+public class TestDataProvider implements DataProvider, DataContext {
   private final Project myProject;
 
   public TestDataProvider(@NotNull Project project) {
@@ -54,7 +56,7 @@ public class TestDataProvider implements DataProvider {
       return null;
     }
     if (CommonDataKeys.EDITOR.is(dataId) || OpenFileDescriptor.NAVIGATE_IN_EDITOR.is(dataId)) {
-      return manager.getSelectedTextEditor();
+      return manager instanceof FileEditorManagerImpl ? ((FileEditorManagerImpl)manager).getSelectedTextEditor(true) : manager.getSelectedTextEditor();
     }
     else if (PlatformDataKeys.FILE_EDITOR.is(dataId)) {
       Editor editor = manager.getSelectedTextEditor();

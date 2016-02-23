@@ -15,7 +15,10 @@
  */
 package com.intellij.psi.impl.source.codeStyle;
 
-import com.intellij.formatting.*;
+import com.intellij.formatting.CoreFormatterUtil;
+import com.intellij.formatting.FormattingMode;
+import com.intellij.formatting.FormattingModel;
+import com.intellij.formatting.FormattingModelBuilder;
 import com.intellij.injected.editor.DocumentWindow;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.LanguageFormatting;
@@ -99,7 +102,7 @@ abstract class CodeStyleManagerRunnable<T> {
       myModel = CoreFormatterUtil.buildModel(builder, file, mySettings, myMode);
 
       if (document != null && useDocumentBaseFormattingModel()) {
-        myModel = new DocumentBasedFormattingModel(myModel.getRootBlock(), document, myCodeStyleManager.getProject(), mySettings,
+        myModel = new DocumentBasedFormattingModel(myModel, document, myCodeStyleManager.getProject(), mySettings,
                                                    file.getFileType(), file);
       }
 
@@ -127,7 +130,7 @@ abstract class CodeStyleManagerRunnable<T> {
   protected abstract T doPerform(int offset, TextRange range);
 
   private static boolean isInsidePlainComment(int offset, @Nullable PsiElement element) {
-    if (!(element instanceof PsiComment) || element instanceof PsiDocCommentBase || !element.getTextRange().contains(offset)) {
+    if (!(element instanceof PsiComment) || element instanceof PsiDocCommentBase || !element.getTextRange().contains(offset - 1)) {
       return false;
     }
 

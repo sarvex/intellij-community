@@ -22,6 +22,7 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.fileTypes.LanguageFileType;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.util.io.BufferExposingByteArrayOutputStream;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.newvfs.FileAttribute;
@@ -139,6 +140,17 @@ public class StubUpdatingIndex extends CustomImplementationFileBasedIndexExtensi
             final BufferExposingByteArrayOutputStream bytes = new BufferExposingByteArrayOutputStream();
             SerializationManagerEx.getInstanceEx().serialize(rootStub, bytes);
 
+            if (DebugAssertions.DEBUG) {
+              try {
+                Stub deserialized =
+                  SerializationManagerEx.getInstanceEx().deserialize(new ByteArrayInputStream(bytes.getInternalBuffer(), 0, bytes.size()));
+                check(deserialized, rootStub);
+              } catch(ProcessCanceledException pce) {
+                throw pce;
+              } catch (Throwable t) {
+                LOG.error("Error indexing:" + file, t);
+              }
+            }
             final int key = Math.abs(FileBasedIndex.getFileId(file));
             result.put(key, new SerializedStubTree(bytes.getInternalBuffer(), bytes.size(), rootStub, file.getLength(), contentLength));
           }
@@ -147,6 +159,16 @@ public class StubUpdatingIndex extends CustomImplementationFileBasedIndexExtensi
         return result;
       }
     };
+  }
+
+  private static void check(Stub stub, Stub stub2) {
+    assert stub.getStubType() == stub2.getStubType();
+    List<? extends Stub> stubs = stub.getChildrenStubs();
+    List<? extends Stub> stubs2 = stub2.getChildrenStubs();
+    assert stubs.size() == stubs2.size();
+    for(int i = 0, len = stubs.size(); i < len; ++i) {
+      check(stubs.get(i), stubs2.get(i));
+    }
   }
 
   private static void rememberIndexingStamp(final VirtualFile file, long contentLength) {
@@ -252,7 +274,7 @@ public class StubUpdatingIndex extends CustomImplementationFileBasedIndexExtensi
     return allIndices;
   }
 
-  private class MyIndex extends MapReduceIndex<Integer, SerializedStubTree, FileContent> {
+  private static class MyIndex extends MapReduceIndex<Integer, SerializedStubTree, FileContent> {
     private StubIndexImpl myStubIndex;
 
     public MyIndex(final ID<Integer, SerializedStubTree> indexId, final IndexStorage<Integer, SerializedStubTree> storage, final DataIndexer<Integer, SerializedStubTree, FileContent> indexer)
@@ -332,7 +354,7 @@ public class StubUpdatingIndex extends CustomImplementationFileBasedIndexExtensi
       return index;
     }
 
-    private void checkNameStorage() throws StorageException {
+    private static void checkNameStorage() throws StorageException {
       final SerializationManagerEx serializationManager = SerializationManagerEx.getInstanceEx();
       if (serializationManager.isNameStorageCorrupted()) {
         serializationManager.repairNameStorage();
@@ -341,13 +363,17 @@ public class StubUpdatingIndex extends CustomImplementationFileBasedIndexExtensi
       }
     }
 
-    private Map<StubIndexKey, Map<Object, StubIdList>> getStubTree(@NotNull final Map<Integer, SerializedStubTree> data)
+    private static Map<StubIndexKey, Map<Object, StubIdList>> getStubTree(@NotNull final Map<Integer, SerializedStubTree> data)
       throws SerializerNotFoundException {
       final Map<StubIndexKey, Map<Object, StubIdList>> stubTree;
       if (!data.isEmpty()) {
-        final SerializedStubTree stub = data.values().iterator().next();
+        Map.Entry<Integer, SerializedStubTree> entry = data.entrySet().iterator().next();
+        final SerializedStubTree stub = entry.getValue();
         ObjectStubBase root = (ObjectStubBase)stub.getStub(true);
-
+        if (root instanceof PsiFileStub) {
+          Integer fileId = entry.getKey();
+          root.putUserData(IndexingDataKeys.VIRTUAL_FILE_ID, fileId);
+        }
         ObjectStubTree objectStubTree = root instanceof PsiFileStub ? new StubTree((PsiFileStub)root, false) :
                                         new ObjectStubTree(root, false);
         Map<StubIndexKey, Map<Object, int[]>> map = objectStubTree.indexStubTree();

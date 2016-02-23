@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.intellij.openapi.editor.colors.EditorColorsScheme;
 import com.intellij.openapi.editor.colors.impl.DefaultColorsScheme;
 import org.jdom.Element;
 import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -28,7 +29,7 @@ import java.util.List;
 @State(
   name = "DefaultColorSchemesManager",
   defaultStateAsResource = true,
-  storages = @Storage(file = StoragePathMacros.APP_CONFIG + "/other.xml")
+  storages = @Storage(value = "other.xml", roamingType = RoamingType.DISABLED)
 )
 public class DefaultColorSchemesManager implements PersistentStateComponent<Element> {
   private final List<DefaultColorsScheme> mySchemes;
@@ -50,15 +51,35 @@ public class DefaultColorSchemesManager implements PersistentStateComponent<Elem
 
   @Override
   public void loadState(Element state) {
+    int index = 0;
+    int count = mySchemes.size();
     for (Element schemeElement : state.getChildren(SCHEME_ELEMENT)) {
-      DefaultColorsScheme newScheme = new DefaultColorsScheme();
-      newScheme.readExternal(schemeElement);
-      mySchemes.add(newScheme);
+      if (index < count) {
+        // update a scheme that is already loaded
+        DefaultColorsScheme oldScheme = mySchemes.get(index++);
+        oldScheme.readExternal(schemeElement);
+      }
+      else {
+        assert index == 0 : "config file modified: scheme added";
+        DefaultColorsScheme newScheme = new DefaultColorsScheme();
+        newScheme.readExternal(schemeElement);
+        mySchemes.add(newScheme);
+      }
+    }
+    assert index == count : "config file modified: scheme removed";
+    while (index < count--) {
+      mySchemes.remove(index);
     }
   }
 
+  @NotNull
   public DefaultColorsScheme[] getAllSchemes() {
     return mySchemes.toArray(new DefaultColorsScheme[mySchemes.size()]);
+  }
+
+  @NotNull
+  public DefaultColorsScheme getFirstScheme() {
+    return mySchemes.get(0);
   }
 
   @Nullable

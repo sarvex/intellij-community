@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.ui.mac.foundation.Foundation;
 import com.intellij.ui.mac.foundation.ID;
+import com.intellij.util.ReflectionUtil;
 import com.intellij.util.TimeoutUtil;
 import com.intellij.util.concurrency.FutureResult;
 import com.sun.jna.IntegerType;
@@ -42,15 +43,14 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * <p>This class is used to workaround the problem with getting clipboard contents (http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4818143).
- * Although this bug is marked as fixed actually Sun just set 10 seconds timeout for {@link java.awt.datatransfer.Clipboard#getContents(Object)}
+ * This class is used to workaround the problem with getting clipboard contents (http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4818143).
+ * Although this bug is marked as fixed actually Sun just set 10 seconds timeout for {@link Clipboard#getContents(Object)}
  * method which may cause unacceptably long UI freezes. So we worked around this as follows:
  * <ul>
  * <li>for Macs we perform synchronization with system clipboard on a separate thread and schedule it when IDEA frame is activated
  * or Copy/Cut action in Swing component is invoked, and use native method calls to access system clipboard lock-free (?);</li>
  * <li>for X Window we temporary set short timeout and check for available formats (which should be fast if a clipboard owner is alive).</li>
  * </ul>
- * </p>
  *
  * @author nik
  */
@@ -396,14 +396,8 @@ public class ClipboardSynchronizer implements ApplicationComponent {
       final Class<? extends Clipboard> aClass = clipboard.getClass();
       if (!"sun.awt.X11.XClipboard".equals(aClass.getName())) return null;
 
-      final Method getClipboardFormats;
-      try {
-        getClipboardFormats = aClass.getDeclaredMethod("getClipboardFormats");
-        getClipboardFormats.setAccessible(true);
-      }
-      catch (Exception ignore) {
-        return null;
-      }
+      final Method getClipboardFormats = ReflectionUtil.getDeclaredMethod(aClass, "getClipboardFormats");
+      if (getClipboardFormats == null) return null;
 
       final String timeout = System.getProperty(DATA_TRANSFER_TIMEOUT_PROPERTY);
       System.setProperty(DATA_TRANSFER_TIMEOUT_PROPERTY, SHORT_TIMEOUT);

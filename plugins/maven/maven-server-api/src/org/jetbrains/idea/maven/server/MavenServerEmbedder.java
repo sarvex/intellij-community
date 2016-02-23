@@ -26,16 +26,28 @@ import java.util.Collection;
 import java.util.List;
 
 public interface MavenServerEmbedder extends Remote {
+  String MAVEN_EMBEDDER_VERSION = "idea.maven.embedder.version";
+  String MAVEN_EMBEDDER_CLI_ADDITIONAL_ARGS = "idea.maven.embedder.ext.cli.args";
+
   void customize(@Nullable MavenWorkspaceMap workspaceMap,
                  boolean failOnUnresolvedDependency,
                  @NotNull MavenServerConsole console,
                  @NotNull MavenServerProgressIndicator indicator,
                  boolean alwaysUpdateSnapshots) throws RemoteException;
 
+  void customizeComponents() throws RemoteException;
+
   @NotNull
-  MavenServerExecutionResult resolveProject(@NotNull File file,
-                                            @NotNull Collection<String> activeProfiles,
-                                            @NotNull Collection<String> inactiveProfiles) throws RemoteException,
+  List<String> retrieveAvailableVersions(@NotNull String groupId,
+                                         @NotNull String artifactId,
+                                         @NotNull List<MavenRemoteRepository> remoteRepositories)
+    throws RemoteException;
+
+
+  @NotNull
+  Collection<MavenServerExecutionResult> resolveProject(@NotNull Collection<File> files,
+                                                        @NotNull Collection<String> activeProfiles,
+                                                        @NotNull Collection<String> inactiveProfiles) throws RemoteException,
                                                                                                  MavenServerProcessCanceledException;
 
   @Nullable

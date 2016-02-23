@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,23 +16,21 @@
 package com.intellij.vcs.log.graph.impl.print
 
 import com.intellij.util.NotNullFunction
-import com.intellij.vcs.log.graph.*
+import com.intellij.vcs.log.graph.AbstractTestWithTwoTextFile
 import com.intellij.vcs.log.graph.api.elements.GraphEdge
 import com.intellij.vcs.log.graph.api.elements.GraphElement
 import com.intellij.vcs.log.graph.api.elements.GraphNode
 import com.intellij.vcs.log.graph.api.printer.PrintElementManager
+import com.intellij.vcs.log.graph.asString
 import com.intellij.vcs.log.graph.impl.permanent.GraphLayoutBuilder
 import com.intellij.vcs.log.graph.impl.print.elements.PrintElementWithGraphElement
 import com.intellij.vcs.log.graph.parser.LinearGraphParser
 import com.intellij.vcs.log.graph.utils.LinearGraphUtils
-import org.junit.Test
-
-import java.io.IOException
-import java.util.Comparator
-
 import org.junit.Assert.assertEquals
+import org.junit.Test
+import java.util.*
 
-public class PrintElementGeneratorTest : AbstractTestWithTwoTextFile("elementGenerator") {
+open class PrintElementGeneratorTest : AbstractTestWithTwoTextFile("elementGenerator") {
 
   class TestPrintElementManager(private val myGraphElementComparator: Comparator<GraphElement>) : PrintElementManager {
 
@@ -42,13 +40,13 @@ public class PrintElementGeneratorTest : AbstractTestWithTwoTextFile("elementGen
 
     override fun getColorId(element: GraphElement): Int {
       if (element is GraphNode) {
-        return (element as GraphNode).getNodeIndex()
+        return element.nodeIndex
       }
 
       if (element is GraphEdge) {
-        val edge = element as GraphEdge
+        val edge = element
         val normalEdge = LinearGraphUtils.asNormalEdge(edge)
-        if (normalEdge != null) return normalEdge!!.first + normalEdge!!.second
+        if (normalEdge != null) return normalEdge.up + normalEdge.down
         return LinearGraphUtils.getNotNullNodeIndex(edge)
       }
 
@@ -61,6 +59,10 @@ public class PrintElementGeneratorTest : AbstractTestWithTwoTextFile("elementGen
   }
 
   override fun runTest(`in`: String, out: String) {
+    runTest(`in`, out, 7, 2, 10)
+  }
+
+  private fun runTest(`in`: String, out: String, longEdgeSize: Int, visiblePartSize: Int, edgeWithArrowSize: Int) {
     val graph = LinearGraphParser.parse(`in`)
     val graphLayout = GraphLayoutBuilder.build(graph, object : Comparator<Int> {
       override fun compare(o1: Int, o2: Int): Int {
@@ -73,32 +75,35 @@ public class PrintElementGeneratorTest : AbstractTestWithTwoTextFile("elementGen
       }
     })
     val elementManager = TestPrintElementManager(graphElementComparator)
-    val printElementGenerator = PrintElementGeneratorImpl(graph, elementManager, 7, 2, 10)
+    val printElementGenerator = PrintElementGeneratorImpl(graph, elementManager, longEdgeSize, visiblePartSize, edgeWithArrowSize)
     val actual = printElementGenerator.asString(graph.nodesCount())
     assertEquals(out, actual)
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun oneNode() {
+  @Test fun oneNode() {
     doTest("oneNode")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun manyNodes() {
+  @Test fun manyNodes() {
     doTest("manyNodes")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun longEdges() {
+  @Test fun longEdges() {
     doTest("longEdges")
   }
 
-  Test
-  throws(javaClass<IOException>())
-  public fun specialElements() {
+  @Test fun specialElements() {
     doTest("specialElements")
+  }
+
+//  oneUpOneDown tests were created in order to investigate some arrow behavior in upsource
+  @Test fun oneUpOneDown1() {
+    val testName = "oneUpOneDown1"
+    runTest(loadText(testName + AbstractTestWithTwoTextFile.IN_POSTFIX), loadText(testName + AbstractTestWithTwoTextFile.OUT_POSTFIX), 7, 1, 10)
+  }
+
+  @Test fun oneUpOneDown2() {
+    val testName = "oneUpOneDown2"
+    runTest(loadText(testName + AbstractTestWithTwoTextFile.IN_POSTFIX), loadText(testName + AbstractTestWithTwoTextFile.OUT_POSTFIX), 10, 1, 10)
   }
 }

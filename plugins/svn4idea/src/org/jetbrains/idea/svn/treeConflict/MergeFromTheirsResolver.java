@@ -35,7 +35,7 @@ import com.intellij.openapi.vcs.changes.committed.CommittedChangesTreeBrowser;
 import com.intellij.openapi.vcs.changes.patch.ApplyPatchDifferentiatedDialog;
 import com.intellij.openapi.vcs.changes.patch.ApplyPatchExecutor;
 import com.intellij.openapi.vcs.changes.patch.ApplyPatchMode;
-import com.intellij.openapi.vcs.changes.patch.FilePatchInProgress;
+import com.intellij.openapi.vcs.changes.patch.TextFilePatchInProgress;
 import com.intellij.openapi.vcs.ui.VcsBalloonProblemNotifier;
 import com.intellij.openapi.vcs.versionBrowser.ChangeBrowserSettings;
 import com.intellij.openapi.vcs.versionBrowser.CommittedChangeList;
@@ -43,6 +43,7 @@ import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Consumer;
+import com.intellij.util.ObjectUtils;
 import com.intellij.util.SmartList;
 import com.intellij.util.containers.Convertor;
 import com.intellij.util.containers.MultiMap;
@@ -50,7 +51,9 @@ import com.intellij.util.continuation.Continuation;
 import com.intellij.util.continuation.ContinuationContext;
 import com.intellij.util.continuation.TaskDescriptor;
 import com.intellij.util.continuation.Where;
+import com.intellij.vcsUtil.VcsUtil;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.svn.*;
 import org.jetbrains.idea.svn.api.Depth;
 import org.jetbrains.idea.svn.conflict.TreeConflictDescription;
@@ -58,7 +61,6 @@ import org.jetbrains.idea.svn.history.SvnChangeList;
 import org.jetbrains.idea.svn.history.SvnRepositoryLocation;
 import org.tmatesoft.svn.core.wc.SVNRevision;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
@@ -178,7 +180,7 @@ public class MergeFromTheirsResolver {
     @Override
     public void run(ContinuationContext context) {
       try {
-        new SvnTreeConflictResolver(myVcs, myOldFilePath, myCommittedRevision, null).resolveSelectMineFull(myDescription);
+        new SvnTreeConflictResolver(myVcs, myOldFilePath, null).resolveSelectMineFull();
       }
       catch (VcsException e1) {
         context.handleException(e1, false);
@@ -225,7 +227,7 @@ public class MergeFromTheirsResolver {
     }
   }
 
-  private class TreeConflictApplyTheirsPatchExecutor implements ApplyPatchExecutor {
+  private class TreeConflictApplyTheirsPatchExecutor implements ApplyPatchExecutor<TextFilePatchInProgress> {
     private final SvnVcs myVcs;
     private final ContinuationContext myInner;
     private final VirtualFile myBaseDir;
@@ -238,12 +240,14 @@ public class MergeFromTheirsResolver {
 
     @Override
     public String getName() {
-      return "Apply patch";
+      return "Apply Patch";
     }
 
     @Override
-    public void apply(MultiMap<VirtualFile, FilePatchInProgress> patchGroups, LocalChangeList localList, String fileName,
-                      TransparentlyFailedValueI<Map<String, Map<String, CharSequence>>, PatchSyntaxException> additionalInfo) {
+    public void apply(@NotNull MultiMap<VirtualFile, TextFilePatchInProgress> patchGroups,
+                      @Nullable LocalChangeList localList,
+                      @Nullable String fileName,
+                      @Nullable TransparentlyFailedValueI<Map<String, Map<String, CharSequence>>, PatchSyntaxException> additionalInfo) {
       final List<FilePatch> patches;
       try {
         patches = ApplyPatchSaveToFileExecutor.patchGroupsToOneGroup(patchGroups, myBaseDir);
@@ -255,7 +259,7 @@ public class MergeFromTheirsResolver {
 
       final PatchApplier<BinaryFilePatch> patchApplier =
         new PatchApplier<BinaryFilePatch>(myVcs.getProject(), myBaseDir, patches, localList, null, null);
-      patchApplier.scheduleSelf(false, myInner, true);  // 3
+      patchApplier.execute(false, true);  // 3
       boolean thereAreCreations = false;
       for (FilePatch patch : patches) {
         if (patch.isNewFile() || ! Comparing.equal(patch.getAfterName(), patch.getBeforeName())) {
@@ -490,10 +494,10 @@ public class MergeFromTheirsResolver {
     return false;
   }
 
-  private FilePath rebasePath(final FilePath oldBase, final FilePath newBase, final FilePath path) {
-    final String relativePath = FileUtil.getRelativePath(oldBase.getPath(), path.getPath(), File.separatorChar);
-    //if (StringUtil.isEmptyOrSpaces(relativePath)) return path;
-    return ((FilePathImpl) newBase).createChild(relativePath, path.isDirectory());
+  @NotNull
+  private static FilePath rebasePath(@NotNull FilePath oldBase, @NotNull FilePath newBase, @NotNull FilePath path) {
+    String relativePath = ObjectUtils.assertNotNull(FileUtil.getRelativePath(oldBase.getPath(), path.getPath(), '/'));
+    return VcsUtil.getFilePath(newBase.getPath() + "/" + relativePath, path.isDirectory());
   }
 
   private class PreloadChangesContentsForFile extends TaskDescriptor {

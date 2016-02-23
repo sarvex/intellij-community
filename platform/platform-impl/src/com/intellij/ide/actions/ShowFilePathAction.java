@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2015 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -84,10 +84,10 @@ public class ShowFilePathAction extends AnAction {
         return false;
       }
 
-      String appName = ExecUtil.execAndReadLine("xdg-mime", "query", "default", "inode/directory");
+      String appName = ExecUtil.execAndReadLine(new GeneralCommandLine("xdg-mime", "query", "default", "inode/directory"));
       if (appName == null || !appName.matches("nautilus.*\\.desktop")) return false;
 
-      String version = ExecUtil.execAndReadLine("nautilus", "--version");
+      String version = ExecUtil.execAndReadLine(new GeneralCommandLine("nautilus", "--version"));
       if (version == null) return false;
 
       Matcher m = Pattern.compile("GNOME nautilus ([0-9.]+)").matcher(version);
@@ -111,7 +111,7 @@ public class ShowFilePathAction extends AnAction {
 
   @Nullable
   private static String getUnixFileManagerName() {
-    String appName = ExecUtil.execAndReadLine("xdg-mime", "query", "default", "inode/directory");
+    String appName = ExecUtil.execAndReadLine(new GeneralCommandLine("xdg-mime", "query", "default", "inode/directory"));
     if (appName == null || !appName.matches(".+\\.desktop")) return null;
 
     String dirs = System.getenv("XDG_DATA_DIRS");
@@ -157,12 +157,15 @@ public class ShowFilePathAction extends AnAction {
     show(getFile(e), new ShowAction() {
       @Override
       public void show(final ListPopup popup) {
-        DataManager.getInstance().getDataContextFromFocus().doWhenDone(new Consumer<DataContext>() {
-          @Override
-          public void consume(DataContext context) {
-            popup.showInBestPositionFor(context);
-          }
-        });
+        DataManager dataManager = DataManager.getInstance();
+        if (dataManager != null) {
+          dataManager.getDataContextFromFocus().doWhenDone(new Consumer<DataContext>() {
+            @Override
+            public void consume(DataContext context) {
+              popup.showInBestPositionFor(context);
+            }
+          });
+        }
       }
     });
   }
@@ -263,8 +266,8 @@ public class ShowFilePathAction extends AnAction {
 
   public static boolean isSupported() {
     return SystemInfo.isWindows ||
-           Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN) ||
-           SystemInfo.hasXdgOpen() || canUseNautilus.getValue();
+           SystemInfo.hasXdgOpen() || canUseNautilus.getValue() ||
+           Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN);
   }
 
   @NotNull
@@ -282,9 +285,7 @@ public class ShowFilePathAction extends AnAction {
     if (!file.exists()) return;
     file = file.getAbsoluteFile();
     File parent = file.getParentFile();
-    if (parent == null) {
-      return;
-    }
+    if (parent == null) return;
     try {
       doOpen(parent, file);
     }
